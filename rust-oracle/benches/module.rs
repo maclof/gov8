@@ -6,11 +6,21 @@ mod common;
 
 use common::{MEASUREMENT_TIME, SAMPLE_SIZE, WARM_UP_TIME};
 use criterion::{criterion_group, criterion_main, Criterion};
+use std::cell::RefCell;
 use std::hint::black_box;
 
+const DEPENDENCY_SPECIFIER: &str = DEPENDENCY_SOURCE;
 const DEPENDENCY_SOURCE: &str = "export const base = 40;";
 const ENTRY_SOURCE: &str =
     "import { base } from 'export const base = 40;'; export const answer = base + 2;";
+
+thread_local! {
+    static RESOLVED_MODULES: RefCell<Vec<v8::Global<v8::Module>>> = const { RefCell::new(Vec::new()) };
+}
+
+fn clear_resolved_modules() {
+    RESOLVED_MODULES.with(|modules| modules.borrow_mut().clear());
+}
 
 fn origin<'s>(scope: &v8::PinScope<'s, '_>, name: &str) -> v8::ScriptOrigin<'s> {
     let resource_name = v8::String::new(scope, name).unwrap().into();
@@ -39,12 +49,36 @@ fn compile<'s>(scope: &v8::PinScope<'s, '_>, name: &str, text: &str) -> v8::Loca
 #[allow(clippy::unnecessary_wraps)]
 fn resolve<'s>(
     context: v8::Local<'s, v8::Context>,
-    _specifier: v8::Local<'s, v8::String>,
-    _import_attributes: v8::Local<'s, v8::FixedArray>,
+    specifier: v8::Local<'s, v8::String>,
+    import_attributes: v8::Local<'s, v8::FixedArray>,
     _referrer: v8::Local<'s, v8::Module>,
 ) -> Option<v8::Local<'s, v8::Module>> {
     v8::callback_scope!(unsafe scope, context);
-    Some(compile(scope, "dependency.mjs", DEPENDENCY_SOURCE))
+    assert_eq!(specifier.to_rust_string_lossy(scope), DEPENDENCY_SPECIFIER);
+    assert_eq!(import_attributes.length(), 0);
+    let dependency = compile(scope, "dependency.mjs", DEPENDENCY_SOURCE);
+    let persistent = v8::Global::new(scope, dependency);
+    let local = v8::Local::new(scope, &persistent);
+    RESOLVED_MODULES.with(|modules| modules.borrow_mut().push(persistent));
+    Some(local)
+}
+
+fn correctness_probe(scope: &mut v8::PinScope<'_, '_>) {
+    clear_resolved_modules();
+    v8::scope!(let inner, scope);
+    let entry = v8::Global::new(inner, compile(inner, "entry.mjs", ENTRY_SOURCE));
+    let module = v8::Local::new(inner, &entry);
+    assert_eq!(module.instantiate_module(inner, resolve), Some(true));
+    module.evaluate(inner).unwrap();
+    inner.perform_microtask_checkpoint();
+    let namespace = module.get_module_namespace().cast::<v8::Object>();
+    let key = v8::String::new(inner, "answer").unwrap().into();
+    let answer = namespace
+        .get(inner, key)
+        .and_then(|value| value.integer_value(inner));
+    assert_eq!(answer, Some(42));
+    clear_resolved_modules();
+    drop(entry);
 }
 
 fn module_compile(c: &mut Criterion) {
@@ -53,11 +87,13 @@ fn module_compile(c: &mut Criterion) {
     v8::scope!(let scope, isolate);
     let context = v8::Context::new(scope, Default::default());
     let scope = &mut v8::ContextScope::new(scope, context);
+    correctness_probe(scope);
     c.bench_function("module/compile", |b| {
         common::banner();
         b.iter(|| {
             v8::scope!(let inner, scope);
-            black_box(compile(inner, "entry.mjs", ENTRY_SOURCE));
+            let module = v8::Global::new(inner, compile(inner, "entry.mjs", ENTRY_SOURCE));
+            black_box(module);
         })
     });
 }
@@ -68,12 +104,17 @@ fn module_compile_instantiate(c: &mut Criterion) {
     v8::scope!(let scope, isolate);
     let context = v8::Context::new(scope, Default::default());
     let scope = &mut v8::ContextScope::new(scope, context);
+    correctness_probe(scope);
     c.bench_function("module/compile_instantiate", |b| {
         common::banner();
         b.iter(|| {
+            clear_resolved_modules();
             v8::scope!(let inner, scope);
-            let module = compile(inner, "entry.mjs", ENTRY_SOURCE);
-            black_box(module.instantiate_module(inner, resolve).unwrap());
+            let entry = v8::Global::new(inner, compile(inner, "entry.mjs", ENTRY_SOURCE));
+            let module = v8::Local::new(inner, &entry);
+            assert_eq!(module.instantiate_module(inner, resolve), Some(true));
+            clear_resolved_modules();
+            black_box(entry);
         })
     });
 }
@@ -84,13 +125,18 @@ fn module_compile_instantiate_evaluate(c: &mut Criterion) {
     v8::scope!(let scope, isolate);
     let context = v8::Context::new(scope, Default::default());
     let scope = &mut v8::ContextScope::new(scope, context);
+    correctness_probe(scope);
     c.bench_function("module/compile_instantiate_evaluate", |b| {
         common::banner();
         b.iter(|| {
+            clear_resolved_modules();
             v8::scope!(let inner, scope);
-            let module = compile(inner, "entry.mjs", ENTRY_SOURCE);
-            module.instantiate_module(inner, resolve).unwrap();
+            let entry = v8::Global::new(inner, compile(inner, "entry.mjs", ENTRY_SOURCE));
+            let module = v8::Local::new(inner, &entry);
+            assert_eq!(module.instantiate_module(inner, resolve), Some(true));
             black_box(module.evaluate(inner).unwrap());
+            clear_resolved_modules();
+            black_box(entry);
         })
     });
 }
