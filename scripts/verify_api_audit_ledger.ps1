@@ -252,7 +252,7 @@ foreach ($row in $rows) {
 
 $counts = @{}
 foreach ($group in ($rows | Group-Object classification)) { $counts[$group.Name] = $group.Count }
-$expected = @{ matched = 1693; partial = 10; unsafe = 154 }
+$expected = @{ matched = 1696; partial = 10; unsafe = 151 }
 foreach ($classification in $expected.Keys) {
     if ($counts[$classification] -ne $expected[$classification]) {
         throw "$classification count is $($counts[$classification]), expected $($expected[$classification])"
@@ -280,10 +280,10 @@ if (($expectedPartialPaths -join "`n") -ne ($actualPartialPaths -join "`n")) {
 $expectedUnsafeRationales = @{
     "Rust pinning, lexical macro, or generic scope-construction machinery" = 49
     "Rust-only generic smart-pointer or mapping-vtable machinery" = 32
-    "Rust raw local/global handle or unchecked lifetime machinery" = 25
+    "Rust raw local/global handle or unchecked lifetime machinery" = 23
     "Rust raw isolate-pointer or manual enter/exit shape" = 15
     "Generated raw ABI layout, not a public Go ownership surface" = 10
-    "Raw allocator vtable or caller-owned backing pointer" = 10
+    "Raw allocator vtable or caller-owned backing pointer" = 9
     "Callback-borrowed Fast API ABI shape; behavior is native and copied in Go" = 6
     "Raw Inspector base/vtable wrapper or borrowed iterator" = 4
     "Raw native stack-pointer configuration" = 2
@@ -323,4 +323,4 @@ if ($Regenerate) {
     $ordered | Export-Csv -LiteralPath $ledger -NoTypeInformation -Encoding UTF8
 }
 
-Write-Host "API audit ledger verified: 1857 declarations (1693 matched, 10 partial, 154 unsafe)."
+Write-Host "API audit ledger verified: 1857 declarations (1696 matched, 10 partial, 151 unsafe)."

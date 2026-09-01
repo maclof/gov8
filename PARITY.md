@@ -8,7 +8,7 @@ This matrix tracks observable parity against the sole supported reference:
 - Artifact SHA-256: `0b17ca072bae37dd4ff00e6014d2b413becb031c9342ee11cb8226a5881f62b2`
 
 The declaration-level denominator and intentional language-shape clusters are tracked in
-`API_AUDIT.md`: 1,693 of 1,857 public declarations currently have a matched Go
+`API_AUDIT.md`: 1,696 of 1,857 public declarations currently have a matched Go
 equivalent or documented semantic shape. Ten more declarations retain safe Go
 behavioral equivalents but intentionally differ from Rust's borrowed or generic
 API shape; none is missing as an executable surface.
@@ -174,7 +174,7 @@ strict Clippy and full tests; the Go suite passes
 
 All audited safe executable behavior is covered. This does not claim literal
 Rust API-shape parity: ten borrowed or generic cppgc declarations retain safe,
-intentional Go shapes, and 154 unsafe ownership declarations remain unexposed.
+intentional Go shapes, and 151 unsafe ownership declarations remain unexposed.
 It also does not claim performance parity. Eight archived matched benchmark
 areas still show material Go overhead: synthetic modules (about 2.9-3.7x),
 compiled-Wasm restoration (5.1x), module-cache consumption (about 3x), CRDTP
