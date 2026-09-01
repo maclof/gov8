@@ -3,6 +3,7 @@
 // call. No raw or temporarily unrooted cppgc pointer is returned to Go.
 
 #include <atomic>
+#include <cppgc/member.h>
 #include <new>
 
 class RustObj : public v8::Object::Wrappable {
@@ -22,6 +23,10 @@ RustObj* v8__Object__Unwrap(v8::Isolate* isolate, const v8::Object& wrapper,
                             v8::CppHeapPointerTag tag);
 void cppgc__Visitor__Trace__TracedReference(
     cppgc::Visitor* visitor, v8::TracedReference<v8::Data>* reference);
+void cppgc__Visitor__Trace__Member(cppgc::Visitor* visitor,
+                                   cppgc::Member<RustObj>* member);
+void cppgc__Visitor__Trace__WeakMember(cppgc::Visitor* visitor,
+                                       cppgc::WeakMember<RustObj>* member);
 const v8::Data* v8__TracedReference__Get(
     v8::TracedReference<v8::Data>* self, v8::Isolate* isolate);
 bool v8__Object__IsApiWrapper(const v8::Object& self);
@@ -42,6 +47,8 @@ struct Payload {
   uint16_t tag;
   uint8_t observe_trace;
   uint8_t reserved;
+  cppgc::Member<RustObj> strong;
+  cppgc::WeakMember<RustObj> weak;
   v8::TracedReference<v8::Data> traced;
 
   Payload(uint64_t registry, int32_t id, uint16_t pointer_tag,
@@ -52,6 +59,8 @@ struct Payload {
         tag(pointer_tag),
         observe_trace(should_observe_trace ? 1 : 0),
         reserved(0),
+        strong(nullptr),
+        weak(nullptr),
         traced() {}
 };
 
@@ -97,6 +106,10 @@ extern "C" void rusty_v8_RustObj_trace(const RustObj* object,
   if (payload->observe_trace != 0) {
     Dispatch(payload->registry_id, kTrace);
   }
+  cppgc__Visitor__Trace__Member(
+      visitor, const_cast<cppgc::Member<RustObj>*>(&payload->strong));
+  cppgc__Visitor__Trace__WeakMember(
+      visitor, const_cast<cppgc::WeakMember<RustObj>*>(&payload->weak));
   cppgc__Visitor__Trace__TracedReference(
       visitor, const_cast<v8::TracedReference<v8::Data>*>(&payload->traced));
 }

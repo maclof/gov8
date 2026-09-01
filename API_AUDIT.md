@@ -12,15 +12,15 @@ and constants, fields, enum variants and trait members are included.
 
 | Classification | Declarations | Percent |
 |---|---:|---:|
-| Matched Go equivalent or documented semantic shape | 1,639 | 88.2% |
-| Partial behavior or evidence | 20 | 1.1% |
-| Missing executable surface | 42 | 2.3% |
+| Matched Go equivalent or documented semantic shape | 1,647 | 88.6% |
+| Partial behavior or evidence | 22 | 1.2% |
+| Missing executable surface | 32 | 1.7% |
 | Unsafe or intentionally unsupported Rust ownership shape | 149 | 8.0% |
 | Ambiguous pending exact executable evidence | 8 | 0.4% |
 | Total | 1,858 | 100% |
 
-The confirmed executable remainder is 62 declarations. Including the eight
-ambiguous declarations gives an upper bound of 70. The 149 intentionally
+The confirmed executable remainder is 54 declarations. Including the eight
+ambiguous declarations gives an upper bound of 62. The 149 intentionally
 unsupported declarations are not implementation backlog unless the project
 chooses a comparably safe Go abstraction.
 
@@ -47,7 +47,7 @@ chooses a comparably safe Go abstraction.
 | Serializer/deserializer | 40 | Matched |
 | `wasm.rs` | 28 | Safe executable surface matched, including positive serialized-cache behavior |
 | `inspector.rs` and `crdtp.rs` | 146 | Safe owned/closed surface matched; raw boxed/vtable representations hidden |
-| `cppgc.rs` | 60 | Persistent handles matched; generic tracing, members, cells and custom heaps remain |
+| `cppgc.rs` | 60 | Persistent handles and safe member operations matched; generic tracing/type shapes, cells and custom heaps remain |
 | `fast_api.rs` | 75 | Descriptor substrate matched; callback options, one-byte arguments and type matrix remain |
 | `simdutf.rs`, `icu.rs` and `json.rs` | 83 | Matched |
 | `external_references.rs` | 16 | Matched for the supported native-address shape |
@@ -61,8 +61,8 @@ denominator above is authoritative.
 
 1. cppgc custom heap, CreateParams, marking/sweeping/stack enums, collection
    and termination.
-2. cppgc `Member`, `WeakMember`, `GcCell`, generic `GarbageCollected`,
-   `Visitor`, `Traced` and allocation.
+2. Generic cppgc `Member`/`WeakMember` type shapes, `GcCell`,
+   `GarbageCollected`, `Visitor`, `Traced` and allocation.
 3. `CreateParams::cpp_heap` ownership transfer.
 4. ArrayBuffer allocator types, vtable ownership and default/custom factories.
 5. Executable `FastApiCallbackOptions`, including callback-local data.
