@@ -109,6 +109,9 @@ func (i *Isolate) NewContext() (*Context, error) {
 	if err != nil {
 		return nil, err
 	}
+	i.mu.Lock()
+	i.contextsCreated = true
+	i.mu.Unlock()
 	return &Context{iso: i, handle: ch}, nil
 }
 

@@ -67,6 +67,9 @@ func (i *Isolate) NewContextWithOptions(s *Scope, options *ContextOptions) (*Con
 	if err != nil {
 		return nil, err
 	}
+	i.mu.Lock()
+	i.contextsCreated = true
+	i.mu.Unlock()
 	if queue != nil {
 		queue.attachments++
 	}

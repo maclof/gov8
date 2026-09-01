@@ -419,7 +419,7 @@ extern "C" {
 
 __declspec(dllexport) int64_t gov8_abi_version(void) {
   ClearErr();
-  return 4;
+  return 5;
 }
 
 // --- platform / process lifecycle -------------------------------------------
@@ -1681,6 +1681,7 @@ __declspec(dllexport) int64_t gov8_last_error(char* buf, int64_t cap) {
 #include "features/module_cache.inc"
 #include "features/simdutf.inc"
 #include "features/wasm_core.inc"
+#include "features/wasm_streaming.inc"
 #include "features/buffers_serialization.inc"
 #include "features/snapshots_handles.inc"
 #include "features/runtime_values.inc"

@@ -53,6 +53,7 @@ $ConformancePackages = @(
     './conformance-context-scopes-advanced',
     './conformance-exceptions-advanced',
     './conformance-exception-constructors',
+    './conformance-exception-string-local',
     './conformance-functions-advanced',
     './conformance-fixed-primitive-arrays',
     './conformance-handles-residual',
@@ -71,7 +72,8 @@ $ConformancePackages = @(
     './conformance-strings-bigint',
     './conformance-template-advanced',
     './conformance-typed-arrays',
-    './conformance-wasm'
+    './conformance-wasm',
+    './conformance-wasm-streaming'
 )
 
 $script:RaceSupported = $null

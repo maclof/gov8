@@ -840,9 +840,9 @@ func (rv ReturnValue) Get() (Value, error) {
 }
 
 // ReleaseIsolateHostState releases host state attached to the isolate by
-// this feature slice: native-callback registrations (Go registry and the
-// shim's per-isolate callback contexts, including their Global embedder-data
-// handles) and isolate slot values.
+// host features: native-callback registrations (Go registry and the shim's
+// per-isolate callback contexts, including their Global embedder-data handles),
+// Wasm streaming bindings, and isolate slot values.
 //
 // This is the explicit Go equivalent of the Rust destructors that run when
 // the isolate is dropped: Go has no destructors, and a finalizer would run
@@ -854,6 +854,13 @@ func ReleaseIsolateHostState(i *Isolate) error {
 		return err
 	}
 	if err := requireInitialized(); err != nil {
+		return err
+	}
+	// Wasm owns callbacks that may still target this isolate. Refuse release
+	// before mutating the other host registries when a stream or asynchronous
+	// compilation is still active; otherwise clear the native binding while
+	// the isolate is alive.
+	if err := releaseWasmStreamingHostState(i); err != nil {
 		return err
 	}
 	// Drop the Go-side registrations and slot values first (the registries are

@@ -20,10 +20,11 @@ import (
 // try-catches, microtask queues) must be closed before Isolate.Close, and
 // Close must be called on the owning thread.
 type Isolate struct {
-	mu                    sync.Mutex // guards closed flag only; calls are thread-serialized by affinity
+	mu                    sync.Mutex // guards lifecycle/configuration flags; calls are thread-serialized by affinity
 	handle                uintptr
 	tid                   uint32
 	closed                bool
+	contextsCreated       bool
 	advancedCounterHandle uintptr
 }
 
