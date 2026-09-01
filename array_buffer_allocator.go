@@ -7,6 +7,7 @@ import (
 	"math"
 	"os"
 	"sync"
+	"sync/atomic"
 	"syscall"
 )
 
@@ -38,6 +39,7 @@ type ArrayBufferAllocator struct {
 }
 
 type arrayBufferAllocatorEntry struct {
+	id        uint64
 	callbacks ArrayBufferAllocatorCallbacks
 }
 
@@ -46,6 +48,14 @@ var arrayBufferAllocatorRegistry = struct {
 	next    uint64
 	entries map[uint64]*arrayBufferAllocatorEntry
 }{entries: make(map[uint64]*arrayBufferAllocatorEntry)}
+
+// Keep the most recently used immutable registry entry on an atomic fast
+// path; the mutex-protected map remains authoritative when allocator IDs
+// alternate. Registry removal clears this pointer while holding the registry
+// lock, so an entry can only be observed after removal by a callback that raced
+// with (and began before) the removal, matching the former locked lookup
+// semantics.
+var activeArrayBufferAllocatorEntry atomic.Pointer[arrayBufferAllocatorEntry]
 
 const (
 	arrayBufferAllocatorAllocate = iota + 1
@@ -57,23 +67,50 @@ const (
 var (
 	arrayBufferAllocatorDispatcherOnce sync.Once
 	arrayBufferAllocatorDispatcherErr  error
+	arrayBufferAllocatorPanicAbortAddr uintptr
 )
+
+func lookupArrayBufferAllocatorEntry(id uint64) *arrayBufferAllocatorEntry {
+	if entry := activeArrayBufferAllocatorEntry.Load(); entry != nil && entry.id == id {
+		return entry
+	}
+	arrayBufferAllocatorRegistry.Lock()
+	entry := arrayBufferAllocatorRegistry.entries[id]
+	if entry != nil {
+		// Publish before unlocking. A concurrent removal takes the same lock
+		// and therefore cannot clear the cache before this store completes.
+		activeArrayBufferAllocatorEntry.Store(entry)
+	}
+	arrayBufferAllocatorRegistry.Unlock()
+	return entry
+}
+
+func takeArrayBufferAllocatorEntry(id uint64) *arrayBufferAllocatorEntry {
+	arrayBufferAllocatorRegistry.Lock()
+	entry := arrayBufferAllocatorRegistry.entries[id]
+	if entry != nil {
+		delete(arrayBufferAllocatorRegistry.entries, id)
+		activeArrayBufferAllocatorEntry.CompareAndSwap(entry, nil)
+	}
+	arrayBufferAllocatorRegistry.Unlock()
+	return entry
+}
 
 var arrayBufferAllocatorDispatcher = syscall.NewCallback(func(idWord, kindWord, lengthWord, firstWord uintptr) (result uintptr) {
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			fmt.Fprintf(os.Stderr, "gov8: panic in ArrayBuffer allocator callback: %v\n", recovered)
-			proc("gov8_host_panic_abort").Call()
+			_, _, _ = syscall.Syscall(arrayBufferAllocatorPanicAbortAddr, 0, 0, 0, 0)
 			fatalHostMisuse("gov8: panic abort unexpectedly returned")
 		}
 	}()
 	id := uint64(idWord)
-	arrayBufferAllocatorRegistry.Lock()
-	entry := arrayBufferAllocatorRegistry.entries[id]
-	if kindWord == arrayBufferAllocatorDrop && entry != nil {
-		delete(arrayBufferAllocatorRegistry.entries, id)
+	var entry *arrayBufferAllocatorEntry
+	if kindWord == arrayBufferAllocatorDrop {
+		entry = takeArrayBufferAllocatorEntry(id)
+	} else {
+		entry = lookupArrayBufferAllocatorEntry(id)
 	}
-	arrayBufferAllocatorRegistry.Unlock()
 	if entry == nil {
 		fatalHostMisuse("gov8: ArrayBuffer allocator callback for unknown registry ID %d", id)
 	}
@@ -112,6 +149,9 @@ func installArrayBufferAllocatorDispatcher() error {
 	arrayBufferAllocatorDispatcherOnce.Do(func() {
 		arrayBufferAllocatorDispatcherErr = callErr("ArrayBufferAllocator.Dispatcher",
 			proc("gov8_aba_set_dispatcher"), arrayBufferAllocatorDispatcher)
+		if arrayBufferAllocatorDispatcherErr == nil {
+			arrayBufferAllocatorPanicAbortAddr = proc("gov8_host_panic_abort").Addr()
+		}
 	})
 	return arrayBufferAllocatorDispatcherErr
 }
@@ -123,7 +163,9 @@ func registerArrayBufferAllocator(callbacks ArrayBufferAllocatorCallbacks) (uint
 		arrayBufferAllocatorRegistry.next++
 		id := arrayBufferAllocatorRegistry.next
 		if id != 0 && arrayBufferAllocatorRegistry.entries[id] == nil {
-			arrayBufferAllocatorRegistry.entries[id] = &arrayBufferAllocatorEntry{callbacks: callbacks}
+			entry := &arrayBufferAllocatorEntry{id: id, callbacks: callbacks}
+			arrayBufferAllocatorRegistry.entries[id] = entry
+			activeArrayBufferAllocatorEntry.Store(entry)
 			return id, nil
 		}
 	}
@@ -131,9 +173,7 @@ func registerArrayBufferAllocator(callbacks ArrayBufferAllocatorCallbacks) (uint
 }
 
 func dropArrayBufferAllocatorRegistration(id uint64) {
-	arrayBufferAllocatorRegistry.Lock()
-	delete(arrayBufferAllocatorRegistry.entries, id)
-	arrayBufferAllocatorRegistry.Unlock()
+	takeArrayBufferAllocatorEntry(id)
 }
 
 // NewDefaultArrayBufferAllocator creates V8's malloc/free based convenience
