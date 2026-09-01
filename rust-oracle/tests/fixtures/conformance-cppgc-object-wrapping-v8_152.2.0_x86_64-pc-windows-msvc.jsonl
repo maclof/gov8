@@ -1,0 +1,7 @@
+{"check":"cppgc-object-wrapping/default_heap_and_api_wrapper","ok":true,"value":{"default_heap_present":true,"plain_is_api_wrapper":false,"api_is_api_wrapper":true,"unwrapped_before_wrap":false}}
+{"check":"cppgc-object-wrapping/wrap_unwrap_identity","ok":true,"value":{"id":7,"same_pointer":true,"traced_identity":true}}
+{"check":"cppgc-object-wrapping/traced_reference_survival","ok":true,"value":{"drops_while_rooted":0,"marker":42,"trace_calls_positive":true}}
+{"check":"cppgc-object-wrapping/gc_destruction","ok":true,"value":{"drops_after_release":1,"identity_collected":true}}
+{"check":"cppgc-object-wrapping/tag_boundaries","ok":true,"value":{"min_tag":0,"min_unwrap_id":0,"max_tag":32766,"max_unwrap_id":32766}}
+{"check":"cppgc-object-wrapping/orderly_teardown","ok":true,"value":{"boundary_drops":2,"cppgc_shutdown":true,"platform_dispose":true,"v8_dispose":true}}
+{"summary":{"total":6,"passed":6,"failed":0}}
