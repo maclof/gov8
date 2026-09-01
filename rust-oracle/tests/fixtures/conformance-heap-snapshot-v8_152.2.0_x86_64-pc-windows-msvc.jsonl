@@ -1,0 +1,4 @@
+{"check":"heap-snapshot/stream/success","ok":true,"value":{"callback_called":true,"final_empty_chunk":true,"has_nonempty_data_chunk":true,"json_document":true,"has_snapshot_meta":true,"has_nodes_edges_strings":true,"contains_marker":true}}
+{"check":"heap-snapshot/stream/callback_abort","ok":true,"value":{"exactly_one_callback":true,"first_chunk_nonempty":true,"isolate_usable_after_abort":true}}
+{"check":"heap-snapshot/lifecycle/repeat_after_abort","ok":true,"value":{"first_complete":true,"second_complete":true,"callbacks_each_time":true,"marker_each_time":true}}
+{"summary":{"total":3,"passed":3,"failed":0}}

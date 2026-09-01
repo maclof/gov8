@@ -162,8 +162,9 @@ inspected-object history, Inspector idle/async-task lifecycle, owned Inspector
 stack traces, exception reporting, Inspector client callbacks, CRDTP core
 values, serialization and synchronous dispatch, cppgc object wrapping with
 traced targets, and strong/weak cppgc persistent handles. The Rust fixtures
-contain 473 normalized checks: 471 compare byte-for-byte with Go and two have
-narrowly documented safety normalizations.
+contain 476 normalized checks: 471 compare byte-for-byte with Go and two have
+narrowly documented safety normalizations; three heap-snapshot checks await Go
+conformance coverage.
 Separate fatal and panic-boundary subprocess tests cover unsafe lifecycle and
 callback edges.
 

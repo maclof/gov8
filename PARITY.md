@@ -14,9 +14,9 @@ characterized but the Go implementation is not integrated; **missing** means no
 production Go implementation exists. A family is not promoted merely because a
 type or stub exists.
 
-The fixtures under `rust-oracle/tests/fixtures` currently contain 473 normalized
+The fixtures under `rust-oracle/tests/fixtures` currently contain 476 normalized
 checks. Go matches 471 byte-for-byte and two more after documented safety
-normalizations. Fatal and
+normalizations; three heap-snapshot checks are currently oracle-only. Fatal and
 panic-boundary subprocess tests are additional evidence and are not counted in
 that total.
 
@@ -24,7 +24,7 @@ that total.
 |---|---|---|---|
 | Platform initialization, version, dispose ordering | `Initialize`, `EngineVersion`, `VersionString`, `Dispose`, `DisposePlatform`, `Shutdown` | base conformance; startup benchmarks | **complete** for the default platform lifecycle; invalid Rust transitions panic while Go intentionally returns errors |
 | Platform/task implementations and message-loop control | `ConfigurePlatform` for built-in variants, `ConfigureCustomPlatform`, `PlatformImpl`, `Task`, `IdleTask`, `Isolate.PumpMessageLoop`, `Isolate.RunIdleTasks`, flags and WebAssembly trap activation | 4-check built-in fixture exact; 3-check custom-platform fixture (two exact, one deadlock-safety normalization); lifecycle/panic/race tests; controls-hooks and Wasm async conformance; matched end-to-end compilation benchmark | **partial**: the pinned platform/task declarations are implemented with explicit transferred-task ownership; a matched custom-dispatch overhead benchmark remains |
-| `Isolate` lifecycle and parallel isolates | `NewIsolate`, `NewIsolateWithParams`, `CreateParams`, `SnapshotCreateParams`, external-reference tables, heap/code/space statistics, profiler/notification and control APIs | base, 9-check isolate-advanced, core-advanced, snapshots, external-reference, 5-check snapshot-CreateParams and controls-hooks fixtures; lifecycle/concurrency/fatal tests; startup benchmarks | **partial**: snapshot composition covers every existing safe CreateParams field; unsafe custom allocators, raw Go-stack limits, embedder-owned C++ heaps, heap snapshots and remaining profiler controls are explicit gaps |
+| `Isolate` lifecycle and parallel isolates | `NewIsolate`, `NewIsolateWithParams`, `CreateParams`, `SnapshotCreateParams`, external-reference tables, heap/code/space statistics, profiler/notification and control APIs | base, 9-check isolate-advanced, core-advanced, snapshots, external-reference, 5-check snapshot-CreateParams and controls-hooks fixtures; 3-check heap-snapshot Rust oracle; lifecycle/concurrency/fatal tests; startup benchmarks | **partial**: snapshot composition covers every existing safe CreateParams field and profiler controls are exact; heap-snapshot streaming is characterized for Go integration, while unsafe custom allocators, raw Go-stack limits and embedder-owned C++ heaps remain explicit gaps |
 | `Locker`, shared isolates and thread affinity | `locker.go`; owner-thread validation | `core-advanced/thread/*`; wrong-thread and concurrent-isolate tests | **complete** for characterized Locker entry/unlock behavior; broader shared-isolate integration remains |
 | Local, escapable, persistent and weak handles | `Scope`, `EscapableScope`, `Global`, `Weak`, `Eternal`, `TracedReference`, guaranteed finalizers; disallow/allow JavaScript execution scopes | core-advanced, host, snapshots, context-scopes and 8-check residual-handle fixtures; cppgc traced-target fixture; lifecycle/finalizer/wrong-isolate/fatal-mode tests | **complete** for the pinned handle surface; broader cppgc pointer types are tracked separately |
 | Context creation and globals | `NewContext`, `NewContextWithOptions`, `ContextFromSnapshotWithOptions`, global reuse, embedder data/pointers/slots, extras binding, continuation data, promise hooks and execution allow/disallow scopes | base/core/runtime/template, 8-check context-scopes and 4-check context-residual fixtures; fatal/lifecycle tests; context startup benchmarks | **complete** for the safe executable pinned Context declarations; unsupported fatal indices, unaligned pointers and uncleared snapshot slots are rejected before V8 entry |
@@ -152,9 +152,10 @@ that total.
 
 ## Verification state
 
-On 2026-09-01, the Rust fixtures contain 473 normalized checks. Go compares 471 checks
+On 2026-09-01, the Rust fixtures contain 476 normalized checks. Go compares 471 checks
 byte-for-byte; the advanced stack line and custom-platform inline-deadlock probe
-pass after the two narrow safety normalizations documented above. The Rust oracle suites pass formatting,
+pass after the two narrow safety normalizations documented above. Three heap-snapshot
+checks remain oracle-only. The Rust oracle suites pass formatting,
 strict Clippy and full tests; the Go suite passes
 `go test ./... -count=1`, `go vet ./...`, full race checks and benchmark smoke runs.
 `scripts/verify_windows.ps1` explicitly reruns every current conformance package.
