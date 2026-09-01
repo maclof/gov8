@@ -16,21 +16,25 @@ var (
 	errCRDTPClosed   = errors.New("gov8: CRDTP value is closed")
 	errCRDTPConsumed = errors.New("gov8: CRDTP value was consumed")
 
-	crdtpBytesProcsOnce       sync.Once
-	crdtpBytesCopyProc        *syscall.Proc
-	crdtpBytesCopyDeleteProc  *syscall.Proc
-	crdtpSerializableViewProc *syscall.Proc
-	crdtpJSONToCBORSizedProc  *syscall.Proc
-	crdtpCBORToJSONSizedProc  *syscall.Proc
+	crdtpCoreProcsOnce           sync.Once
+	crdtpBytesCopyAddr           uintptr
+	crdtpBytesCopyDeleteAddr     uintptr
+	crdtpSerializableViewAddr    uintptr
+	crdtpSerializableDeleteAddr  uintptr
+	crdtpJSONToCBORSizedAddr     uintptr
+	crdtpCBORToJSONSizedAddr     uintptr
+	crdtpDispatchResponseNewAddr uintptr
 )
 
-func ensureCRDTPBytesProcs() {
-	crdtpBytesProcsOnce.Do(func() {
-		crdtpBytesCopyProc = proc("gov8_crdtp_bytes_copy")
-		crdtpBytesCopyDeleteProc = proc("gov8_crdtp_bytes_copy_delete")
-		crdtpSerializableViewProc = proc("gov8_crdtp_serializable_view")
-		crdtpJSONToCBORSizedProc = proc("gov8_crdtp_json_to_cbor_sized")
-		crdtpCBORToJSONSizedProc = proc("gov8_crdtp_cbor_to_json_sized")
+func ensureCRDTPCoreProcs() {
+	crdtpCoreProcsOnce.Do(func() {
+		crdtpBytesCopyAddr = proc("gov8_crdtp_bytes_copy").Addr()
+		crdtpBytesCopyDeleteAddr = proc("gov8_crdtp_bytes_copy_delete").Addr()
+		crdtpSerializableViewAddr = proc("gov8_crdtp_serializable_view").Addr()
+		crdtpSerializableDeleteAddr = proc("gov8_crdtp_serializable_delete").Addr()
+		crdtpJSONToCBORSizedAddr = proc("gov8_crdtp_json_to_cbor_sized").Addr()
+		crdtpCBORToJSONSizedAddr = proc("gov8_crdtp_cbor_to_json_sized").Addr()
+		crdtpDispatchResponseNewAddr = proc("gov8_crdtp_response_new").Addr()
 	})
 }
 
@@ -51,15 +55,15 @@ func crdtpConvert(op, export string, input []byte) ([]byte, bool, error) {
 	if err := loadShim(); err != nil {
 		return nil, false, err
 	}
-	ensureCRDTPBytesProcs()
-	convertProc := crdtpJSONToCBORSizedProc
+	ensureCRDTPCoreProcs()
+	convertAddr := crdtpJSONToCBORSizedAddr
 	if export == "gov8_crdtp_cbor_to_json" {
-		convertProc = crdtpCBORToJSONSizedProc
+		convertAddr = crdtpCBORToJSONSizedAddr
 	}
 	var output [2]uintptr
-	status, _, _ := convertProc.Call(
-		slicePointer(input), uintptr(len(input)), uintptr(unsafe.Pointer(&output[0])),
-		uintptr(unsafe.Pointer(&output[1])))
+	status, _, _ := syscall.Syscall6(convertAddr, 4,
+		uintptr(sliceUnsafePointer(input)), uintptr(len(input)), uintptr(unsafe.Pointer(&output[0])),
+		uintptr(unsafe.Pointer(&output[1])), 0, 0)
 	runtime.KeepAlive(input)
 	runtime.KeepAlive(&output)
 	if int64(status) < 0 {
@@ -79,7 +83,7 @@ func takeCRDTPBytes(handle uintptr) (result []byte, err error) {
 	if handle == 0 {
 		return nil, errors.New("gov8: null CRDTP byte buffer")
 	}
-	ensureCRDTPBytesProcs()
+	ensureCRDTPCoreProcs()
 	owned := handle
 	defer func() {
 		if owned != 0 {
@@ -89,7 +93,7 @@ func takeCRDTPBytes(handle uintptr) (result []byte, err error) {
 			}
 		}
 	}()
-	length, _, _ := crdtpBytesCopyProc.Call(handle, 0, 0)
+	length, _, _ := syscall.Syscall(crdtpBytesCopyAddr, 3, handle, 0, 0)
 	if int64(length) < 0 {
 		return nil, shimError("CRDTPBytes.Len", length)
 	}
@@ -105,7 +109,7 @@ func takeCRDTPBytesSized(handle, length uintptr) (result []byte, err error) {
 	if handle == 0 {
 		return nil, errors.New("gov8: null CRDTP byte buffer")
 	}
-	ensureCRDTPBytesProcs()
+	ensureCRDTPCoreProcs()
 	owned := handle
 	defer func() {
 		if owned != 0 {
@@ -120,8 +124,8 @@ func takeCRDTPBytesSized(handle, length uintptr) (result []byte, err error) {
 		return nil, errors.New("gov8: CRDTP byte length exceeds max int")
 	}
 	result = make([]byte, int(length))
-	status, _, _ := crdtpBytesCopyDeleteProc.Call(
-		handle, slicePointer(result), uintptr(len(result)))
+	status, _, _ := syscall.Syscall(crdtpBytesCopyDeleteAddr, 3,
+		handle, uintptr(sliceUnsafePointer(result)), uintptr(len(result)))
 	runtime.KeepAlive(result)
 	if int64(status) < 0 {
 		return nil, shimError("CRDTPBytes.Copy", status)
@@ -325,11 +329,15 @@ func newCRDTPDispatchResponse(kind crdtpResponseKind, message string) (*CRDTPDis
 	if err := loadShim(); err != nil {
 		return nil, err
 	}
-	bytes := []byte(message)
+	ensureCRDTPCoreProcs()
+	var messageData unsafe.Pointer
+	if len(message) != 0 {
+		messageData = unsafe.Pointer(unsafe.StringData(message))
+	}
 	var out uintptr
-	status, _, _ := proc("gov8_crdtp_response_new").Call(
-		uintptr(kind), slicePointer(bytes), uintptr(len(bytes)), uintptr(unsafe.Pointer(&out)))
-	runtime.KeepAlive(bytes)
+	status, _, _ := syscall.Syscall6(crdtpDispatchResponseNewAddr, 4,
+		uintptr(kind), uintptr(messageData), uintptr(len(message)), uintptr(unsafe.Pointer(&out)), 0, 0)
+	runtime.KeepAlive(message)
 	runtime.KeepAlive(&out)
 	if int64(status) < 0 {
 		return nil, shimError("NewCRDTPDispatchResponse", status)
@@ -458,9 +466,9 @@ func (s *CRDTPSerializable) Bytes() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	ensureCRDTPBytesProcs()
+	ensureCRDTPCoreProcs()
 	var view [2]uintptr
-	status, _, _ := crdtpSerializableViewProc.Call(
+	status, _, _ := syscall.Syscall(crdtpSerializableViewAddr, 3,
 		handle, uintptr(unsafe.Pointer(&view[0])), uintptr(unsafe.Pointer(&view[1])))
 	runtime.KeepAlive(&view)
 	if int64(status) < 0 {
@@ -500,7 +508,12 @@ func (s *CRDTPSerializable) Close() error {
 	if handle == 0 {
 		return nil
 	}
-	return callErr("CRDTPSerializable.Close", proc("gov8_crdtp_serializable_delete"), handle)
+	ensureCRDTPCoreProcs()
+	status, _, _ := syscall.Syscall(crdtpSerializableDeleteAddr, 1, handle, 0, 0)
+	if int64(status) < 0 {
+		return shimError("CRDTPSerializable.Close", status)
+	}
+	return nil
 }
 
 func CreateCRDTPErrorResponse(callID int32, response *CRDTPDispatchResponse) (*CRDTPSerializable, error) {

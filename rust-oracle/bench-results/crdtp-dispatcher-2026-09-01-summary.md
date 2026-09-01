@@ -44,3 +44,24 @@ subsequent measured runs completed one million routes each.
 Raw Criterion estimates, samples, and Tukey fences are stored in
 `criterion-crdtp-dispatcher-2026-09-01/`. Machine metadata is in
 `env-2026-09-01-DESKTOP-VJI58KR.txt`.
+
+## Fixed-dispatch follow-up
+
+A second pass replaced allocation-producing variadic calls with cached,
+fixed-arity dispatch; keeps reentrant response ownership outputs heap-stable;
+and reuses an eight-byte invocation buffer for the common short domain
+command. Exact conformance, negative lifecycle, wrong-thread and panic tests,
+two race runs, a 350,000-route nested-output stress test, vet, and diff checks
+passed.
+
+A strict clean-HEAD baseline using the same ABI-37 DLL produced 4140, 4063,
+3958, 3785, 3821, 4314, 3920, 3716, 3793, and 3861 ns/op at 392 B/op and 17
+allocations/op. Final samples were 2942, 3060, 3100, 3129, 3110, 2893, 2817,
+3058, 3021, and 2916 ns/op at 176 B/op and 6 allocations/op. The median fell
+from 3890.5 to 3039.5 ns/op (21.9%), bytes fell 55.1%, and allocations fell
+64.7%.
+
+The immediately paired pinned Rust run reported a 1455.5-1682.6 ns slope 95%
+confidence interval, midpoint 1579.4 ns. Final Go is therefore about 1.92x
+slower. Profiles attribute the remaining material gap primarily to DLL and
+native-to-Go callback transitions.

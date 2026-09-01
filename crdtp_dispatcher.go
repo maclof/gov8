@@ -85,9 +85,14 @@ func crdtpNextIDLocked() (uint64, error) {
 var (
 	crdtpDispatchersOnce        sync.Once
 	crdtpDispatchersErr         error
-	crdtpUberDispatchProc       *syscall.Proc
-	crdtpDomainSendResponseProc *syscall.Proc
+	crdtpUberDispatchAddr       uintptr
+	crdtpDomainSendResponseAddr uintptr
 )
+
+//go:uintptrescapes
+func crdtpEscapingSyscall6(trap, nargs, a1, a2, a3, a4, a5, a6 uintptr) (uintptr, uintptr, syscall.Errno) {
+	return syscall.Syscall6(trap, nargs, a1, a2, a3, a4, a5, a6)
+}
 
 func crdtpCallbackPanic(kind string, recovered any) {
 	fmt.Fprintf(os.Stderr, "gov8: panic in CRDTP %s callback: %v\n", kind, recovered)
@@ -105,6 +110,21 @@ func crdtpCopyCallbackBytes(data, length uintptr) []byte {
 		copy(result, unsafe.Slice((*byte)(abiWordToPtr(data)), int(length)))
 	}
 	return result
+}
+
+func crdtpCopyDomainCommand(invocation *crdtpDomainInvocation, data, length uintptr) []byte {
+	if length > uintptr(^uint(0)>>1) || (data == 0 && length != 0) {
+		fatalHostMisuse("invalid CRDTP callback byte span")
+		panic("unreachable after CRDTP callback byte-span failure")
+	}
+	if length <= uintptr(len(invocation.command)) {
+		command := invocation.command[:int(length):int(length)]
+		if length != 0 {
+			copy(command, unsafe.Slice((*byte)(abiWordToPtr(data)), int(length)))
+		}
+		return command
+	}
+	return crdtpCopyCallbackBytes(data, length)
 }
 
 var crdtpDomainDispatcherCallback = syscall.NewCallback(func(
@@ -140,7 +160,7 @@ var crdtpDomainDispatcherCallback = syscall.NewCallback(func(
 	invocation.responder.frame = &invocation.frame
 	invocation.frame.active.Store(true)
 	defer func() { invocation.frame.active.Store(false) }()
-	if entry.handler.Dispatch(crdtpCopyCallbackBytes(commandData, commandLen),
+	if entry.handler.Dispatch(crdtpCopyDomainCommand(invocation, commandData, commandLen),
 		&invocation.request, &invocation.responder) {
 		return 1
 	}
@@ -290,8 +310,8 @@ func ensureCRDTPDispatchers() error {
 			crdtpDomainDropCallback, crdtpFallthroughCallback,
 			crdtpFallthroughDropCallback, crdtpChannelCallback, crdtpChannelDropCallback)
 		if crdtpDispatchersErr == nil {
-			crdtpUberDispatchProc = proc("gov8_crdtp_uber_dispatch")
-			crdtpDomainSendResponseProc = proc("gov8_crdtp_domain_send_response")
+			crdtpUberDispatchAddr = proc("gov8_crdtp_uber_dispatch").Addr()
+			crdtpDomainSendResponseAddr = proc("gov8_crdtp_domain_send_response").Addr()
 		}
 	})
 	return crdtpDispatchersErr
@@ -498,7 +518,7 @@ func (d *CRDTPUberDispatcher) Dispatch(message *CRDTPDispatchable) error {
 		message.active = false
 		message.mu.Unlock()
 	}()
-	status, _, _ := crdtpUberDispatchProc.Call(handle, messageHandle)
+	status, _, _ := syscall.Syscall(crdtpUberDispatchAddr, 2, handle, messageHandle, 0)
 	if int64(status) < 0 {
 		return shimError("CRDTPUberDispatcher.Dispatch", status)
 	}
@@ -545,6 +565,7 @@ type crdtpDomainInvocation struct {
 	frame     crdtpDomainFrame
 	request   CRDTPDispatchRequest
 	responder CRDTPDomainResponder
+	command   [8]byte
 }
 
 func (f *crdtpDomainFrame) check() error {
@@ -627,10 +648,13 @@ func (r *CRDTPDomainResponder) SendResponse(callID int32, response *CRDTPDispatc
 		result.handle = 0
 		result.mu.Unlock()
 	}
-	var consumed [2]int32
-	status, _, _ := crdtpDomainSendResponseProc.Call(uintptr(r.frame.id),
+	// Native delivery reenters Go before returning. Keep the ownership result
+	// on the heap so its address remains stable if the callback stack grows.
+	consumed := new([2]int32)
+	status, _, _ := crdtpEscapingSyscall6(crdtpDomainSendResponseAddr, 6, uintptr(r.frame.id),
 		uintptr(callID), responseHandle, resultHandle,
 		uintptr(unsafe.Pointer(&consumed[0])), uintptr(unsafe.Pointer(&consumed[1])))
+	runtime.KeepAlive(consumed)
 	if int64(status) < 0 {
 		return shimError("CRDTPDomainResponder.SendResponse", status)
 	}
