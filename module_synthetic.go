@@ -102,6 +102,7 @@ var (
 	syntheticSetExportAddr  uintptr
 	syntheticEvaluateAddr   uintptr
 	syntheticStatusAddr     uintptr
+	syntheticUnregisterAddr uintptr
 	syntheticPanicAbortAddr uintptr
 )
 
@@ -185,6 +186,7 @@ func registerSyntheticModuleCallback(callback SyntheticModuleEvaluationCallback)
 			syntheticSetExportAddr = proc("gov8_synthetic_set_export").Addr()
 			syntheticEvaluateAddr = proc("gov8_synthetic_evaluate").Addr()
 			syntheticStatusAddr = proc("gov8_module_status").Addr()
+			syntheticUnregisterAddr = proc("gov8_synthetic_unregister").Addr()
 			syntheticPanicAbortAddr = proc("gov8_host_panic_abort").Addr()
 		}
 	})

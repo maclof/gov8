@@ -239,9 +239,11 @@ func (m *Module) Close() error {
 	}
 	var syntheticCleanupErr error
 	if m.syntheticCallbackID != 0 {
-		syntheticCleanupErr = callErr("SyntheticModule.Close",
-			proc("gov8_synthetic_unregister"), m.iso.handleAssumingCheck(),
-			uintptr(m.syntheticCallbackID))
+		r2, _, _ := syscall.Syscall(syntheticUnregisterAddr, 2,
+			m.iso.handleAssumingCheck(), uintptr(m.syntheticCallbackID), 0)
+		if int64(r2) < 0 {
+			syntheticCleanupErr = shimError("SyntheticModule.Close", r2)
+		}
 		dropSyntheticModuleCallback(m.syntheticCallbackID)
 		m.syntheticCallbackID = 0
 	}
