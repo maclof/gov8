@@ -160,15 +160,15 @@ serializer Wasm/legacy behavior, the safe native-descriptor substrate for Fast
 API calls, Inspector remote-object wrapping/unwrapping, `$0`–`$4`
 inspected-object history, Inspector idle/async-task lifecycle, owned Inspector
 stack traces, exception reporting, and Inspector client callbacks. The Rust
-fixtures contain 446 normalized checks: 438 compare byte-for-byte with Go, two
-have narrowly documented safety normalizations, and six are executable oracle
+fixtures contain 453 normalized checks: 438 compare byte-for-byte with Go, two
+have narrowly documented safety normalizations, and thirteen are executable oracle
 checks awaiting exact Go conformance coverage.
 Separate fatal and panic-boundary subprocess tests cover unsafe lifecycle and
 callback edges.
 
 This is still not a feature-complete rusty_v8 binding. Major remaining families
 include dynamic-import `kDefer` delivery, residual unsafe CreateParams
-options, string-key-only template APIs, residual Inspector/CRDTP, cppgc, and
+options, string-key-only template APIs, CRDTP, cppgc, and
 the remaining Fast API type/adaptor surface. The
 authoritative gaps and intentional API-shape differences are tracked in
 `PARITY.md`.
