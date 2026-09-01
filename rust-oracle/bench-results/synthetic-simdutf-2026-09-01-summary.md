@@ -144,3 +144,45 @@ Against the frozen Rust midpoints, these current controlled times are about
 2.17x for create and 2.39x for the full path. The improvement beyond the
 explicit scope/cleanup allocation savings is treated as machine-regime drift,
 not attributed to these edits.
+
+## ABI-41 simdutf reprofile
+
+The five matched simdutf workloads were reprofiled against the committed
+ABI-41 DLL
+`0FBD464E2A21526067125465110DCB25C2BCBAD86C4B229809DE9E33A66CA6BF`.
+Inputs, preallocated destinations, validation, and timed boundaries remain
+identical to the pinned Rust benchmark. Every Go workload remains allocation
+free.
+
+```text
+go test . -run '^$' -bench '^BenchmarkSIMDUTF' -benchmem -benchtime=1s -count=7
+```
+
+| Operation | Go ns/op samples | Median | Rust midpoint | Ratio |
+|---|---:|---:|---:|---:|
+| validate mixed UTF-8 4 KiB | 217.5, 235.4, 281.8, 289.8, 278.6, 280.5, 278.4 | 278.6 | 218.465 | 1.28x |
+| UTF-8 to UTF-16LE 4 KiB | 1186, 1322, 1366, 1148, 1162, 1154, 1162 | 1162 | 1074.2 | 1.08x |
+| UTF-16LE to UTF-8 4 KiB | 718.9, 727.3, 734.9, 727.2, 724.2, 733.5, 730.7 | 727.3 | 636.61 | 1.14x |
+| base64 decode 4 KiB | 174.0, 180.1, 174.3, 165.3, 171.5, 173.7, 164.7 | 173.7 | 122.465 | 1.42x |
+| base64 encode 3 KiB | 110.0, 108.1, 221.2, 110.6, 111.4, 215.3, 109.6 | 110.6 | 56.092 | 1.97x |
+
+A combined three-second profile measured 230.3, 1154, 737.6, 175.9, and
+108.5 ns/op respectively. `runtime.cgocall` accounted for 84.6% flat and 92.2%
+cumulative CPU. The base64 encode wrapper itself was about 5.4% of that
+workload; destination-capacity, option, pointer-liveness, and result checks are
+otherwise below the profile's material threshold.
+
+A Go-only candidate replaced each steady-state non-inlineable `sync.Once`
+resolver call with an atomically published procedure-address load. Eight
+alternating 500 ms pairs were inconsistent: validation improved by median but
+only three pairs; UTF-8-to-UTF-16LE five pairs; UTF-16LE-to-UTF-8 six pairs;
+base64 decode regressed from 137.8 to 142.95 ns and only two pairs improved.
+The broad candidate was rejected.
+
+An encode-only version then received eight alternating two-second pairs. The
+baseline samples were 84.19, 84.69, 185.1, 182.2, 82.78, 83.27, 89.71, and
+83.86 ns/op; candidate samples were 86.08, 82.34, 84.85, 84.54, 83.04, 85.02,
+91.34, and 85.71 ns/op. The median regressed 0.59% from 84.44 to 84.935 ns and
+only three of eight pairs improved, so it too was reverted. No production
+change was accepted: the remaining short-operation difference is the Windows
+DLL transition floor, and the checked Go contracts were not weakened.
