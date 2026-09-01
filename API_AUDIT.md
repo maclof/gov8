@@ -12,14 +12,14 @@ and constants, fields, enum variants and trait members are included.
 
 | Classification | Declarations | Percent |
 |---|---:|---:|
-| Matched Go equivalent or documented semantic shape | 1,674 | 90.1% |
-| Partial behavior or evidence | 23 | 1.2% |
+| Matched Go equivalent or documented semantic shape | 1,676 | 90.2% |
+| Partial behavior or evidence | 21 | 1.1% |
 | Missing executable surface | 7 | 0.4% |
 | Unsafe or intentionally unsupported Rust ownership shape | 154 | 8.3% |
 | Ambiguous pending exact executable evidence | 0 | 0.0% |
 | Total | 1,858 | 100% |
 
-The confirmed executable remainder is 30 declarations. There is no remaining
+The confirmed executable remainder is 28 declarations. There is no remaining
 ambiguous bucket. The 154 intentionally unsupported declarations are not
 implementation backlog unless the project
 chooses a comparably safe Go abstraction.
@@ -48,7 +48,7 @@ chooses a comparably safe Go abstraction.
 | `wasm.rs` | 28 | Safe executable surface matched, including positive serialized-cache behavior |
 | `inspector.rs` and `crdtp.rs` | 146 | Safe owned/closed surface matched; raw boxed/vtable representations hidden |
 | `cppgc.rs` | 60 | Persistent handles, safe member operations and custom heaps matched; generic tracing/type shapes and cells remain |
-| `fast_api.rs` | 75 | Descriptor substrate matched; constructor/flag execution is partial; callback-local borrowed ABI shapes are intentionally unsupported |
+| `fast_api.rs` | 75 | Descriptor, constructor and flag execution matched; callback-local borrowed ABI shapes are intentionally unsupported |
 | `simdutf.rs`, `icu.rs` and `json.rs` | 83 | Matched |
 | `external_references.rs` | 16 | Matched for the supported native-address shape |
 | `lib.rs` constants/macros | 13 | Constants matched; Rust lexical-scope macros have no Go analogue |
@@ -61,12 +61,9 @@ denominator above is authoritative.
 
 1. Generic cppgc `Member`/`WeakMember` type shapes, `GcCell`,
    `GarbageCollected`, `Visitor`, `Traced` and allocation.
-2. Full executable Fast API constructor/type/flag matrix.
-3. Safe Go fast-callback adaptation, if a non-borrowed design can preserve V8's ABI and lifetime rules.
-
-The Fast API residual oracle resolved the former ambiguous bucket. Two
-constructors remain partial; six callback-local native/borrowed-pointer items
-are explicitly classified as unsafe or intentionally unsupported.
+The Fast API residual oracle resolved the former ambiguous and partial buckets.
+Six callback-local native/borrowed-pointer items are explicitly classified as
+unsafe or intentionally unsupported.
 
 ## Reproduction
 

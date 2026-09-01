@@ -163,14 +163,14 @@ stack traces, exception reporting, Inspector client callbacks, CRDTP core
 values, serialization and synchronous dispatch, ArrayBuffer allocator
 ownership, cppgc object wrapping with traced targets, strong/weak cppgc
 persistent handles, and custom cppgc heap ownership and process lifecycle. The
-Rust fixtures contain 517 normalized checks: 500 compare byte-for-byte with Go
-and two have narrowly documented safety normalizations; seven generic cppgc and
-eight Fast API residual checks await Go conformance coverage.
+Rust fixtures contain 517 normalized checks: 508 compare byte-for-byte with Go
+and two have narrowly documented safety normalizations; seven generic cppgc
+checks await Go conformance coverage.
 Separate fatal and panic-boundary subprocess tests cover unsafe lifecycle and
 callback edges.
 
 This is still not a feature-complete rusty_v8 binding. Major remaining families
-include residual unsafe CreateParams combinations, the generic cppgc object
-model, and the remaining Fast API type/adaptor surface. The
+include residual unsafe CreateParams combinations and the generic cppgc object
+model. The
 authoritative gaps and intentional API-shape differences are tracked in
 `PARITY.md`; `API_AUDIT.md` provides the 1,858-declaration denominator.

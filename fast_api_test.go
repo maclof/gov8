@@ -9,7 +9,7 @@ import (
 	"unsafe"
 )
 
-func fastTestRuntime(t *testing.T) (*Isolate, *Context, *Scope) {
+func fastTestRuntime(t testing.TB) (*Isolate, *Context, *Scope) {
 	t.Helper()
 	iso, err := NewIsolate()
 	if err != nil {
@@ -35,7 +35,16 @@ func fastTestAddress(t *testing.T, kind uintptr) uintptr {
 	return address
 }
 
-func fastInfo(t *testing.T, kind FastType) FastTypeInfo {
+func fastResidualTestAddress(t testing.TB, kind uintptr) uintptr {
+	t.Helper()
+	address, _, _ := proc("gov8_fast_api_residual_address").Call(kind)
+	if address == 0 {
+		t.Fatalf("residual fast test address %d is zero", kind)
+	}
+	return address
+}
+
+func fastInfo(t testing.TB, kind FastType) FastTypeInfo {
 	t.Helper()
 	info, err := kind.Info()
 	if err != nil {
@@ -183,12 +192,16 @@ func TestFastFunctionTemplateSafetyBoundaries(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	optionsFunction, err := NewCFunction(fastTestAddress(t, 0), withOptions)
+	optionsFunction, err := NewCFunction(fastResidualTestAddress(t, 0), withOptions)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := iso.NewFastFunctionTemplate(scope, slow, nil, []CFunction{optionsFunction}); err == nil || !strings.Contains(err.Error(), "CallbackOptions") {
+	if _, err := iso.NewFastFunctionTemplate(scope, slow, nil, []CFunction{optionsFunction}); err != nil {
 		t.Fatalf("executable CallbackOptions = %v", err)
+	}
+	descriptorBaseline, err := fastAPIDescriptorCount(iso)
+	if err != nil || descriptorBaseline != 1 {
+		t.Fatalf("CallbackOptions descriptor count = %d, %v", descriptorBaseline, err)
 	}
 
 	one := fastFunction(t, fastTestAddress(t, 1), FastTypeV8Value, FastTypeUint32)
@@ -200,8 +213,8 @@ func TestFastFunctionTemplateSafetyBoundaries(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if count, err := fastAPIDescriptorCount(iso); err != nil || count != 0 {
-		t.Fatalf("empty overload retained descriptor storage = %d, %v", count, err)
+	if count, err := fastAPIDescriptorCount(iso); err != nil || count != descriptorBaseline {
+		t.Fatalf("empty overload changed descriptor storage = %d, baseline %d, %v", count, descriptorBaseline, err)
 	}
 	function, err := template.GetFunction(scope, ctx)
 	if err != nil {

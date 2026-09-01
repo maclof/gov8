@@ -334,9 +334,6 @@ func (i *Isolate) NewFastFunctionTemplate(s *Scope, callback FunctionCallback, o
 		if err != nil {
 			return nil, fmt.Errorf("gov8: fast API overload %d: %w", index, err)
 		}
-		if overload.typeInfo.HasOptions() {
-			return nil, fmt.Errorf("gov8: fast API overload %d uses CallbackOptions; executable options metadata is not supported yet", index)
-		}
 		arity := overload.typeInfo.ArgumentCount()
 		if _, duplicate := arities[arity]; duplicate {
 			return nil, fmt.Errorf("gov8: fast API overload %d duplicates public ArgumentCount %d", index, arity)

@@ -340,3 +340,5 @@ __declspec(dllexport) uintptr_t gov8_fast_api_test_layout(int32_t kind) {
 }
 
 }  // extern "C"
+
+#include "fast_api_residual.inc"
