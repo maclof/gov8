@@ -90,8 +90,8 @@ type syntheticEvaluationState struct {
 var syntheticModuleRegistry = struct {
 	sync.Mutex
 	next    uint64
-	entries map[uint64]*syntheticModuleEntry
-}{entries: make(map[uint64]*syntheticModuleEntry)}
+	entries map[uint64]syntheticModuleEntry
+}{entries: make(map[uint64]syntheticModuleEntry)}
 
 var (
 	syntheticDispatcherOnce sync.Once
@@ -108,9 +108,9 @@ var syntheticEvaluationDispatcher = syscall.NewCallback(
 			}
 		}()
 		syntheticModuleRegistry.Lock()
-		entry := syntheticModuleRegistry.entries[uint64(id)]
+		entry, found := syntheticModuleRegistry.entries[uint64(id)]
 		syntheticModuleRegistry.Unlock()
-		if entry == nil || entry.module == nil {
+		if !found || entry.module == nil {
 			fatalHostMisuse("synthetic module callback for unknown handle %d", id)
 			return 0
 		}
@@ -175,15 +175,16 @@ func registerSyntheticModuleCallback(callback SyntheticModuleEvaluationCallback)
 	}
 	syntheticModuleRegistry.next++
 	id := syntheticModuleRegistry.next
-	syntheticModuleRegistry.entries[id] = &syntheticModuleEntry{callback: callback}
+	syntheticModuleRegistry.entries[id] = syntheticModuleEntry{callback: callback}
 	syntheticModuleRegistry.Unlock()
 	return id, nil
 }
 
 func bindSyntheticModuleCallback(id uint64, module *Module) {
 	syntheticModuleRegistry.Lock()
-	if entry := syntheticModuleRegistry.entries[id]; entry != nil {
+	if entry, found := syntheticModuleRegistry.entries[id]; found {
 		entry.module = module
+		syntheticModuleRegistry.entries[id] = entry
 	}
 	syntheticModuleRegistry.Unlock()
 }
@@ -218,10 +219,15 @@ func (c *Context) NewSyntheticModule(s *Scope, moduleName string,
 	if !utf8.ValidString(moduleName) {
 		return nil, errors.New("gov8: synthetic module name is not valid UTF-8")
 	}
-	seen := make(map[string]struct{}, len(exportNames))
-	namePointers := make([]uintptr, len(exportNames))
+	var seen map[string]struct{}
+	if len(exportNames) > 8 {
+		seen = make(map[string]struct{}, len(exportNames))
+	}
+	// Keep pointer provenance in GC-visible unsafe.Pointer values until the
+	// native call. A uintptr captured before callback registration could become
+	// stale if a caller supplied stack-backed string data and the stack moved.
+	namePointers := make([]unsafe.Pointer, len(exportNames))
 	nameLengths := make([]int64, len(exportNames))
-	nameStorage := make([][]byte, len(exportNames))
 	for index, name := range exportNames {
 		if !utf8.ValidString(name) {
 			return nil, errors.New("gov8: synthetic module export name is not valid UTF-8")
@@ -229,34 +235,48 @@ func (c *Context) NewSyntheticModule(s *Scope, moduleName string,
 		if len(name) > math.MaxInt32 {
 			return nil, errors.New("gov8: synthetic module export name exceeds int32")
 		}
-		if _, duplicate := seen[name]; duplicate {
-			return nil, fmt.Errorf("gov8: duplicate synthetic module export %q", name)
+		if seen != nil {
+			if _, duplicate := seen[name]; duplicate {
+				return nil, fmt.Errorf("gov8: duplicate synthetic module export %q", name)
+			}
+			seen[name] = struct{}{}
+		} else {
+			for previous := 0; previous < index; previous++ {
+				if exportNames[previous] == name {
+					return nil, fmt.Errorf("gov8: duplicate synthetic module export %q", name)
+				}
+			}
 		}
-		seen[name] = struct{}{}
-		nameStorage[index] = []byte(name)
-		namePointers[index] = bytesPtr(nameStorage[index])
-		nameLengths[index] = int64(len(nameStorage[index]))
+		if len(name) != 0 {
+			namePointers[index] = unsafe.Pointer(unsafe.StringData(name))
+		}
+		nameLengths[index] = int64(len(name))
 	}
 	callbackID, err := registerSyntheticModuleCallback(callback)
 	if err != nil {
 		return nil, err
 	}
-	moduleNameBytes := []byte(moduleName)
-	var namesArg, lengthsArg uintptr
+	createProc := proc("gov8_synthetic_create")
+	isolateHandle := c.iso.handleAssumingCheck()
+	var moduleNamePointer unsafe.Pointer
+	if len(moduleName) != 0 {
+		moduleNamePointer = unsafe.Pointer(unsafe.StringData(moduleName))
+	}
+	var namesArg, lengthsArg unsafe.Pointer
 	if len(exportNames) != 0 {
-		namesArg = uintptr(unsafe.Pointer(&namePointers[0]))
-		lengthsArg = uintptr(unsafe.Pointer(&nameLengths[0]))
+		namesArg = unsafe.Pointer(&namePointers[0])
+		lengthsArg = unsafe.Pointer(&nameLengths[0])
 	}
 	var out uintptr
-	r1, _, _ := proc("gov8_synthetic_create").Call(
-		c.iso.handleAssumingCheck(), c.handle, scopeHandle,
-		bytesPtr(moduleNameBytes), uintptr(len(moduleNameBytes)), namesArg,
-		lengthsArg, uintptr(len(exportNames)), uintptr(callbackID),
-		uintptr(unsafe.Pointer(&out)))
-	runtime.KeepAlive(moduleNameBytes)
+	r1, _, _ := syscall.Syscall12(createProc.Addr(), 10,
+		isolateHandle, c.handle, scopeHandle,
+		uintptr(moduleNamePointer), uintptr(len(moduleName)), uintptr(namesArg),
+		uintptr(lengthsArg), uintptr(len(exportNames)), uintptr(callbackID),
+		uintptr(unsafe.Pointer(&out)), 0, 0)
+	runtime.KeepAlive(moduleName)
+	runtime.KeepAlive(exportNames)
 	runtime.KeepAlive(namePointers)
 	runtime.KeepAlive(nameLengths)
-	runtime.KeepAlive(nameStorage)
 	if int64(r1) < 0 {
 		dropSyntheticModuleCallback(callbackID)
 		return nil, shimError("NewSyntheticModule", r1)

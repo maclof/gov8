@@ -353,3 +353,41 @@ func TestSyntheticModuleExplicitCleanupOrder(t *testing.T) {
 		t.Fatalf("isolate.Close after module cleanup = %v", err)
 	}
 }
+
+func TestSyntheticModuleManyExportsAndBindingIdentity(t *testing.T) {
+	_, ctx, scope := newTestRuntime(t)
+	exports := []string{"e0", "e1", "e2", "e3", "e4", "e5", "e6", "e7", "e8", "nul\x00key"}
+	modules := make([]*gov8.Module, 32)
+	for index := range modules {
+		index := index
+		module, err := ctx.NewSyntheticModule(scope, fmt.Sprintf("many-%d\x00suffix", index), exports,
+			func(e *gov8.SyntheticModuleEvaluation) (gov8.Value, error) {
+				value := syntheticInt(e, int32(index))
+				if err := e.SetExport("e8", value); err != nil {
+					return gov8.Value{}, err
+				}
+				return value, nil
+			})
+		if err != nil {
+			t.Fatal(err)
+		}
+		modules[index] = module
+	}
+	for index := len(modules) - 1; index >= 0; index-- {
+		module := modules[index]
+		if linked, err := module.Instantiate(scope, func(gov8.ModuleResolveRequest) (*gov8.Module, error) { return nil, nil }, nil); err != nil || !linked {
+			t.Fatalf("module %d Instantiate = %v, %v", index, linked, err)
+		}
+		result, err := module.EvaluateValue(scope, nil)
+		if err != nil {
+			t.Fatalf("module %d EvaluateValue: %v", index, err)
+		}
+		integer, ok, err := result.IntegerValue(ctx)
+		if err != nil || !ok || integer != int64(index) {
+			t.Fatalf("module %d result = %d, %v, %v", index, integer, ok, err)
+		}
+		if err := module.Close(); err != nil {
+			t.Fatalf("module %d Close: %v", index, err)
+		}
+	}
+}

@@ -1,8 +1,11 @@
 // modules_synthetic.inc -- production SyntheticModule bindings.
 // Included after modules.inc so ModuleWrap and the core scope wrappers exist.
 
+#include <array>
+#include <cstring>
 #include <memory>
 #include <mutex>
+#include <string_view>
 #include <unordered_set>
 #include <vector>
 
@@ -30,7 +33,7 @@ T& SyntheticDeref(const v8::Local<T>& local) {
 struct SyntheticCallbackBinding {
   v8::Isolate* isolate;
   uint64_t callback_id;
-  std::unique_ptr<v8::Global<v8::Module>> module;
+  ModuleWrap* module;
 };
 
 std::mutex synthetic_binding_mutex;
@@ -41,7 +44,8 @@ uint64_t FindSyntheticCallback(v8::Isolate* isolate,
   std::lock_guard<std::mutex> lock(synthetic_binding_mutex);
   for (const auto& binding : synthetic_bindings) {
     if (binding.isolate == isolate &&
-        binding.module->Get(isolate) == module) {
+        binding.module != nullptr &&
+        binding.module->module->Get(isolate) == module) {
       return binding.callback_id;
     }
   }
@@ -123,9 +127,21 @@ __declspec(dllexport) int64_t gov8_synthetic_create(
       SetErr("module name allocation failed");
       return kErrGeneric;
     }
-    std::vector<v8::Local<v8::String>> exports;
-    exports.reserve(static_cast<size_t>(export_count));
-    std::unordered_set<std::string> unique_names;
+    constexpr size_t kInlineExportNames = 8;
+    std::array<const v8::String*, kInlineExportNames> inline_export_wires{};
+    std::unique_ptr<const v8::String*[]> heap_export_wires;
+    const v8::String** export_wires = inline_export_wires.data();
+    if (export_count > static_cast<int64_t>(kInlineExportNames)) {
+      heap_export_wires =
+          std::make_unique<const v8::String*[]>(static_cast<size_t>(export_count));
+      export_wires = heap_export_wires.get();
+    }
+    std::unique_ptr<std::unordered_set<std::string_view>> unique_names;
+    if (export_count > static_cast<int64_t>(kInlineExportNames)) {
+      unique_names =
+          std::make_unique<std::unordered_set<std::string_view>>();
+      unique_names->reserve(static_cast<size_t>(export_count));
+    }
     for (int64_t index = 0; index < export_count; ++index) {
       const int64_t length = export_name_lengths[index];
       if (length < 0 || length > INT_MAX ||
@@ -133,49 +149,62 @@ __declspec(dllexport) int64_t gov8_synthetic_create(
         SetErr("invalid export name");
         return kErrBadArg;
       }
-      std::string bytes(export_names[index] == nullptr ? "" : export_names[index],
-                        static_cast<size_t>(length));
-      if (!unique_names.insert(bytes).second) {
-        SetErr("duplicate synthetic module export name");
-        return kErrBadArg;
+      const char* bytes =
+          export_names[index] == nullptr ? "" : export_names[index];
+      if (unique_names != nullptr) {
+        if (!unique_names
+                 ->insert(std::string_view(bytes, static_cast<size_t>(length)))
+                 .second) {
+          SetErr("duplicate synthetic module export name");
+          return kErrBadArg;
+        }
+      } else {
+        for (int64_t previous = 0; previous < index; ++previous) {
+          const int64_t previous_length = export_name_lengths[previous];
+          const char* previous_bytes =
+              export_names[previous] == nullptr ? "" : export_names[previous];
+          if (length == previous_length &&
+              (length == 0 || std::memcmp(bytes, previous_bytes,
+                                          static_cast<size_t>(length)) == 0)) {
+            SetErr("duplicate synthetic module export name");
+            return kErrBadArg;
+          }
+        }
       }
       v8::Local<v8::String> export_name;
-      if (!v8::String::NewFromUtf8(iso, bytes.data(),
+      if (!v8::String::NewFromUtf8(iso, bytes,
                                    v8::NewStringType::kNormal,
-                                   static_cast<int>(bytes.size()))
+                                   static_cast<int>(length))
                .ToLocal(&export_name)) {
         SetErr("export name allocation failed");
         return kErrGeneric;
       }
-      exports.push_back(export_name);
-    }
-    std::vector<const v8::String*> export_wires;
-    export_wires.reserve(exports.size());
-    for (v8::Local<v8::String> export_name : exports) {
-      export_wires.push_back(
-          static_cast<const v8::String*>(ToWire(export_name)));
+      export_wires[index] =
+          static_cast<const v8::String*>(ToWire(export_name));
     }
     const v8::Module* module_wire = v8__Module__CreateSyntheticModule(
         iso, static_cast<const v8::String*>(ToWire(name)),
-        export_wires.size(), export_wires.data(), SyntheticEvaluationSteps);
+        static_cast<size_t>(export_count), export_wires,
+        SyntheticEvaluationSteps);
     if (module_wire == nullptr) {
       SetErr("CreateSyntheticModule returned empty");
       return kErrGeneric;
     }
     v8::Local<v8::Module> module = FromWire<v8::Module>(
         const_cast<v8::Module*>(module_wire));
-    auto* wrap = new ModuleWrap{};
+    auto wrap = std::make_unique<ModuleWrap>();
+    auto global = std::make_unique<v8::Global<v8::Module>>(iso, module);
     wrap->magic = kModuleMagic;
     wrap->iso = iso;
     wrap->ctx = context;
-    wrap->module = new v8::Global<v8::Module>(iso, module);
+    wrap->module = global.get();
     {
       std::lock_guard<std::mutex> lock(synthetic_binding_mutex);
-      synthetic_bindings.push_back(SyntheticCallbackBinding{
-          iso, callback_id,
-          std::make_unique<v8::Global<v8::Module>>(iso, module)});
+      synthetic_bindings.push_back(
+          SyntheticCallbackBinding{iso, callback_id, wrap.get()});
     }
-    *out_module = wrap;
+    global.release();
+    *out_module = wrap.release();
     return kOk;
   } catch (...) {
     SetErr("C++ exception creating synthetic module");
@@ -194,7 +223,6 @@ __declspec(dllexport) int64_t gov8_synthetic_unregister(
   for (auto it = synthetic_bindings.begin(); it != synthetic_bindings.end();
        ++it) {
     if (it->isolate == iso && it->callback_id == callback_id) {
-      it->module->Reset();
       synthetic_bindings.erase(it);
       return kOk;
     }

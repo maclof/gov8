@@ -68,3 +68,31 @@ operations are now dominated by the DLL transition rather than Go allocation
 or redundant input scans. Complete current Criterion samples and reports are
 stored in `criterion-simdutf-fast-2026-09-01/`; the earlier table remains as
 the reproducible baseline rather than being overwritten.
+
+## Synthetic-module follow-up
+
+The synthetic-module path now reuses the module's existing native persistent
+handle for callback identity, keeps up to eight export wires on the stack,
+avoids small duplicate-check sets and transient string copies, and dispatches
+the ten-argument creation call through a fixed-arity syscall. The Go registry
+also stores callback entries by value. Pointer-bearing string data remains
+GC-visible through the call, including for stack-backed caller strings.
+
+Matched Go command:
+
+```text
+go test . -run '^$' -bench '^BenchmarkSyntheticModule(Create|CreateInstantiateEvaluate)$' -benchmem -benchtime=1s -count=10
+```
+
+| Operation | Version | Go ns/op samples | Go B/op; allocs/op | Rust mean 95% CI |
+|---|---|---:|---:|---:|
+| create | baseline | 1832, 1799, 2855, 2327, 2386, 2604, 2636, 2207, 2380, 2801 | 248; 10 | - |
+| create | optimized | 1238, 1195, 1646, 1660, 1687, 1736, 1703, 1596, 1660, 1650 | 136; 6 | 535.89-615.53 ns |
+| create, instantiate, evaluate | baseline | 5641, 5872, 6038, 5724, 5699, 6020, 6351, 6633, 7228, 6461 | 664; 22 | - |
+| create, instantiate, evaluate | optimized | 4850, 4720, 4899, 4966, 4972, 5134, 4944, 4914, 4731, 5221 | 552; 18 | 1.2766-1.4200 us |
+
+The create median improved from 2383 to 1655 ns/op (30.5%) and the full path
+from 6029 to 4929 ns/op (18.2%). The remaining gaps are about 2.9x and 3.7x
+against the Rust mean, dominated by DLL/V8 creation and the evaluation callback
+transition. Complete current Rust samples are stored in
+`criterion-synthetic-fast-2026-09-01/`.
