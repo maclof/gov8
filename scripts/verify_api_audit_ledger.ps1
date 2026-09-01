@@ -323,4 +323,4 @@ if ($Regenerate) {
     $ordered | Export-Csv -LiteralPath $ledger -NoTypeInformation -Encoding UTF8
 }
 
-Write-Host "API audit ledger verified: 1857 declarations (1696 matched, 10 partial, 151 unsafe)."
+Write-Host "API audit ledger verified: 1857 declarations (1696 matched, 10 partial, 151 intentional-shape/unsafe-status)."

@@ -172,8 +172,10 @@ callback edges.
 
 All audited safe executable pinned behavior is covered, but this is not a claim
 of literal Rust API-shape parity. Ten callback-borrowed or generic cppgc
-declarations use intentional safe Go equivalents, and 151 unsafe ownership
-shapes remain unexposed. Nor is this a global performance-parity claim: several
+declarations use intentional safe Go equivalents, and 151 raw, borrowed, or
+generic carrier shapes remain unexposed (the audit ledger groups these under
+its `unsafe` shape status even when the Rust method itself is safe). Nor is this
+a global performance-parity claim: several
 matched workloads still have measured Go overhead and remain optimization
 targets. The authoritative distinctions are tracked in
 `PARITY.md`; `API_AUDIT.md` provides the reproducible 1,857-declaration

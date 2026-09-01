@@ -174,7 +174,8 @@ strict Clippy and full tests; the Go suite passes
 
 All audited safe executable behavior is covered. This does not claim literal
 Rust API-shape parity: ten borrowed or generic cppgc declarations retain safe,
-intentional Go shapes, and 151 unsafe ownership declarations remain unexposed.
+intentional Go shapes, and 151 raw/borrowed/generic carrier declarations remain
+unexposed under the audit ledger's broadly named `unsafe` shape status.
 It also does not claim performance parity. Matched Go harnesses and archived
 repeated comparisons now cover all 37 pinned Rust workloads, so there is no
 remaining measurement-coverage backlog. Material optimization gaps remain in

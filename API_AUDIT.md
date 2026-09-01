@@ -19,15 +19,17 @@ publicly reexports remain in the ledger.
 | Matched Go equivalent or documented semantic shape | 1,696 | 91.3% |
 | Partial language-shape difference with safe behavioral equivalent | 10 | 0.5% |
 | Missing executable surface | 0 | 0.0% |
-| Unsafe or intentionally unsupported Rust ownership shape | 151 | 8.1% |
+| Intentional raw/borrowed/generic Rust shape (ledger status `unsafe`) | 151 | 8.1% |
 | Ambiguous pending exact executable evidence | 0 | 0.0% |
 | Total | 1,857 | 100% |
 
 The confirmed executable declaration remainder is zero. There is no remaining
 ambiguous bucket. The ten partial declarations have safe behavioral Go
-equivalents but not literal Rust borrowed/generic API shapes. The 151
-intentionally unsupported declarations are not implementation backlog unless
-the project chooses a comparably safe Go abstraction.
+equivalents but not literal Rust borrowed/generic API shapes. The ledger's
+`unsafe` status is a project taxonomy for 151 intentionally unexposed carrier
+shapes; it does not mean every corresponding Rust declaration is an `unsafe
+fn`. These rows are not implementation backlog unless the project chooses a
+comparably safe Go abstraction.
 
 ## Source-family inventory
 
@@ -67,8 +69,9 @@ surface changed as a result.
 
 ## Classification boundary
 
-The 151 unsafe rows are individually identified in the ledger. Their exact
-rationale totals are: 49 Rust pinning/lexical-scope construction declarations,
+The 151 `unsafe`-status rows are individually identified in the ledger. Their
+exact rationale totals are: 49 Rust pinning/lexical-scope construction
+declarations,
 32 generic smart-pointer or mapping-vtable declarations, 23 raw or unchecked
 handle declarations, 15 raw isolate/manual-entry declarations, 10 generated
 ABI-layout declarations, 9 raw allocator/backing-pointer declarations, 6
@@ -76,6 +79,15 @@ callback-borrowed Fast API declarations, 4 raw Inspector wrapper/iterator
 declarations, 2 raw stack-pointer declarations and 1 Rust `SharedRef` platform
 ownership declaration. Safe behavior above these raw shapes is classified and
 tested separately rather than counted as a raw Go API.
+
+Forty-nine of the 73 function rows in this bucket are safe Rust methods on an
+intentionally absent carrier, including `Local::{new,try_cast,cast}`, pinning
+scaffolding, smart-pointer accessors, `FastApiOneByteString::as_bytes`, and
+`V8::get_current_platform`. Their executable behavior is mapped through the
+safe Go handles, conversions, scopes, callbacks, and platform operations named
+in each ledger row. Conversely, the three explicitly unsafe `UnsafePtr` rows
+remain in the partial bucket because Go supplies an owner-mediated behavioral
+equivalent. The status names classify Go API-shape treatment, not Rust syntax.
 
 The row-level reconciliation found no missing safe executable declaration. It
 also corrected three stale unsafe classifications for APIs already implemented
@@ -109,8 +121,8 @@ they provide no missing safe executable behavior and remain deliberately raw.
 
 These are literal API-shape differences, not unimplemented safe behavior. The
 Fast API residual oracle resolved its former ambiguous and partial buckets; six
-callback-local native/borrowed-pointer Fast API items are classified as unsafe
-or intentionally unsupported.
+callback-local native/borrowed-pointer Fast API items carry the intentional
+`unsafe`-shape status.
 
 ## Reproduction
 
