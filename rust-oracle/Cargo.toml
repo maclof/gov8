@@ -46,6 +46,9 @@ v8 = "=152.2.0"
 [dev-dependencies]
 criterion = "=0.8.2"
 
+[build-dependencies]
+cc = "=1.4.4"
+
 [[bench]]
 name = "startup"
 path = "benches/startup.rs"
