@@ -133,8 +133,13 @@ func Same(a, b Value) (bool, error) {
 // --- backing stores -----------------------------------------------------------
 //
 // BackingStore is one counted reference to engine-owned (or embedder-owned,
-// for FromPtr stores) raw memory. It is safe to use only on the isolate's
-// owning thread, like every other gov8 resource.
+// for FromPtr stores) raw memory. Like rusty_v8's SharedRef<BackingStore>, it
+// may outlive its creating isolate and its copied queries/read/write/Close
+// operations are safe from any thread. Creating an engine object from it
+// remains isolate- and thread-affine. These copied native shared-reference
+// operations also remain valid after Dispose and DisposePlatform: they do not
+// enter V8 or use its platform, and Close must remain available to release the
+// final allocator/storage reference after process shutdown.
 
 // BackingStoreDeleter is invoked exactly once when the last reference to a
 // FromPtr backing store dies: (data, byteLength, deleterData) -- the same
@@ -142,9 +147,29 @@ func Same(a, b Value) (bool, error) {
 type BackingStoreDeleter func(data unsafe.Pointer, byteLength int, deleterData uintptr)
 
 type BackingStore struct {
-	iso    *Isolate
-	handle uintptr
-	closed bool
+	mu                            sync.Mutex
+	iso                           *Isolate
+	handle                        uintptr
+	arrayBufferAllocatorReference uintptr
+	closed                        bool
+	closing                       bool
+	active                        int
+}
+
+func cloneArrayBufferAllocatorReference(reference uintptr) (uintptr, error) {
+	if reference == 0 {
+		return 0, nil
+	}
+	return callHandle("ArrayBufferAllocator.backing-store.clone", proc("gov8_aba_clone"), reference)
+}
+
+func (i *Isolate) backingStore(handle uintptr) (*BackingStore, error) {
+	reference, err := cloneArrayBufferAllocatorReference(i.arrayBufferAllocatorReference)
+	if err != nil {
+		_ = callErr("BackingStore.rollback", proc("gov8_backing_store_dispose"), handle)
+		return nil, err
+	}
+	return &BackingStore{iso: i, handle: handle, arrayBufferAllocatorReference: reference}, nil
 }
 
 // deleterRegistry maps integer handles handed to the engine to Go deleter
@@ -206,7 +231,7 @@ func (i *Isolate) NewBackingStore(byteLength int) (*BackingStore, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &BackingStore{iso: i, handle: h}, nil
+	return i.backingStore(h)
 }
 
 // NewBackingStoreFromSlice creates a backing store that owns a copy of data
@@ -272,22 +297,39 @@ func (i *Isolate) NewBackingStoreFromPtr(data unsafe.Pointer, byteLength int, fn
 	return &BackingStore{iso: i, handle: h}, nil
 }
 
-func (bs *BackingStore) check() error {
-	if err := bs.iso.check(); err != nil {
-		return err
+func (bs *BackingStore) beginUse() (uintptr, error) {
+	if bs == nil {
+		return 0, fmt.Errorf("gov8: nil backing store")
 	}
-	if bs.closed {
-		return fmt.Errorf("gov8: backing store used after Close")
+	if err := loadShim(); err != nil {
+		return 0, err
 	}
-	return nil
+	bs.mu.Lock()
+	defer bs.mu.Unlock()
+	if bs.closed || bs.handle == 0 {
+		return 0, fmt.Errorf("gov8: backing store used after Close")
+	}
+	if bs.closing {
+		return 0, fmt.Errorf("gov8: backing store Close is active")
+	}
+	bs.active++
+	return bs.handle, nil
+}
+
+func (bs *BackingStore) endUse() {
+	bs.mu.Lock()
+	bs.active--
+	bs.mu.Unlock()
 }
 
 // ByteLength returns the length in bytes of the store's memory.
 func (bs *BackingStore) ByteLength() (int, error) {
-	if err := bs.check(); err != nil {
+	handle, err := bs.beginUse()
+	if err != nil {
 		return 0, err
 	}
-	r1, _, _ := proc("gov8_backing_store_byte_length").Call(bs.handle)
+	defer bs.endUse()
+	r1, _, _ := proc("gov8_backing_store_byte_length").Call(handle)
 	if int64(r1) < 0 {
 		return 0, shimError("BackingStore.ByteLength", r1)
 	}
@@ -296,10 +338,12 @@ func (bs *BackingStore) ByteLength() (int, error) {
 
 // IsShared reports whether the store was created for a SharedArrayBuffer.
 func (bs *BackingStore) IsShared() (bool, error) {
-	if err := bs.check(); err != nil {
+	handle, err := bs.beginUse()
+	if err != nil {
 		return false, err
 	}
-	r1, _, _ := proc("gov8_backing_store_is_shared").Call(bs.handle)
+	defer bs.endUse()
+	r1, _, _ := proc("gov8_backing_store_is_shared").Call(handle)
 	if int64(r1) < 0 {
 		return false, shimError("BackingStore.IsShared", r1)
 	}
@@ -309,10 +353,12 @@ func (bs *BackingStore) IsShared() (bool, error) {
 // IsResizableByUserJavaScript reports whether the store belongs to a
 // resizable ArrayBuffer (or growable SharedArrayBuffer).
 func (bs *BackingStore) IsResizableByUserJavaScript() (bool, error) {
-	if err := bs.check(); err != nil {
+	handle, err := bs.beginUse()
+	if err != nil {
 		return false, err
 	}
-	r1, _, _ := proc("gov8_backing_store_is_resizable").Call(bs.handle)
+	defer bs.endUse()
+	r1, _, _ := proc("gov8_backing_store_is_resizable").Call(handle)
 	if int64(r1) < 0 {
 		return false, shimError("BackingStore.IsResizableByUserJavaScript", r1)
 	}
@@ -324,10 +370,12 @@ func (bs *BackingStore) IsResizableByUserJavaScript() (bool, error) {
 // it. This is the readable form of the crate's assert_use_count_eq polling
 // assertion.
 func (bs *BackingStore) UseCount() (int, error) {
-	if err := bs.check(); err != nil {
+	handle, err := bs.beginUse()
+	if err != nil {
 		return 0, err
 	}
-	r1, _, _ := proc("gov8_backing_store_use_count").Call(bs.handle)
+	defer bs.endUse()
+	r1, _, _ := proc("gov8_backing_store_use_count").Call(handle)
 	if int64(r1) < 0 {
 		return 0, shimError("BackingStore.UseCount", r1)
 	}
@@ -341,15 +389,17 @@ func (bs *BackingStore) ReadAt(buf []byte, off int) (int, error) {
 	if off < 0 {
 		return 0, fmt.Errorf("gov8: negative backing store read offset")
 	}
-	if err := bs.check(); err != nil {
+	handle, err := bs.beginUse()
+	if err != nil {
 		return 0, err
 	}
+	defer bs.endUse()
 	var p uintptr
 	if len(buf) > 0 {
 		p = uintptr(unsafe.Pointer(&buf[0]))
 	}
 	r1, _, _ := proc("gov8_backing_store_read_at").Call(
-		bs.handle, uintptr(off), p, uintptr(len(buf)))
+		handle, uintptr(off), p, uintptr(len(buf)))
 	if int64(r1) < 0 {
 		return 0, shimError("BackingStore.ReadAt", r1)
 	}
@@ -364,15 +414,17 @@ func (bs *BackingStore) WriteAt(data []byte, off int) (int, error) {
 	if off < 0 {
 		return 0, fmt.Errorf("gov8: negative backing store write offset")
 	}
-	if err := bs.check(); err != nil {
+	handle, err := bs.beginUse()
+	if err != nil {
 		return 0, err
 	}
+	defer bs.endUse()
 	var p uintptr
 	if len(data) > 0 {
 		p = uintptr(unsafe.Pointer(&data[0]))
 	}
 	r1, _, _ := proc("gov8_backing_store_write_at").Call(
-		bs.handle, uintptr(off), p, uintptr(len(data)))
+		handle, uintptr(off), p, uintptr(len(data)))
 	if int64(r1) < 0 {
 		return 0, shimError("BackingStore.WriteAt", r1)
 	}
@@ -381,22 +433,44 @@ func (bs *BackingStore) WriteAt(data []byte, off int) (int, error) {
 
 // Close drops this reference to the store. When it is the last one, the
 // store's memory is freed (and an external deleter runs) synchronously on
-// the owning thread. Close is idempotent-guarded: a second call is an error.
+// the calling thread. Close is idempotent-guarded: a second call is an error.
 func (bs *BackingStore) Close() error {
-	if err := bs.iso.check(); err != nil {
+	if bs == nil {
+		return fmt.Errorf("gov8: nil backing store")
+	}
+	if err := loadShim(); err != nil {
 		return err
 	}
-	if bs.closed {
+	bs.mu.Lock()
+	if bs.closed || bs.handle == 0 {
+		bs.mu.Unlock()
 		return fmt.Errorf("gov8: backing store already closed")
 	}
-	if err := requireInitialized(); err != nil {
+	if bs.closing || bs.active != 0 {
+		bs.mu.Unlock()
+		return fmt.Errorf("gov8: backing store is active")
+	}
+	bs.closing = true
+	handle := bs.handle
+	bs.mu.Unlock()
+	if err := callErr("BackingStore.Close", proc("gov8_backing_store_dispose"), handle); err != nil {
+		bs.mu.Lock()
+		bs.closing = false
+		bs.mu.Unlock()
 		return err
 	}
-	if err := callErr("BackingStore.Close", proc("gov8_backing_store_dispose"), bs.handle); err != nil {
-		return err
-	}
+	bs.mu.Lock()
 	bs.closed = true
 	bs.handle = 0
+	allocatorReference := bs.arrayBufferAllocatorReference
+	bs.arrayBufferAllocatorReference = 0
+	bs.closing = false
+	bs.mu.Unlock()
+	if allocatorReference != 0 {
+		if err := callErr("ArrayBufferAllocator.backing-store.Close", proc("gov8_aba_dispose"), allocatorReference); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -438,9 +512,6 @@ func NewArrayBufferWithBackingStore(s *Scope, c *Context, bs *BackingStore) (*Ar
 	if bs == nil {
 		return nil, fmt.Errorf("gov8: nil backing store")
 	}
-	if err := bs.check(); err != nil {
-		return nil, err
-	}
 	if err := contextHandles(s, c, "NewArrayBufferWithBackingStore"); err != nil {
 		return nil, err
 	}
@@ -451,8 +522,13 @@ func NewArrayBufferWithBackingStore(s *Scope, c *Context, bs *BackingStore) (*Ar
 	if s.iso != bs.iso {
 		return nil, foreignIsolate("backing store")
 	}
+	backingStoreHandle, err := bs.beginUse()
+	if err != nil {
+		return nil, err
+	}
+	defer bs.endUse()
 	var out uintptr
-	r1, _, _ := proc("gov8_array_buffer_new_with_backing_store").Call(ih, c.handle, sh, bs.handle, uintptr(unsafe.Pointer(&out)))
+	r1, _, _ := proc("gov8_array_buffer_new_with_backing_store").Call(ih, c.handle, sh, backingStoreHandle, uintptr(unsafe.Pointer(&out)))
 	if int64(r1) < 0 {
 		return nil, shimError("NewArrayBufferWithBackingStore", r1)
 	}
@@ -567,7 +643,7 @@ func (ab *ArrayBuffer) GetBackingStore() (*BackingStore, error) {
 	if int64(r1) < 0 {
 		return nil, shimError("ArrayBuffer.GetBackingStore", r1)
 	}
-	return &BackingStore{iso: ab.iso, handle: out}, nil
+	return ab.iso.backingStore(out)
 }
 
 // Detach detaches the buffer and all its views. c is the context used for
@@ -657,9 +733,6 @@ func NewSharedArrayBufferWithBackingStore(s *Scope, c *Context, bs *BackingStore
 	if bs == nil {
 		return nil, fmt.Errorf("gov8: nil backing store")
 	}
-	if err := bs.check(); err != nil {
-		return nil, err
-	}
 	if err := contextHandles(s, c, "NewSharedArrayBufferWithBackingStore"); err != nil {
 		return nil, err
 	}
@@ -670,8 +743,13 @@ func NewSharedArrayBufferWithBackingStore(s *Scope, c *Context, bs *BackingStore
 	if s.iso != bs.iso {
 		return nil, foreignIsolate("backing store")
 	}
+	backingStoreHandle, err := bs.beginUse()
+	if err != nil {
+		return nil, err
+	}
+	defer bs.endUse()
 	var out uintptr
-	r1, _, _ := proc("gov8_sab_new_with_backing_store").Call(ih, c.handle, sh, bs.handle, uintptr(unsafe.Pointer(&out)))
+	r1, _, _ := proc("gov8_sab_new_with_backing_store").Call(ih, c.handle, sh, backingStoreHandle, uintptr(unsafe.Pointer(&out)))
 	if int64(r1) < 0 {
 		return nil, shimError("NewSharedArrayBufferWithBackingStore", r1)
 	}
@@ -722,7 +800,7 @@ func (sab *SharedArrayBuffer) GetBackingStore() (*BackingStore, error) {
 	if int64(r1) < 0 {
 		return nil, shimError("SharedArrayBuffer.GetBackingStore", r1)
 	}
-	return &BackingStore{iso: sab.iso, handle: out}, nil
+	return sab.iso.backingStore(out)
 }
 
 // NewSharedArrayBufferBackingStore allocates a standalone shared backing
@@ -740,7 +818,7 @@ func (i *Isolate) NewSharedArrayBufferBackingStore(byteLength int) (*BackingStor
 	if err != nil {
 		return nil, err
 	}
-	return &BackingStore{iso: i, handle: h}, nil
+	return i.backingStore(h)
 }
 
 // NewSharedArrayBufferBackingStoreFromSlice creates a shared backing store

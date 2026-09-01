@@ -192,6 +192,9 @@ func NewIsolateWithSnapshotParams(params *SnapshotCreateParams) (*Isolate, error
 	if configuration.cppGCHeap != nil {
 		return nil, errors.New("gov8: custom cppgc heaps are not supported with snapshot CreateParams")
 	}
+	if configuration.arrayBufferAllocator != nil {
+		return nil, errors.New("gov8: custom ArrayBuffer allocators are not supported with snapshot CreateParams")
+	}
 	if len(snapshotBytes) > math.MaxInt32 {
 		return nil, errors.New("gov8: startup blob exceeds V8's int32 size limit")
 	}

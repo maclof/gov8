@@ -8,7 +8,7 @@ This matrix tracks observable parity against the sole supported reference:
 - Artifact SHA-256: `0b17ca072bae37dd4ff00e6014d2b413becb031c9342ee11cb8226a5881f62b2`
 
 The declaration-level denominator and remaining symbol clusters are tracked in
-`API_AUDIT.md`: 1,670 of 1,858 public declarations currently have a matched Go
+`API_AUDIT.md`: 1,674 of 1,858 public declarations currently have a matched Go
 equivalent or documented semantic shape.
 
 Status meanings: **complete** means the listed slice has executable Rust and Go
@@ -18,17 +18,17 @@ characterized but the Go implementation is not integrated; **missing** means no
 production Go implementation exists. A family is not promoted merely because a
 type or stub exists.
 
-The fixtures under `rust-oracle/tests/fixtures` currently contain 510 normalized
-checks. Go matches 494 byte-for-byte and two more after documented safety
-normalizations; six ArrayBuffer allocator and eight Fast API residual checks
-are currently oracle-only. Fatal and panic-boundary
+The fixtures under `rust-oracle/tests/fixtures` currently contain 517 normalized
+checks. Go matches 500 byte-for-byte and two more after documented safety
+normalizations; seven generic cppgc and eight Fast API residual checks are
+currently oracle-only. Fatal and panic-boundary
 subprocess tests are additional evidence and are not counted in that total.
 
 | Rust API family / behavior | Go implementation | Conformance and benchmark evidence | Status / remaining gaps |
 |---|---|---|---|
 | Platform initialization, version, dispose ordering | `Initialize`, `EngineVersion`, `VersionString`, `Dispose`, `DisposePlatform`, `Shutdown` | base conformance; startup benchmarks | **complete** for the default platform lifecycle; invalid Rust transitions panic while Go intentionally returns errors |
 | Platform/task implementations and message-loop control | `ConfigurePlatform` for built-in variants, `ConfigureCustomPlatform`, `PlatformImpl`, `Task`, `IdleTask`, `Isolate.PumpMessageLoop`, `Isolate.RunIdleTasks`, flags and WebAssembly trap activation | 4-check built-in fixture exact; 3-check custom-platform fixture (two exact, one deadlock-safety normalization); lifecycle/panic/race tests; controls-hooks and Wasm async conformance; matched end-to-end compilation benchmark | **partial**: the pinned platform/task declarations are implemented with explicit transferred-task ownership; a matched custom-dispatch overhead benchmark remains |
-| `Isolate` lifecycle and parallel isolates | `NewIsolate`, `NewIsolateWithParams`, `CreateParams`, `SnapshotCreateParams`, external-reference tables, custom cppgc heap transfer, heap/code/space statistics, profiler/notification and control APIs, heap-snapshot streaming | base, 9-check isolate-advanced, core-advanced, snapshots, external-reference, 5-check snapshot-CreateParams, controls-hooks, 3-check heap-snapshot and 6-check cppgc heap-lifecycle fixtures exact; lifecycle/concurrency/fatal tests; startup benchmarks | **partial**: custom cppgc heap ownership, profiler controls and heap-snapshot streaming are exact; unsafe custom allocators, raw Go-stack limits and custom-heap/snapshot composition remain explicit gaps |
+| `Isolate` lifecycle and parallel isolates | `NewIsolate`, `NewIsolateWithParams`, `CreateParams`, `SnapshotCreateParams`, external-reference tables, custom ArrayBuffer allocator and cppgc heap transfer, heap/code/space statistics, profiler/notification and control APIs, heap-snapshot streaming | base, 9-check isolate-advanced, core-advanced, snapshots, external-reference, 5-check snapshot-CreateParams, controls-hooks, 3-check heap-snapshot, 6-check allocator and 6-check cppgc heap-lifecycle fixtures exact; lifecycle/concurrency/fatal tests; startup benchmarks | **partial**: custom allocator/heap ownership, profiler controls and heap-snapshot streaming are exact; raw Go-stack limits and custom allocator/heap snapshot composition remain explicit gaps |
 | `Locker`, shared isolates and thread affinity | `locker.go`; owner-thread validation; weak-handle shared-isolate guards | `core-advanced/thread/*`; wrong-thread, concurrent-isolate, conversion-rejection, and post-conversion weak tests | **complete** for the characterized shared-isolate surface |
 | Local, escapable, persistent and weak handles | `Scope`, `EscapableScope`, `Global`, `Weak`, `Eternal`, `TracedReference`, guaranteed finalizers; disallow/allow JavaScript execution scopes | core-advanced, host, snapshots, context-scopes and 8-check residual-handle fixtures; cppgc traced-target fixture; lifecycle/finalizer/wrong-isolate/fatal-mode tests | **complete** for safe managed-handle behavior; Rust raw `Local`/`SealedLocal` casts, unchecked lifetime extension and generic handle traits are intentionally not exposed; broader cppgc pointer types are tracked separately |
 | Context creation and globals | `NewContext`, `NewContextWithOptions`, `ContextFromSnapshotWithOptions`, global reuse, embedder data/pointers/slots, extras binding, continuation data, promise hooks and execution allow/disallow scopes | base/core/runtime/template, 8-check context-scopes and 4-check context-residual fixtures; fatal/lifecycle tests; context startup benchmarks | **complete** for the safe executable pinned Context declarations; unsupported fatal indices, unaligned pointers and uncleared snapshot slots are rejected before V8 entry |
@@ -42,7 +42,7 @@ subprocess tests are additional evidence and are not counted in that total.
 | Native functions, callbacks and accessors | `callback.go`, `template.go`, `function_advanced.go`, `fast_api.go`, Inspector-backed side-effect evaluation | host, all 6 Function checks and 4-check Fast API substrate fixture exact; cache/fatal subprocess tests; Rust/Go callback and Function benchmarks | **partial**: the characterized Function surface and safe Fast API descriptor/build path match; the broader Fast API surface is tracked separately |
 | Object/function templates and interceptors | `template.go`, `template_advanced.go`, `object_callback_retention.go`, `template_name_keys.go` | host, 14-check template-advanced, template-data portion of the 6-check callback-retention fixture, 5-check arbitrary Name-key fixture and 5-check template-accessor Name-key fixture exact in Go; negative/fatal/lifecycle/GC/thread/race tests; Go benchmarks | **complete** for the safe executable pinned template declarations: shared values, accessor properties and native-data conveniences accept String and Symbol keys with exact retention, replacement, attributes and publication behavior; `build_fast` is tracked under Fast API |
 | Promises, resolvers and rejection hooks | `promise.go` | host fixture; lifecycle tests; Rust/Go benchmarks; handler/reject panic subprocess parity | **complete** for the safe executable pinned Promise, PromiseResolver and rejection-hook surface; Go retains callbacks through explicit isolate-owned registries |
-| ArrayBuffer, SharedArrayBuffer and backing stores | `buffer.go` | 21-check buffer fixture; fatal-boundary/lifecycle/deleter tests; Go benchmarks | **partial**: ArrayBuffer, SharedArrayBuffer and backing-store behavior is exact; public allocator construction/selection remains unsupported and is tracked with isolate configuration |
+| ArrayBuffer, SharedArrayBuffer and backing stores | `buffer.go`, `array_buffer_allocator.go`; initialized/uninitialized allocation, free/drop observation and shared allocator ownership | 21-check buffer and 6-check allocator fixtures exact; fatal-boundary/lifecycle/deleter, post-isolate/post-shutdown and concurrent-thread tests; Go benchmarks | **complete** for the safe executable pinned surface, including pre-initialize factories, zero-size bypass, transfer allocation, backing-store lifetime and shared multi-isolate use; Rust's raw pointer-returning allocator vtable is represented by a native-memory callback façade |
 | Typed arrays and DataView | `typed_arrays.go` | 14-check typed-array fixture; per-kind boundary/fatal tests; Go benchmarks | **complete** for all 12 pinned typed-array kinds and characterized geometry/data behavior |
 | Value serializer/deserializer and delegates | `serializer.go`, `serializer_delegates.go`, `serializer_wasm_legacy.go` | buffer, 25-check delegate and 4-check Wasm/legacy residual fixtures; reader/writer panic boundaries; Go benchmarks | **complete** for the safe executable pinned declarations: typed Wasm-module restoration, repeated-reference identity, full `u32` transfer IDs, wire-version reporting and pre-read legacy control are exact |
 | Snapshots and startup data | `snapshot.go`, `create_params_snapshot.go`; creation, cloning, validation, rehashability, context/data recovery, safe CreateParams composition, external-reference remapping and ownership | 15-check snapshot/handle, 3-check external-reference and 5-check snapshot-CreateParams fixtures; negative, reuse, concurrent-consumer and cross-thread tests; Go benchmarks | **partial**: safe snapshot consumer parameters and external-reference inputs are exact; embedder-owned allocator/heap inputs remain intentionally unsupported |
@@ -158,15 +158,14 @@ subprocess tests are additional evidence and are not counted in that total.
 
 ## Verification state
 
-On 2026-09-01, the Rust fixtures contain 510 normalized checks. Go compares 494 checks
+On 2026-09-01, the Rust fixtures contain 517 normalized checks. Go compares 500 checks
 byte-for-byte; the advanced stack line and custom-platform inline-deadlock probe
-pass after the two narrow safety normalizations documented above. Six ArrayBuffer
-allocator and eight Fast API residual checks remain oracle-only.
+pass after the two narrow safety normalizations documented above. Seven generic
+cppgc and eight Fast API residual checks remain oracle-only.
 The Rust oracle suites pass formatting,
 strict Clippy and full tests; the Go suite passes
 `go test ./... -count=1`, `go vet ./...`, full race checks and benchmark smoke runs.
 `scripts/verify_windows.ps1` explicitly reruns every current conformance package.
 
-The remaining rows are real product scope. In particular, generic cppgc,
-ArrayBuffer allocators and the remaining Fast API surface are not silently
-deferred.
+The remaining rows are real product scope. In particular, generic cppgc and the
+remaining Fast API surface are not silently deferred.

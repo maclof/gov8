@@ -160,18 +160,17 @@ serializer Wasm/legacy behavior, the safe native-descriptor substrate for Fast
 API calls, Inspector remote-object wrapping/unwrapping, `$0`–`$4`
 inspected-object history, Inspector idle/async-task lifecycle, owned Inspector
 stack traces, exception reporting, Inspector client callbacks, CRDTP core
-values, serialization and synchronous dispatch, cppgc object wrapping with
-traced targets, strong/weak cppgc persistent handles, and custom cppgc heap
-ownership and process lifecycle. The Rust fixtures contain 510 normalized
-checks: 494 compare byte-for-byte with Go and two have narrowly documented
-safety normalizations; six ArrayBuffer allocator and eight Fast API residual
-checks await Go conformance coverage.
+values, serialization and synchronous dispatch, ArrayBuffer allocator
+ownership, cppgc object wrapping with traced targets, strong/weak cppgc
+persistent handles, and custom cppgc heap ownership and process lifecycle. The
+Rust fixtures contain 517 normalized checks: 500 compare byte-for-byte with Go
+and two have narrowly documented safety normalizations; seven generic cppgc and
+eight Fast API residual checks await Go conformance coverage.
 Separate fatal and panic-boundary subprocess tests cover unsafe lifecycle and
 callback edges.
 
 This is still not a feature-complete rusty_v8 binding. Major remaining families
-include residual unsafe CreateParams and ArrayBuffer allocator options, the
-residual generic cppgc object model, and the remaining Fast API type/adaptor
-surface. The
+include residual unsafe CreateParams combinations, the generic cppgc object
+model, and the remaining Fast API type/adaptor surface. The
 authoritative gaps and intentional API-shape differences are tracked in
 `PARITY.md`; `API_AUDIT.md` provides the 1,858-declaration denominator.

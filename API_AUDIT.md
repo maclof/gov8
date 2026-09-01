@@ -12,15 +12,15 @@ and constants, fields, enum variants and trait members are included.
 
 | Classification | Declarations | Percent |
 |---|---:|---:|
-| Matched Go equivalent or documented semantic shape | 1,670 | 89.9% |
-| Partial behavior or evidence | 24 | 1.3% |
-| Missing executable surface | 9 | 0.5% |
-| Unsafe or intentionally unsupported Rust ownership shape | 155 | 8.3% |
+| Matched Go equivalent or documented semantic shape | 1,674 | 90.1% |
+| Partial behavior or evidence | 23 | 1.2% |
+| Missing executable surface | 7 | 0.4% |
+| Unsafe or intentionally unsupported Rust ownership shape | 154 | 8.3% |
 | Ambiguous pending exact executable evidence | 0 | 0.0% |
 | Total | 1,858 | 100% |
 
-The confirmed executable remainder is 33 declarations. There is no remaining
-ambiguous bucket. The 155 intentionally unsupported declarations are not
+The confirmed executable remainder is 30 declarations. There is no remaining
+ambiguous bucket. The 154 intentionally unsupported declarations are not
 implementation backlog unless the project
 chooses a comparably safe Go abstraction.
 
@@ -31,7 +31,7 @@ chooses a comparably safe Go abstraction.
 | `V8.rs` | 16 | Lifecycle, flags, version and process hooks matched; raw platform-handle shape hidden |
 | `platform.rs` | 21 | Platforms and task pumping matched; shutdown-notification shape and dispatch overhead remain |
 | `isolate.rs` | 212 | Safe surface broadly matched; raw pointers, explicit enter/exit and ownership machinery hidden |
-| `isolate_create_params.rs` | 22 | Safe fields and cppgc heap transfer matched; raw allocator/stack inputs remain |
+| `isolate_create_params.rs` | 22 | Safe fields plus allocator/cppgc transfer matched; raw stack input remains |
 | `locker.rs` | 5 | Matched |
 | `scope.rs` | 86 | Safe scopes/TryCatch/guards matched; Rust pinning and unsafe lifetime machinery hidden |
 | `handle.rs` | 38 | Managed handles matched; raw `Local`/`SealedLocal` and unchecked casts hidden |
@@ -40,7 +40,7 @@ chooses a comparably safe Go abstraction.
 | `data.rs` | 528 | Value hierarchy, predicates, conversions and specialized values matched |
 | Object/property families | 78 | Safe object and property operations matched |
 | `regexp.rs` and `string.rs` | 103 | Matched with checked and owned Go shapes |
-| `array_buffer.rs` | 14 | Buffer behavior matched; allocator factories and vtable ownership remain |
+| `array_buffer.rs` | 14 | Buffer behavior and safe allocator ownership matched; raw generic vtable fields remain intentionally hidden |
 | `function.rs` and `template.rs` | 140 | Normal callbacks/templates matched; Fast API tracked separately |
 | Script/compiler/module families | 80 | Safe surface matched, including dynamic-import `kDefer` delivery |
 | Promise and snapshot families | 19 | Safe behavior matched; allocator and custom-heap/snapshot composition gaps live under CreateParams |
@@ -61,9 +61,8 @@ denominator above is authoritative.
 
 1. Generic cppgc `Member`/`WeakMember` type shapes, `GcCell`,
    `GarbageCollected`, `Visitor`, `Traced` and allocation.
-2. ArrayBuffer allocator types, vtable ownership and default/custom factories.
-3. Full executable Fast API constructor/type/flag matrix.
-4. Safe Go fast-callback adaptation, if a non-borrowed design can preserve V8's ABI and lifetime rules.
+2. Full executable Fast API constructor/type/flag matrix.
+3. Safe Go fast-callback adaptation, if a non-borrowed design can preserve V8's ABI and lifetime rules.
 
 The Fast API residual oracle resolved the former ambiguous bucket. Two
 constructors remain partial; six callback-local native/borrowed-pointer items

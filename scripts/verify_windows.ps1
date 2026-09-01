@@ -47,6 +47,7 @@ $ExpectedRustToolchain = '1.98.0'
 
 $ConformancePackages = @(
     './conformance',
+    './conformance-array-buffer-allocator',
     './conformance-buffers',
     './conformance-controls-hooks',
     './conformance-core-advanced',

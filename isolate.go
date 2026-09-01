@@ -21,14 +21,15 @@ import (
 // Outstanding cppgc persistent handles are drained during native teardown and
 // their later Close is a no-op. Isolate.Close must run on the owning thread.
 type Isolate struct {
-	mu                         sync.Mutex // guards lifecycle/configuration flags; calls are thread-serialized by affinity
-	handle                     uintptr
-	tid                        uint32
-	closed                     bool
-	contextsCreated            bool
-	advancedCounterHandle      uintptr
-	advancedExternalReferences bool
-	customCppGCHeap            bool
+	mu                            sync.Mutex // guards lifecycle/configuration flags; calls are thread-serialized by affinity
+	handle                        uintptr
+	tid                           uint32
+	closed                        bool
+	contextsCreated               bool
+	advancedCounterHandle         uintptr
+	advancedExternalReferences    bool
+	customCppGCHeap               bool
+	arrayBufferAllocatorReference uintptr
 }
 
 // NewIsolate creates a fresh isolate with a default ArrayBuffer allocator.
@@ -110,6 +111,12 @@ func (i *Isolate) Close() error {
 	}
 	disposedHandle := i.handle
 	r1, _, _ := proc("gov8_isolate_dispose").Call(disposedHandle)
+	var allocatorCleanupErr error
+	if i.arrayBufferAllocatorReference != 0 {
+		allocatorCleanupErr = callErr("ArrayBufferAllocator.isolate.Close",
+			proc("gov8_aba_dispose"), i.arrayBufferAllocatorReference)
+		i.arrayBufferAllocatorReference = 0
+	}
 	// V8 has now torn down the default cppgc heap and cleared its persistent
 	// nodes. Destroy any still-live native wrapper handles on the same owner
 	// thread before publishing the isolate as closed.
@@ -143,6 +150,9 @@ func (i *Isolate) Close() error {
 	}
 	if cppgcPersistentCleanupErr != nil {
 		return cppgcPersistentCleanupErr
+	}
+	if allocatorCleanupErr != nil {
+		return allocatorCleanupErr
 	}
 	return nil
 }

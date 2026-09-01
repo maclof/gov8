@@ -847,12 +847,10 @@ __declspec(dllexport) int64_t gov8_backing_store_dispose(void* bsw) {
     return kErrMagic;
   }
   try {
-    if (w->iso != nullptr) {
-      Gov8IsolateScope iso_scope(w->iso);
-      std__shared_ptr__v8__BackingStore__reset(w->rep);
-    } else {
-      std__shared_ptr__v8__BackingStore__reset(w->rep);
-    }
+    // BackingStore is independently ref-counted and may outlive its creating
+    // isolate. Resetting the shared_ptr neither requires nor may enter that
+    // possibly already-disposed isolate.
+    std__shared_ptr__v8__BackingStore__reset(w->rep);
     delete w->rep;
     delete w;
     return kOk;

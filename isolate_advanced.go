@@ -32,6 +32,7 @@ type CreateParams struct {
 	stackLimit              uintptr
 	allowAtomicsWait        bool
 	arrayBufferAllocatorSet bool
+	arrayBufferAllocator    *ArrayBufferAllocator
 	externalReferencesSet   bool
 	externalReferences      []ExternalReference
 	counterLookup           CounterLookupCallback
@@ -126,7 +127,27 @@ func (p *CreateParams) SetAllowAtomicsWait(value bool) *CreateParams {
 func (p *CreateParams) UseDefaultArrayBufferAllocator() *CreateParams {
 	p.initialize()
 	p.arrayBufferAllocatorSet = true
+	p.arrayBufferAllocator = nil
 	return p
+}
+
+// SetArrayBufferAllocator configures a shared default or callback-backed
+// allocator. The allocator must remain open until NewIsolateWithParams has
+// copied its native shared reference; it may be closed immediately afterward.
+func (p *CreateParams) SetArrayBufferAllocator(allocator *ArrayBufferAllocator) error {
+	if p == nil || allocator == nil {
+		return errors.New("gov8: nil CreateParams or ArrayBuffer allocator")
+	}
+	allocator.mu.Lock()
+	live := !allocator.closed && allocator.handle != 0
+	allocator.mu.Unlock()
+	if !live {
+		return errors.New("gov8: ArrayBuffer allocator used after Close")
+	}
+	p.initialize()
+	p.arrayBufferAllocatorSet = true
+	p.arrayBufferAllocator = allocator
+	return nil
 }
 
 // UseEmptyExternalReferences installs a process-lifetime, null-terminated
@@ -264,6 +285,20 @@ func NewIsolateWithParams(params *CreateParams) (*Isolate, error) {
 	if configuration.stackLimit != 0 {
 		return nil, errors.New("gov8: CreateParams stack limit cannot safely reference a Go stack")
 	}
+	var allocatorReference uintptr
+	allocatorReferenceTransferred := false
+	if configuration.arrayBufferAllocator != nil {
+		var allocatorErr error
+		allocatorReference, allocatorErr = configuration.arrayBufferAllocator.cloneHandle()
+		if allocatorErr != nil {
+			return nil, allocatorErr
+		}
+		defer func() {
+			if !allocatorReferenceTransferred {
+				_ = callErr("ArrayBufferAllocator.clone.Close", proc("gov8_aba_dispose"), allocatorReference)
+			}
+		}()
+	}
 	var cppHeap *CppGCHeap
 	if configuration.cppGCHeap != nil {
 		cppHeap = configuration.cppGCHeap
@@ -315,7 +350,8 @@ func NewIsolateWithParams(params *CreateParams) (*Isolate, error) {
 		uintptr(configuration.codeRange), uintptr(configuration.initialOldGeneration),
 		uintptr(configuration.initialYoungGeneration), allowAtomics, referencesSet,
 		referencePointer, uintptr(len(referenceWords)), counterHandle, cppHeapHandle,
-		uintptr(unsafe.Pointer(&cppHeapConsumed)), uintptr(unsafe.Pointer(&cppHeapIdentity)))
+		uintptr(unsafe.Pointer(&cppHeapConsumed)), uintptr(unsafe.Pointer(&cppHeapIdentity)),
+		allocatorReference)
 	runtime.KeepAlive(referenceWords)
 	if cppHeapConsumed == 1 && cppHeap != nil {
 		cppHeap.handle = 0
@@ -333,8 +369,10 @@ func NewIsolateWithParams(params *CreateParams) (*Isolate, error) {
 		return nil, err
 	}
 	isolate := &Isolate{handle: handle, tid: tid, advancedCounterHandle: counterHandle,
-		advancedExternalReferences: configuration.externalReferencesSet,
-		customCppGCHeap:            cppHeapConsumed == 1}
+		advancedExternalReferences:    configuration.externalReferencesSet,
+		customCppGCHeap:               cppHeapConsumed == 1,
+		arrayBufferAllocatorReference: allocatorReference}
+	allocatorReferenceTransferred = true
 	finishIsolateCreate(isolate)
 	return isolate, nil
 }

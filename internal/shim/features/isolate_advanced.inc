@@ -17,6 +17,11 @@ namespace gov8_cppgc_heap_impl {
 bool TakeForParams(void* wire, v8::CppHeap** heap, void** identity) noexcept;
 }
 
+namespace gov8_array_buffer_allocator_impl {
+bool FillCreateParams(void* wire,
+                      v8::Isolate::CreateParams* params) noexcept;
+}
+
 namespace gov8_ia_impl {
 
 extern "C" {
@@ -116,7 +121,8 @@ __declspec(dllexport) void* gov8_ia_isolate_new(
     uint64_t initial_old, uint64_t initial_young, int32_t allow_atomics_wait,
     int32_t use_external_references, const intptr_t* external_references,
     size_t external_reference_count, void* counter_host_context,
-    void* cpp_heap_wire, int32_t* cpp_heap_consumed, void** cpp_heap_identity) {
+    void* cpp_heap_wire, int32_t* cpp_heap_consumed, void** cpp_heap_identity,
+    void* array_buffer_allocator_wire) {
   ClearErr();
   if (cpp_heap_consumed != nullptr) *cpp_heap_consumed = 0;
   if (cpp_heap_identity != nullptr) *cpp_heap_identity = nullptr;
@@ -132,7 +138,15 @@ __declspec(dllexport) void* gov8_ia_isolate_new(
   }
   try {
     v8::Isolate::CreateParams params;
-    params.array_buffer_allocator = g_allocator.get();
+    if (array_buffer_allocator_wire != nullptr) {
+      if (!gov8_array_buffer_allocator_impl::FillCreateParams(
+              array_buffer_allocator_wire, &params)) {
+        SetErr("invalid ArrayBuffer allocator");
+        return nullptr;
+      }
+    } else {
+      params.array_buffer_allocator = g_allocator.get();
+    }
     params.constraints.set_max_old_generation_size_in_bytes(
         static_cast<size_t>(max_old));
     params.constraints.set_max_young_generation_size_in_bytes(

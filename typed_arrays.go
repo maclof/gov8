@@ -355,7 +355,7 @@ func viewBackingStore(v Value) (*BackingStore, error) {
 	if int64(r1) < 0 {
 		return nil, shimError("view.GetBackingStore", r1)
 	}
-	return &BackingStore{iso: v.iso, handle: out}, nil
+	return v.iso.backingStore(out)
 }
 
 // GetBackingStore returns a NEW counted reference to the view buffer's

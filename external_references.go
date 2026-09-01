@@ -225,7 +225,8 @@ func externalReferenceOnlyParams(params *CreateParams) (*CreateParams, error) {
 	if configuration.maxOldGeneration != 0 || configuration.maxYoungGeneration != 0 ||
 		configuration.codeRange != 0 || configuration.initialOldGeneration != 0 ||
 		configuration.initialYoungGeneration != 0 || configuration.stackLimit != 0 ||
-		!configuration.allowAtomicsWait || configuration.counterLookup != nil || configuration.cppGCHeap != nil {
+		!configuration.allowAtomicsWait || configuration.counterLookup != nil || configuration.cppGCHeap != nil ||
+		configuration.arrayBufferAllocator != nil {
 		return nil, errors.New("gov8: snapshot CreateParams options other than external references are not supported by this constructor")
 	}
 	return &configuration, nil
