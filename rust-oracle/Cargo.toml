@@ -119,6 +119,11 @@ name = "fast_api_residual"
 path = "benches/fast_api_residual.rs"
 harness = false
 
+[[bench]]
+name = "platform_custom_dispatch"
+path = "benches/platform_custom_dispatch.rs"
+harness = false
+
 [profile.dev.package.v8]
 # The V8 engine itself is always the prebuilt release static library on
 # Windows; optimizing the thin Rust binding layer only speeds up test and

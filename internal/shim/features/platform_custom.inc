@@ -2,7 +2,9 @@
 // CustomPlatform owns PCContext; it transfers each foreground task pointer to
 // Go, which must run-or-delete it exactly once.
 
+#include <atomic>
 #include <cstdint>
+#include <new>
 
 namespace gov8_pc_impl {
 
@@ -17,6 +19,19 @@ enum Kind : int32_t {
 
 struct Context {
   uint64_t id;
+};
+
+Context* g_active_context = nullptr;
+
+std::atomic<uint64_t> g_benchmark_created{0};
+std::atomic<uint64_t> g_benchmark_run{0};
+std::atomic<uint64_t> g_benchmark_destroyed{0};
+
+class BenchmarkNoopTask final : public v8::Task {
+ public:
+  BenchmarkNoopTask() { g_benchmark_created.fetch_add(1); }
+  ~BenchmarkNoopTask() override { g_benchmark_destroyed.fetch_add(1); }
+  void Run() override { g_benchmark_run.fetch_add(1); }
 };
 
 struct Frame {
@@ -94,6 +109,9 @@ void v8__Platform__CustomPlatform__BASE__PostIdleTask(void* context,
 
 void v8__Platform__CustomPlatform__BASE__DROP(void* context) {
   auto* typed = static_cast<gov8_pc_impl::Context*>(context);
+  if (gov8_pc_impl::g_active_context == typed) {
+    gov8_pc_impl::g_active_context = nullptr;
+  }
   gov8_pc_impl::Dispatch(gov8_pc_impl::kDrop, typed, nullptr, nullptr, 0.0);
   delete typed;
 }
@@ -141,6 +159,7 @@ __declspec(dllexport) int64_t gov8_pc_initialize_custom(
       SetErr("V8::Initialize failed");
       return kErrState;
     }
+    gov8_pc_impl::g_active_context = context;
     g_allocator.reset(v8::ArrayBuffer::Allocator::NewDefaultAllocator());
     return kOk;
   } catch (...) {
@@ -148,6 +167,47 @@ __declspec(dllexport) int64_t gov8_pc_initialize_custom(
     SetErr("C++ exception initializing custom platform");
     return kErrCpp;
   }
+}
+
+// Benchmark-only synthetic task producer. It drives the same CustomPlatform
+// PostTask callback and one-shot Task::Run/delete ownership path as a real V8
+// foreground task without adding unrelated compiler or Wasm work.
+__declspec(dllexport) int64_t gov8_pc_benchmark_post_noop_task(void) {
+  ClearErr();
+  auto* context = gov8_pc_impl::g_active_context;
+  v8::Isolate* isolate = v8::Isolate::GetCurrent();
+  if (context == nullptr || isolate == nullptr) {
+    SetErr("custom platform benchmark requires an active context and isolate");
+    return kErrState;
+  }
+  auto* task = new (std::nothrow) gov8_pc_impl::BenchmarkNoopTask();
+  if (task == nullptr) {
+    SetErr("custom platform benchmark task allocation failed");
+    return kErrNoMemory;
+  }
+  v8__Platform__CustomPlatform__BASE__PostTask(context, isolate, task);
+  return kOk;
+}
+
+__declspec(dllexport) int64_t gov8_pc_benchmark_reset_noop_task_counts(void) {
+  ClearErr();
+  gov8_pc_impl::g_benchmark_created.store(0);
+  gov8_pc_impl::g_benchmark_run.store(0);
+  gov8_pc_impl::g_benchmark_destroyed.store(0);
+  return kOk;
+}
+
+__declspec(dllexport) int64_t gov8_pc_benchmark_noop_task_counts(
+    uint64_t* created, uint64_t* run, uint64_t* destroyed) {
+  ClearErr();
+  if (created == nullptr || run == nullptr || destroyed == nullptr) {
+    SetErr("null custom platform benchmark counter output");
+    return kErrBadArg;
+  }
+  *created = gov8_pc_impl::g_benchmark_created.load();
+  *run = gov8_pc_impl::g_benchmark_run.load();
+  *destroyed = gov8_pc_impl::g_benchmark_destroyed.load();
+  return kOk;
 }
 
 __declspec(dllexport) int64_t gov8_pc_task_run_delete(v8::Task* task) {
