@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"runtime"
 	"sync"
+	"sync/atomic"
 )
 
 // Isolate is a V8 isolate. V8 isolates are strictly thread-affine: creating
@@ -25,6 +26,7 @@ type Isolate struct {
 	handle                        uintptr
 	tid                           uint32
 	closed                        bool
+	closedState                   atomic.Bool
 	contextsCreated               bool
 	advancedCounterHandle         uintptr
 	advancedExternalReferences    bool
@@ -62,30 +64,38 @@ func NewIsolate() (*Isolate, error) {
 	return iso, nil
 }
 
-// check validates isolate state and thread affinity. The lock-protected
-// fields are read under mu; the thread-id comparison must run before callers
-// touch any child wrapper state so foreign-thread misuse never races on it.
+// check validates isolate state and thread affinity. Close publishes the
+// lifecycle transition through closedState only after native teardown is
+// complete. The owner thread is immutable, so neither check requires mu.
 func (i *Isolate) check() error {
-	i.mu.Lock()
-	defer i.mu.Unlock()
-	if i.closed {
+	callerThread := currentThreadID()
+	if i.closedState.Load() {
 		return fmt.Errorf("gov8: isolate used after Close")
 	}
-	if currentThreadID() != i.tid {
+	if callerThread != i.tid {
 		return fmt.Errorf("gov8: isolate thread affinity violated: isolate is bound to thread %s, called from thread %s",
-			quoteThreadID(i.tid), quoteThreadID(currentThreadID()))
+			quoteThreadID(i.tid), quoteThreadID(callerThread))
 	}
 	return nil
+}
+
+// publishClosedLocked mirrors the lock-protected lifecycle flag atomically
+// for check. Callers hold i.mu, clear the native handle, and invoke this only
+// after native teardown, so observing closedState also observes those writes.
+func (i *Isolate) publishClosedLocked() {
+	i.closed = true
+	i.closedState.Store(true)
 }
 
 // Close disposes the isolate and releases the owning goroutine's OS-thread
 // lock. It must be called from the goroutine that created the isolate.
 func (i *Isolate) Close() error {
 	i.mu.Lock()
-	if currentThreadID() != i.tid {
+	callerThread := currentThreadID()
+	if callerThread != i.tid {
 		i.mu.Unlock()
 		return fmt.Errorf("gov8: isolate Close called from wrong thread (owner %s, caller %s)",
-			quoteThreadID(i.tid), quoteThreadID(currentThreadID()))
+			quoteThreadID(i.tid), quoteThreadID(callerThread))
 	}
 	if i.closed {
 		i.mu.Unlock()
@@ -138,8 +148,8 @@ func (i *Isolate) Close() error {
 		i.advancedCounterHandle = 0
 		i.advancedExternalReferences = false
 	}
-	i.closed = true
 	i.handle = 0
+	i.publishClosedLocked()
 	i.mu.Unlock()
 	// The engine isolate no longer exists at this point; drop it from the
 	// live set (also on the error path: the wrapper will never use the

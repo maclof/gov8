@@ -440,9 +440,9 @@ func (sc *SnapshotCreator) teardown() {
 	sc.iso.mu.Lock()
 	disposedHandle := sc.iso.handle
 	hadExternalReferences := sc.iso.advancedExternalReferences
-	sc.iso.closed = true
 	sc.iso.handle = 0
 	sc.iso.advancedExternalReferences = false
+	sc.iso.publishClosedLocked()
 	sc.iso.mu.Unlock()
 	if hadExternalReferences {
 		// The native creator has already destroyed its isolate. The cleanup hook

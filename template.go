@@ -4,8 +4,21 @@ package gov8
 
 import (
 	"fmt"
+	"sync"
+	"syscall"
 	"unsafe"
 )
+
+var (
+	functionNewDirectOnce sync.Once
+	functionNewDirectAddr uintptr
+)
+
+func ensureFunctionNewDirectProc() {
+	functionNewDirectOnce.Do(func() {
+		functionNewDirectAddr = proc("gov8_fa_function_new_direct").Addr()
+	})
+}
 
 // Templates: FunctionTemplate and ObjectTemplate.
 //
@@ -581,11 +594,15 @@ func (i *Isolate) NewFunction(s *Scope, c *Context, cb FunctionCallback, opts *F
 	if s.iso != i {
 		return nil, foreignIsolate("scope")
 	}
+	sh, err := s.checkedHandleAssumingIsolate()
+	if err != nil {
+		return nil, err
+	}
 	var data Value
 	if opts != nil {
 		data = opts.Data
 	}
-	handle, err := registerFunctionCallback(i, cb, data)
+	handle, entry, err := registerFunctionCallbackAssumingIsolate(i, cb, data)
 	if err != nil {
 		return nil, err
 	}
@@ -597,20 +614,20 @@ func (i *Isolate) NewFunction(s *Scope, c *Context, cb FunctionCallback, opts *F
 		behavior = opts.ConstructorBehavior
 		sideEffectType = opts.SideEffectType
 	}
-	entry := lookupHostCallback(handle)
-	if entry == nil {
-		return nil, fmt.Errorf("gov8: callback registration lost")
-	}
-	var out uintptr
-	r1, _, _ := proc("gov8_fa_function_new").Call(
-		i.handle, c.handle, s.handle, entry.ctx,
+	ensureFunctionNewDirectProc()
+	r1, _, _ := syscall.Syscall9(functionNewDirectAddr, 7,
+		i.handle, c.handle, sh, entry.ctx,
 		uintptr(int32(length)), uintptr(behavior), uintptr(sideEffectType),
-		uintptr(unsafe.Pointer(&out)))
+		0, 0)
 	if int64(r1) < 0 {
 		dropHostCallback(handle)
 		return nil, shimError("Function.New", r1)
 	}
-	return &Function{Value: Value{iso: i, sc: s, h: out}, ctx: c}, nil
+	if r1 == 0 {
+		dropHostCallback(handle)
+		return nil, shimError("Function.New", 0)
+	}
+	return &Function{Value: Value{iso: i, sc: s, h: r1}, ctx: c}, nil
 }
 
 // Call invokes the function (v8 Function::Call). The receiver and arguments

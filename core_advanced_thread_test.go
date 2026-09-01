@@ -80,6 +80,9 @@ func TestSharedIsolateCrossThreadLocks(t *testing.T) {
 	if err := shared.Close(); err != nil {
 		t.Fatalf("shared Close: %v", err)
 	}
+	if _, err := iso.NewScope(); err == nil || !strings.Contains(err.Error(), "after Close") {
+		t.Fatalf("NewScope after shared Close = %v, want closed-isolate error", err)
+	}
 }
 
 // TestSharedTerminateWhileLocked mirrors

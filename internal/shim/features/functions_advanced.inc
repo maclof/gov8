@@ -108,6 +108,19 @@ __declspec(dllexport) int64_t gov8_fa_function_new(
   }
 }
 
+// Direct-return companion for hot callers. Non-negative results are function
+// wires; negative results preserve the legacy export's exact status and
+// thread-local error detail. Keep gov8_fa_function_new for ABI compatibility.
+__declspec(dllexport) int64_t gov8_fa_function_new_direct(
+    v8::Isolate* iso, void* ctxw, void* scope, void* host_ctx,
+    int32_t length, int32_t constructor_behavior, int32_t side_effect_type) {
+  void* result = nullptr;
+  const int64_t status = gov8_fa_function_new(
+      iso, ctxw, scope, host_ctx, length, constructor_behavior,
+      side_effect_type, &result);
+  return status < 0 ? status : reinterpret_cast<int64_t>(result);
+}
+
 __declspec(dllexport) void* gov8_fa_function_template_new(
     v8::Isolate* iso, void* scope, void* host_ctx, int32_t length,
     void* signature_wire, int32_t constructor_behavior,

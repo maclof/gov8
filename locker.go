@@ -417,8 +417,8 @@ func (s *SharedIsolate) Close() error {
 		return err
 	}
 	s.iso.mu.Lock()
-	s.iso.closed = true
 	s.iso.handle = 0
+	s.iso.publishClosedLocked()
 	creatorTid := st.creatorTid
 	s.iso.mu.Unlock()
 	delete(sharedRegistry.m, s.iso)

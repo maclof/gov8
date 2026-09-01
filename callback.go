@@ -215,6 +215,12 @@ func registerHostEntry(iso *Isolate, e *hostCallbackEntry, data Value) (uint64, 
 	if err := iso.check(); err != nil {
 		return 0, err
 	}
+	return registerHostEntryAssumingIsolate(iso, e, data)
+}
+
+// registerHostEntryAssumingIsolate registers after the caller has already
+// proved the isolate lifecycle and owner thread in the same operation.
+func registerHostEntryAssumingIsolate(iso *Isolate, e *hostCallbackEntry, data Value) (uint64, error) {
 	if data.h != 0 {
 		if err := data.check(); err != nil {
 			return 0, err
@@ -256,6 +262,18 @@ func registerHostEntry(iso *Isolate, e *hostCallbackEntry, data Value) (uint64, 
 // callback created on the isolate.
 func registerFunctionCallback(iso *Isolate, fn FunctionCallback, data Value) (uint64, error) {
 	return newHostContext(iso, fn, nil, nil, data)
+}
+
+func registerFunctionCallbackAssumingIsolate(iso *Isolate, fn FunctionCallback, data Value) (uint64, *hostCallbackEntry, error) {
+	if fn == nil {
+		return 0, nil, fmt.Errorf("gov8: native callback requires a function")
+	}
+	entry := &hostCallbackEntry{fn: fn}
+	handle, err := registerHostEntryAssumingIsolate(iso, entry, data)
+	if err != nil {
+		return 0, nil, err
+	}
+	return handle, entry, nil
 }
 
 // registerAccessorCallbacks reserves a registry handle for an accessor pair;
