@@ -96,6 +96,21 @@ __declspec(dllexport) int64_t gov8_ocr_object_set_lazy_data_property(
   } GOV8_RV_END_CATCH("ocr_object_set_lazy_data_property")
 }
 
+// Direct-status variant used by the Go hot path. Keeping the Maybe<bool>
+// result in native storage avoids passing a movable Go stack pointer across
+// the DLL call while preserving the existing negative shim statuses.
+__declspec(dllexport) int64_t gov8_ocr_object_set_lazy_data_property_direct(
+    v8::Isolate* iso, void* ctxw, void* scope, void* obj, void* key,
+    void* host_ctx, int32_t attr, int32_t getter_side_effect,
+    int32_t setter_side_effect) {
+  int32_t ok = 0;
+  int64_t status = gov8_ocr_object_set_lazy_data_property(
+      iso, ctxw, scope, obj, key, host_ctx, attr, getter_side_effect,
+      setter_side_effect, &ok);
+  if (status < 0) return status;
+  return ok == 1 ? 1 : 0;
+}
+
 __declspec(dllexport) int64_t gov8_ocr_template_set_data_with_attr(
     v8::Isolate* iso, void* scope, void* template_wire,
     int32_t template_kind, void* key_wire, void* data_wire, int32_t attr) {

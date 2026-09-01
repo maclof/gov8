@@ -4,6 +4,8 @@ package gov8
 
 import (
 	"fmt"
+	"sync"
+	"syscall"
 	"unsafe"
 )
 
@@ -30,6 +32,15 @@ type LazyDataPropertyConfiguration struct {
 	Attribute            PropertyAttribute
 	GetterSideEffectType SideEffectType
 	SetterSideEffectType SideEffectType
+}
+
+var (
+	lazyDataPropertyProcOnce sync.Once
+	lazyDataPropertyProcAddr uintptr
+)
+
+func resolveLazyDataPropertyProc() {
+	lazyDataPropertyProcAddr = proc("gov8_ocr_object_set_lazy_data_property_direct").Addr()
 }
 
 // lazyReceiverArgs validates one lazy-property receiver operation while
@@ -159,21 +170,21 @@ func (o *Object) SetLazyDataPropertyWithConfiguration(s *Scope, c *Context, key 
 		}
 		return false, errLostCallbackRegistration
 	}
-	var okv int32
-	r1, _, _ := proc("gov8_ocr_object_set_lazy_data_property").Call(
+	lazyDataPropertyProcOnce.Do(resolveLazyDataPropertyProc)
+	r1, _, _ := syscall.Syscall9(lazyDataPropertyProcAddr, 9,
 		o.iso.handleAssumingCheck(), c.handle, sh, o.h, key.h, entry.ctx,
 		uintptr(configuration.Attribute), uintptr(configuration.GetterSideEffectType),
-		uintptr(configuration.SetterSideEffectType), uintptr(unsafe.Pointer(&okv)))
+		uintptr(configuration.SetterSideEffectType))
 	if int64(r1) < 0 {
 		if created {
 			dropNewLazyGetter(handle, cacheKey)
 		}
 		return false, shimError("Object.SetLazyDataPropertyWithConfiguration", r1)
 	}
-	if okv != 1 && created {
+	if r1 != 1 && created {
 		dropNewLazyGetter(handle, cacheKey)
 	}
-	return okv == 1, nil
+	return r1 == 1, nil
 }
 
 // SetLazyDataPropertyWithData is the positional counterpart of rusty_v8's
