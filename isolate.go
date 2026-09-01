@@ -30,6 +30,7 @@ type Isolate struct {
 	advancedExternalReferences    bool
 	customCppGCHeap               bool
 	arrayBufferAllocatorReference uintptr
+	handleScopeStack              []any // owner-thread-only; see scope.go
 }
 
 // NewIsolate creates a fresh isolate with a default ArrayBuffer allocator.
@@ -111,6 +112,9 @@ func (i *Isolate) Close() error {
 	}
 	disposedHandle := i.handle
 	r1, _, _ := proc("gov8_isolate_dispose").Call(disposedHandle)
+	// Native teardown invalidated every outstanding local. Release the Go
+	// mirror too, including references held in its reusable backing storage.
+	i.clearHandleScopeStack()
 	var allocatorCleanupErr error
 	if i.arrayBufferAllocatorReference != 0 {
 		allocatorCleanupErr = callErr("ArrayBufferAllocator.isolate.Close",

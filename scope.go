@@ -4,7 +4,6 @@ package gov8
 
 import (
 	"fmt"
-	"sync"
 	"unsafe"
 )
 
@@ -21,33 +20,28 @@ type Scope struct {
 	javascriptExecutionGuards []uintptr
 }
 
-// handleScopeStacks mirrors the user-visible HandleScope nesting that V8
-// requires. It includes ordinary and escapable scopes. Borrowed callback
-// scopes are already created as the active native scope and opt out through
-// Scope.borrowed.
-var handleScopeStacks = struct {
-	sync.Mutex
-	byIsolate map[*Isolate][]any
-}{byIsolate: make(map[*Isolate][]any)}
+// The Isolate-owned handleScopeStack mirrors the user-visible HandleScope
+// nesting that V8 requires. It includes ordinary and escapable scopes.
+// Borrowed callback scopes are already created as the active native scope and
+// opt out through Scope.borrowed.
+//
+// Access is deliberately lock-free: all callers have already validated the
+// isolate's owner thread. Keeping the empty slice on the isolate also reuses
+// its backing storage across sequential scopes, which avoids allocating a new
+// one-element stack for every operation. Isolate.Close clears and releases the
+// storage after native teardown.
 
 func pushHandleScope(iso *Isolate, scope any) {
-	handleScopeStacks.Lock()
-	handleScopeStacks.byIsolate[iso] = append(handleScopeStacks.byIsolate[iso], scope)
-	handleScopeStacks.Unlock()
+	iso.handleScopeStack = append(iso.handleScopeStack, scope)
 }
 
 func currentHandleScope(iso *Isolate, scope any) bool {
-	handleScopeStacks.Lock()
-	stack := handleScopeStacks.byIsolate[iso]
-	current := len(stack) != 0 && stack[len(stack)-1] == scope
-	handleScopeStacks.Unlock()
-	return current
+	stack := iso.handleScopeStack
+	return len(stack) != 0 && stack[len(stack)-1] == scope
 }
 
 func currentHandleScopeToken(iso *Isolate) any {
-	handleScopeStacks.Lock()
-	defer handleScopeStacks.Unlock()
-	stack := handleScopeStacks.byIsolate[iso]
+	stack := iso.handleScopeStack
 	if len(stack) == 0 {
 		return nil
 	}
@@ -55,19 +49,21 @@ func currentHandleScopeToken(iso *Isolate) any {
 }
 
 func popHandleScope(iso *Isolate, scope any) error {
-	handleScopeStacks.Lock()
-	defer handleScopeStacks.Unlock()
-	stack := handleScopeStacks.byIsolate[iso]
+	stack := iso.handleScopeStack
 	if len(stack) == 0 || stack[len(stack)-1] != scope {
 		return fmt.Errorf("gov8: handle scope is not the current innermost scope")
 	}
-	stack = stack[:len(stack)-1]
-	if len(stack) == 0 {
-		delete(handleScopeStacks.byIsolate, iso)
-	} else {
-		handleScopeStacks.byIsolate[iso] = stack
-	}
+	last := len(stack) - 1
+	stack[last] = nil // do not retain a closed scope in reusable capacity
+	iso.handleScopeStack = stack[:last]
 	return nil
+}
+
+func (i *Isolate) clearHandleScopeStack() {
+	for index := range i.handleScopeStack {
+		i.handleScopeStack[index] = nil
+	}
+	i.handleScopeStack = nil
 }
 
 // NewScope opens a new HandleScope on the isolate.
