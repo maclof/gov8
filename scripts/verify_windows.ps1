@@ -60,6 +60,7 @@ $ConformancePackages = @(
     './conformance-host-promises',
     './conformance-host-templates',
     './conformance-isolate-advanced',
+    './conformance-icu',
     './conformance-message-locals',
     './conformance-module-cache',
     './conformance-modules',

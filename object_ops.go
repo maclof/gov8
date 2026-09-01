@@ -3,6 +3,7 @@
 package gov8
 
 import (
+	"fmt"
 	"unsafe"
 )
 
@@ -835,6 +836,12 @@ func (v Value) InstanceOf(s *Scope, c *Context, obj *Object, tc *TryCatch) (bool
 // pinned crate implements it on the Rust side: SameValue, or both sides
 // strictly equal to the zero Smi. The scope only materializes that zero.
 func (v Value) SameValueZero(s *Scope, other Value) (bool, error) {
+	if s == nil {
+		return false, fmt.Errorf("gov8: nil scope")
+	}
+	if s.iso != v.iso {
+		return false, foreignIsolate("scope")
+	}
 	same, err := v.SameValue(other)
 	if err != nil {
 		return false, err
@@ -865,13 +872,61 @@ func (v Value) convArgs(s *Scope, c *Context) (uintptr, error) {
 	if err := v.ctxHandle(c); err != nil {
 		return 0, err
 	}
+	if s == nil {
+		return 0, fmt.Errorf("gov8: nil scope")
+	}
 	if s.iso != v.iso {
 		return 0, foreignIsolate("scope")
 	}
 	return s.checkedHandleAssumingIsolate()
 }
 
-// --- missing predicates inventory ----------------------------------------------------
+// localConversion invokes a context-dependent Value conversion and returns
+// its result as a local owned by s. Empty MaybeLocal results and exceptions
+// retain the same TryCatch/error behavior as the other conversion methods.
+func (v Value) localConversion(s *Scope, c *Context, tc *TryCatch, export, op string) (Value, error) {
+	sh, err := v.convArgs(s, c)
+	if err != nil {
+		return Value{}, err
+	}
+	tcv, err := tcArg(v.iso, tc)
+	if err != nil {
+		return Value{}, err
+	}
+	var out uintptr
+	r1, _, _ := proc(export).Call(
+		v.iso.handleAssumingCheck(), c.handle, tcv, sh, v.h,
+		uintptr(unsafe.Pointer(&out)))
+	if int64(r1) < 0 {
+		return Value{}, shimError(op, r1)
+	}
+	return Value{iso: v.iso, sc: s, h: out}, nil
+}
+
+// ToNumber returns the ECMAScript ToNumber conversion as a scope-local
+// Number. BigInt and Symbol operands throw and are delivered to tc when set.
+func (v Value) ToNumber(s *Scope, c *Context, tc *TryCatch) (Value, error) {
+	return v.localConversion(s, c, tc, "gov8_oo_value_to_number", "ToNumber")
+}
+
+// ToStringValue returns the ECMAScript ToString conversion as a scope-local
+// V8 String. It preserves exact UTF-16 contents; use Value.ToString when a
+// lossy Go UTF-8 convenience result is sufficient.
+func (v Value) ToStringValue(s *Scope, c *Context, tc *TryCatch) (Value, error) {
+	return v.localConversion(s, c, tc, "gov8_oo_value_to_string", "ToStringValue")
+}
+
+// ToUint32 returns the ECMAScript ToUint32 conversion as a scope-local value.
+func (v Value) ToUint32(s *Scope, c *Context, tc *TryCatch) (Value, error) {
+	return v.localConversion(s, c, tc, "gov8_oo_value_to_uint32", "ToUint32")
+}
+
+// ToInt32 returns the ECMAScript ToInt32 conversion as a scope-local value.
+func (v Value) ToInt32(s *Scope, c *Context, tc *TryCatch) (Value, error) {
+	return v.localConversion(s, c, tc, "gov8_oo_value_to_int32", "ToInt32")
+}
+
+// --- residual predicates -------------------------------------------------------------
 //
 // The 12 Value.Is* predicates the object-ops slice pins that no other slice
 // exports. (The typed-array family — IsTypedArray and the twelve per-kind
@@ -930,6 +985,219 @@ func (v Value) IsWeakMap() (bool, error) { return v.predicate("gov8_oo_is_weak_m
 
 // IsWeakSet reports whether the value is a JSWeakSet instance.
 func (v Value) IsWeakSet() (bool, error) { return v.predicate("gov8_oo_is_weak_set") }
+
+// IsModuleNamespaceObject reports whether the value is an ECMAScript module
+// namespace exotic object.
+func (v Value) IsModuleNamespaceObject() (bool, error) {
+	return v.predicate("gov8_oo_is_module_namespace_object")
+}
+
+// TypeRepr returns rusty_v8 Value::type_repr's human-readable classification.
+// The ordering deliberately matches the pinned crate, including its generic
+// "TypedArray" result for Float16Array.
+func (v Value) TypeRepr() (string, error) {
+	tests := []struct {
+		name string
+		fn   func() (bool, error)
+	}{
+		{"Module", v.IsModuleNamespaceObject},
+		{"WASM module", v.IsWasmModuleObject},
+		{"WASM memory object", v.IsWasmMemoryObject},
+		{"Proxy", v.IsProxy},
+		{"SharedArrayBuffer", v.IsSharedArrayBuffer},
+		{"DataView", v.IsDataView},
+		{"BigUint64Array", v.IsBigUint64Array},
+		{"BigInt64Array", v.IsBigInt64Array},
+		{"Float64Array", v.IsFloat64Array},
+		{"Float32Array", v.IsFloat32Array},
+		{"Int32Array", v.IsInt32Array},
+		{"Uint32Array", v.IsUint32Array},
+		{"Int16Array", v.IsInt16Array},
+		{"Uint16Array", v.IsUint16Array},
+		{"Int8Array", v.IsInt8Array},
+		{"Uint8ClampedArray", v.IsUint8ClampedArray},
+		{"Uint8Array", v.IsUint8Array},
+		{"TypedArray", v.IsTypedArray},
+		{"ArrayBufferView", v.IsArrayBufferView},
+		{"ArrayBuffer", v.IsArrayBuffer},
+		{"WeakSet", v.IsWeakSet},
+		{"WeakMap", v.IsWeakMap},
+		{"Set Iterator", v.IsSetIterator},
+		{"Map Iterator", v.IsMapIterator},
+		{"Set", v.IsSet},
+		{"Map", v.IsMap},
+		{"Promise", v.IsPromise},
+		{"Generator function", v.IsGeneratorFunction},
+		{"Async function", v.IsAsyncFunction},
+		{"RegExp", v.IsRegExp},
+		{"Date", v.IsDate},
+		{"Number", v.IsNumber},
+		{"Boolean", v.IsBoolean},
+		{"bigint", v.IsBigInt},
+		{"array", v.IsArray},
+		{"function", v.IsFunction},
+		{"symbol", v.IsSymbol},
+		{"string", v.IsString},
+		{"null", v.IsNull},
+		{"undefined", v.IsUndefined},
+	}
+	for _, test := range tests {
+		ok, err := test.fn()
+		if err != nil {
+			return "", err
+		}
+		if ok {
+			return test.name, nil
+		}
+	}
+	return "unknown", nil
+}
+
+// Data returns v as its Data supertype without changing its local lifetime.
+func (v Value) Data() (Data, error) {
+	if err := v.check(); err != nil {
+		return Data{}, err
+	}
+	return Data{iso: v.iso, sc: v.sc, h: v.h}, nil
+}
+
+// Data returns p as its Data supertype without changing its local lifetime.
+func (p *Private) Data() (Data, error) {
+	if p == nil {
+		return Data{}, fmt.Errorf("gov8: nil private")
+	}
+	if err := p.check(); err != nil {
+		return Data{}, err
+	}
+	return Data{iso: p.iso, sc: p.sc, h: p.h}, nil
+}
+
+// Data returns t as its Data supertype without changing its local lifetime.
+func (t *FunctionTemplate) Data() (Data, error) {
+	if t == nil {
+		return Data{}, fmt.Errorf("gov8: nil function template")
+	}
+	if err := t.check(); err != nil {
+		return Data{}, err
+	}
+	return Data{iso: t.iso, sc: t.sc, h: t.h}, nil
+}
+
+// Data returns t as its Data supertype without changing its local lifetime.
+func (t *ObjectTemplate) Data() (Data, error) {
+	if t == nil {
+		return Data{}, fmt.Errorf("gov8: nil object template")
+	}
+	if err := t.check(); err != nil {
+		return Data{}, err
+	}
+	return Data{iso: t.iso, sc: t.sc, h: t.h}, nil
+}
+
+// Data returns sig as its Data supertype without changing its local lifetime.
+func (sig *Signature) Data() (Data, error) {
+	if sig == nil {
+		return Data{}, fmt.Errorf("gov8: nil signature")
+	}
+	if err := sig.check(); err != nil {
+		return Data{}, err
+	}
+	return Data{iso: sig.iso, sc: sig.sc, h: sig.h}, nil
+}
+
+// Data materializes c as a Data local owned by s.
+func (c *Context) Data(s *Scope) (Data, error) {
+	if c == nil {
+		return Data{}, fmt.Errorf("gov8: nil context")
+	}
+	if err := c.check(); err != nil {
+		return Data{}, err
+	}
+	if s == nil {
+		return Data{}, fmt.Errorf("gov8: nil scope")
+	}
+	if s.iso != c.iso {
+		return Data{}, foreignIsolate("scope")
+	}
+	sh, err := s.checkedHandleAssumingIsolate()
+	if err != nil {
+		return Data{}, err
+	}
+	var out uintptr
+	r1, _, _ := proc("gov8_oo_context_data").Call(c.iso.handleAssumingCheck(), c.handle, sh, uintptr(unsafe.Pointer(&out)))
+	if int64(r1) < 0 {
+		return Data{}, shimError("Context.Data", r1)
+	}
+	return Data{iso: c.iso, sc: s, h: out}, nil
+}
+
+// Data materializes m as a Data local owned by s.
+func (m *Module) Data(s *Scope) (Data, error) {
+	if err := m.check(); err != nil {
+		return Data{}, err
+	}
+	if s == nil {
+		return Data{}, fmt.Errorf("gov8: nil scope")
+	}
+	if s.iso != m.iso {
+		return Data{}, foreignIsolate("scope")
+	}
+	sh, err := s.checkedHandleAssumingIsolate()
+	if err != nil {
+		return Data{}, err
+	}
+	var out uintptr
+	r1, _, _ := proc("gov8_oo_module_data").Call(m.iso.handleAssumingCheck(), m.handle, sh, uintptr(unsafe.Pointer(&out)))
+	if int64(r1) < 0 {
+		return Data{}, shimError("Module.Data", r1)
+	}
+	return Data{iso: m.iso, sc: s, h: out}, nil
+}
+
+// Equal reports V8 Data identity. Both locals must be live and belong to the
+// same isolate; unlike Value.StrictEquals this does not perform JS equality.
+func (d Data) Equal(other Data) (bool, error) {
+	if err := d.check(); err != nil {
+		return false, err
+	}
+	if err := other.check(); err != nil {
+		return false, err
+	}
+	if other.iso != d.iso {
+		return false, foreignIsolate("data")
+	}
+	r1, _, _ := proc("gov8_oo_data_equal").Call(d.iso.handleAssumingCheck(), d.h, other.h)
+	if int64(r1) < 0 {
+		return false, shimError("Data.Equal", r1)
+	}
+	return r1 == 1, nil
+}
+
+// The Data predicate family mirrors every public Data::is_* method in the
+// pinned crate. They are valid for both JavaScript Values and metadata locals.
+func (d Data) IsBigInt() (bool, error) {
+	return d.predicate("gov8_oo_data_is_big_int", "Data.IsBigInt")
+}
+func (d Data) IsBoolean() (bool, error) {
+	return d.predicate("gov8_oo_data_is_boolean", "Data.IsBoolean")
+}
+func (d Data) IsContext() (bool, error) {
+	return d.predicate("gov8_oo_data_is_context", "Data.IsContext")
+}
+func (d Data) IsFunctionTemplate() (bool, error) {
+	return d.predicate("gov8_oo_data_is_function_template", "Data.IsFunctionTemplate")
+}
+func (d Data) IsModule() (bool, error) { return d.predicate("gov8_oo_data_is_module", "Data.IsModule") }
+func (d Data) IsName() (bool, error)   { return d.predicate("gov8_oo_data_is_name", "Data.IsName") }
+func (d Data) IsNumber() (bool, error) { return d.predicate("gov8_oo_data_is_number", "Data.IsNumber") }
+func (d Data) IsObjectTemplate() (bool, error) {
+	return d.predicate("gov8_oo_data_is_object_template", "Data.IsObjectTemplate")
+}
+func (d Data) IsPrivate() (bool, error) {
+	return d.predicate("gov8_oo_data_is_private", "Data.IsPrivate")
+}
+func (d Data) IsString() (bool, error) { return d.predicate("gov8_oo_data_is_string", "Data.IsString") }
+func (d Data) IsSymbol() (bool, error) { return d.predicate("gov8_oo_data_is_symbol", "Data.IsSymbol") }
 
 // --- shared error values --------------------------------------------------------------
 

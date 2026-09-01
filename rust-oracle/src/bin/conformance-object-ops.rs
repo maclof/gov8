@@ -46,13 +46,17 @@
 //!   vs. object returns.
 //! - **Callable/constructor predicates** over the full exotic-object matrix.
 //! - **Conversions**: `Value::to_object`, `to_boolean`, `to_integer`,
-//!   `to_big_int`, `to_detail_string` (`src/value.rs`). ToString conversion
-//!   is pinned by the base slice and not repeated.
+//!   `to_big_int`, `to_detail_string`, plus the residual local-return
+//!   `to_number`, `to_string`, `to_uint32`, and `to_int32` (`src/value.rs`).
 //! - **instanceof** (`Value::instance_of`), the **same-value-zero** equality
 //!   matrix (`same_value` / `same_value_zero` / `strict_equals`), and the
 //!   **type representation** matrix (`Value::type_of`).
 //! - **Missing predicates inventory**: every `Value::is_*` predicate that no
 //!   other slice pins (25 of them, see `predicates_missing_inventory`).
+//! - **Data**: every public `Data::is_*` predicate and Data identity across
+//!   Value, Context, template, module, module-request, and private locals.
+//! - **Residual helpers**: `Value::is_module_namespace_object` and every
+//!   ordered branch of the crate's `Value::type_repr` convenience helper.
 //!
 //! Everything is normalized per `src/json.rs` rules: no addresses, no raw
 //! hash values (identity hashes are per-isolate seeded), exact V8 error
@@ -62,11 +66,6 @@
 //! This slice performs no platform shutdown, so its fixture can be verified
 //! in-process and compared byte-for-byte by
 //! `tests/conformance_object_ops_fixture.rs`.
-//!
-//! Documented gap (not characterized): the typed-array predicates for
-//! Wasm/module objects (`is_wasm_memory_object`, `is_wasm_module_object`,
-//! `is_module_namespace_object`) are out of milestone scope alongside the
-//! modules/Wasm/inspector exclusions.
 //!
 //! # Benchmark workload spec (for a future `benches/object-ops.rs`)
 //!
@@ -2408,6 +2407,372 @@ fn predicates_missing_inventory() -> Vec<CheckOutcome> {
     )]
 }
 
+fn residual_noop(
+    _scope: &mut v8::PinScope<'_, '_>,
+    _args: v8::FunctionCallbackArguments<'_>,
+    _rv: v8::ReturnValue<'_, v8::Value>,
+) {
+}
+
+#[allow(clippy::unnecessary_wraps)]
+fn residual_unexpected_resolve<'s>(
+    _context: v8::Local<'s, v8::Context>,
+    _specifier: v8::Local<'s, v8::String>,
+    _import_attributes: v8::Local<'s, v8::FixedArray>,
+    _referrer: v8::Local<'s, v8::Module>,
+) -> Option<v8::Local<'s, v8::Module>> {
+    panic!("resolve callback must not run for a module without imports")
+}
+
+fn compile_residual_module<'s>(
+    scope: &v8::PinScope<'s, '_>,
+    source_text: &str,
+) -> v8::Local<'s, v8::Module> {
+    let source_text = v8::String::new(scope, source_text).unwrap();
+    let resource: v8::Local<v8::Value> = v8::String::new(scope, "residual.mjs").unwrap().into();
+    let origin = v8::ScriptOrigin::new(
+        scope, resource, 0, 0, false, -1, None, false, false, true, None,
+    );
+    let mut source = v8::script_compiler::Source::new(source_text, Some(&origin));
+    v8::script_compiler::compile_module(scope, &mut source).unwrap()
+}
+
+fn data_predicates_and_identity() -> Vec<CheckOutcome> {
+    let isolate = &mut v8::Isolate::new(Default::default());
+    v8::scope!(let scope, isolate);
+    let context = v8::Context::new(scope, Default::default());
+    let scope = &mut v8::ContextScope::new(scope, context);
+
+    let bigint: v8::Local<v8::Data> = v8::BigInt::new_from_i64(scope, 1).into();
+    let boolean: v8::Local<v8::Data> = v8::Boolean::new(scope, true).into();
+    let context_data: v8::Local<v8::Data> = context.into();
+    let function_template: v8::Local<v8::Data> =
+        v8::FunctionTemplate::new(scope, residual_noop).into();
+    let module = compile_residual_module(scope, "import './dep.mjs'; export const x = 1;");
+    let module_data: v8::Local<v8::Data> = module.into();
+    let requests = module.get_module_requests();
+    let fixed_array: v8::Local<v8::Data> = requests.into();
+    let module_request = requests.get(scope, 0).unwrap();
+    let string = v8::String::new(scope, "name").unwrap();
+    let name: v8::Local<v8::Data> = string.into();
+    let number: v8::Local<v8::Data> = v8::Number::new(scope, 1.5).into();
+    let object_template: v8::Local<v8::Data> = v8::ObjectTemplate::new(scope).into();
+    let primitive: v8::Local<v8::Data> = string.into();
+    let private_name = v8::String::new(scope, "private").unwrap();
+    let private: v8::Local<v8::Data> = v8::Private::new(scope, Some(private_name)).into();
+    let string_data: v8::Local<v8::Data> = string.into();
+    let symbol: v8::Local<v8::Data> = v8::Symbol::new(scope, None).into();
+    let object = v8::Object::new(scope);
+    let object_same = object;
+    let object_other = v8::Object::new(scope);
+    let value: v8::Local<v8::Data> = object.into();
+
+    let actual = Json::obj(vec![
+        ("is_big_int", Json::b(bigint.is_big_int())),
+        ("is_boolean", Json::b(boolean.is_boolean())),
+        ("is_context", Json::b(context_data.is_context())),
+        ("is_fixed_array", Json::b(fixed_array.is_fixed_array())),
+        (
+            "is_function_template",
+            Json::b(function_template.is_function_template()),
+        ),
+        ("is_module", Json::b(module_data.is_module())),
+        (
+            "is_module_request",
+            Json::b(module_request.is_module_request()),
+        ),
+        ("is_name", Json::b(name.is_name())),
+        ("is_number", Json::b(number.is_number())),
+        (
+            "is_object_template",
+            Json::b(object_template.is_object_template()),
+        ),
+        ("is_primitive", Json::b(primitive.is_primitive())),
+        ("is_private", Json::b(private.is_private())),
+        ("is_string", Json::b(string_data.is_string())),
+        ("is_symbol", Json::b(symbol.is_symbol())),
+        ("is_value", Json::b(value.is_value())),
+        ("number_is_not_string", Json::b(!number.is_string())),
+        ("string_is_not_number", Json::b(!string_data.is_number())),
+        ("context_is_not_value", Json::b(!context_data.is_value())),
+        ("module_is_not_value", Json::b(!module_data.is_value())),
+        ("private_is_not_value", Json::b(!private.is_value())),
+        (
+            "object_template_is_not_function_template",
+            Json::b(!object_template.is_function_template()),
+        ),
+        (
+            "value_is_not_module_request",
+            Json::b(!value.is_module_request()),
+        ),
+        ("fixed_array_is_not_value", Json::b(!fixed_array.is_value())),
+        (
+            "same_data_identity",
+            Json::b(v8::Local::<v8::Data>::from(object) == object_same),
+        ),
+        (
+            "distinct_data_identity",
+            Json::b(v8::Local::<v8::Data>::from(object) != object_other),
+        ),
+    ]);
+    let expected = Json::obj(vec![
+        ("is_big_int", Json::b(true)),
+        ("is_boolean", Json::b(true)),
+        ("is_context", Json::b(true)),
+        ("is_fixed_array", Json::b(true)),
+        ("is_function_template", Json::b(true)),
+        ("is_module", Json::b(true)),
+        ("is_module_request", Json::b(true)),
+        ("is_name", Json::b(true)),
+        ("is_number", Json::b(true)),
+        ("is_object_template", Json::b(true)),
+        ("is_primitive", Json::b(true)),
+        ("is_private", Json::b(true)),
+        ("is_string", Json::b(true)),
+        ("is_symbol", Json::b(true)),
+        ("is_value", Json::b(true)),
+        ("number_is_not_string", Json::b(true)),
+        ("string_is_not_number", Json::b(true)),
+        ("context_is_not_value", Json::b(true)),
+        ("module_is_not_value", Json::b(true)),
+        ("private_is_not_value", Json::b(true)),
+        ("object_template_is_not_function_template", Json::b(true)),
+        ("value_is_not_module_request", Json::b(true)),
+        ("fixed_array_is_not_value", Json::b(true)),
+        ("same_data_identity", Json::b(true)),
+        ("distinct_data_identity", Json::b(true)),
+    ]);
+    vec![expect_eq(
+        "obj-ops/data/predicates_and_identity",
+        expected,
+        actual,
+    )]
+}
+
+fn residual_local_conversions() -> Vec<CheckOutcome> {
+    let isolate = &mut v8::Isolate::new(Default::default());
+    v8::scope!(let scope, isolate);
+    let context = v8::Context::new(scope, Default::default());
+    let scope = &mut v8::ContextScope::new(scope, context);
+
+    let input: v8::Local<v8::Value> = v8::String::new(scope, "4294967297.9").unwrap().into();
+    let number = input.to_number(scope).unwrap();
+    let string = input.to_string(scope).unwrap();
+    let uint32 = input.to_uint32(scope).unwrap();
+    let int32 = input.to_int32(scope).unwrap();
+    let negative: v8::Local<v8::Value> = v8::Number::new(scope, -1.9).into();
+    let negative_uint32 = negative.to_uint32(scope).unwrap();
+    let negative_int32 = negative.to_int32(scope).unwrap();
+    let (symbol_number_none, symbol_number_caught) = {
+        let tc = std::pin::pin!(v8::TryCatch::new(scope));
+        let tc = &mut tc.init();
+        let symbol: v8::Local<v8::Value> = v8::Symbol::new(tc, None).into();
+        (symbol.to_number(tc).is_none(), tc.has_caught())
+    };
+    let (symbol_string_none, symbol_string_caught) = {
+        let tc = std::pin::pin!(v8::TryCatch::new(scope));
+        let tc = &mut tc.init();
+        let symbol: v8::Local<v8::Value> = v8::Symbol::new(tc, None).into();
+        (symbol.to_string(tc).is_none(), tc.has_caught())
+    };
+    let (bigint_uint32_none, bigint_uint32_caught) = {
+        let tc = std::pin::pin!(v8::TryCatch::new(scope));
+        let tc = &mut tc.init();
+        let bigint: v8::Local<v8::Value> = v8::BigInt::new_from_i64(tc, 1).into();
+        (bigint.to_uint32(tc).is_none(), tc.has_caught())
+    };
+    let (bigint_int32_none, bigint_int32_caught) = {
+        let tc = std::pin::pin!(v8::TryCatch::new(scope));
+        let tc = &mut tc.init();
+        let bigint: v8::Local<v8::Value> = v8::BigInt::new_from_i64(tc, 1).into();
+        (bigint.to_int32(tc).is_none(), tc.has_caught())
+    };
+
+    let actual = Json::obj(vec![
+        ("number", Json::f(number.value())),
+        ("string", Json::s(&string.to_rust_string_lossy(scope))),
+        ("uint32", Json::i(uint32.value() as i64)),
+        ("int32", Json::i(int32.value() as i64)),
+        ("negative_uint32", Json::i(negative_uint32.value() as i64)),
+        ("negative_int32", Json::i(negative_int32.value() as i64)),
+        ("symbol_number_none", Json::b(symbol_number_none)),
+        ("symbol_number_caught", Json::b(symbol_number_caught)),
+        ("symbol_string_none", Json::b(symbol_string_none)),
+        ("symbol_string_caught", Json::b(symbol_string_caught)),
+        ("bigint_uint32_none", Json::b(bigint_uint32_none)),
+        ("bigint_uint32_caught", Json::b(bigint_uint32_caught)),
+        ("bigint_int32_none", Json::b(bigint_int32_none)),
+        ("bigint_int32_caught", Json::b(bigint_int32_caught)),
+    ]);
+    let expected = Json::obj(vec![
+        ("number", Json::f(4294967297.9)),
+        ("string", Json::s("4294967297.9")),
+        ("uint32", Json::i(1)),
+        ("int32", Json::i(1)),
+        ("negative_uint32", Json::i(4294967295)),
+        ("negative_int32", Json::i(-1)),
+        ("symbol_number_none", Json::b(true)),
+        ("symbol_number_caught", Json::b(true)),
+        ("symbol_string_none", Json::b(true)),
+        ("symbol_string_caught", Json::b(true)),
+        ("bigint_uint32_none", Json::b(true)),
+        ("bigint_uint32_caught", Json::b(true)),
+        ("bigint_int32_none", Json::b(true)),
+        ("bigint_int32_caught", Json::b(true)),
+    ]);
+    vec![expect_eq(
+        "obj-ops/convert/residual_locals",
+        expected,
+        actual,
+    )]
+}
+
+fn module_namespace_and_type_repr() -> Vec<CheckOutcome> {
+    let isolate = &mut v8::Isolate::new(Default::default());
+    v8::scope!(let scope, isolate);
+    let context = v8::Context::new(scope, Default::default());
+    let scope = &mut v8::ContextScope::new(scope, context);
+
+    let module = compile_residual_module(scope, "export const x = 1;");
+    assert_eq!(
+        module.instantiate_module(scope, residual_unexpected_resolve),
+        Some(true)
+    );
+    let namespace = module.get_module_namespace();
+    let namespace_value: v8::Local<v8::Value> = namespace;
+
+    let mut samples = vec![
+        ("module_namespace", namespace_value),
+        (
+            "wasm_module",
+            eval(
+                scope,
+                "new WebAssembly.Module(new Uint8Array([0,97,115,109,1,0,0,0]))",
+            )
+            .unwrap(),
+        ),
+        (
+            "wasm_memory",
+            eval(scope, "new WebAssembly.Memory({initial:1})").unwrap(),
+        ),
+        ("proxy", eval(scope, "new Proxy({}, {})").unwrap()),
+        (
+            "shared_array_buffer",
+            eval(scope, "new SharedArrayBuffer(1)").unwrap(),
+        ),
+        (
+            "data_view",
+            eval(scope, "new DataView(new ArrayBuffer(1))").unwrap(),
+        ),
+        (
+            "big_uint64_array",
+            eval(scope, "new BigUint64Array(1)").unwrap(),
+        ),
+        (
+            "big_int64_array",
+            eval(scope, "new BigInt64Array(1)").unwrap(),
+        ),
+        ("float64_array", eval(scope, "new Float64Array(1)").unwrap()),
+        ("float32_array", eval(scope, "new Float32Array(1)").unwrap()),
+        ("int32_array", eval(scope, "new Int32Array(1)").unwrap()),
+        ("uint32_array", eval(scope, "new Uint32Array(1)").unwrap()),
+        ("int16_array", eval(scope, "new Int16Array(1)").unwrap()),
+        ("uint16_array", eval(scope, "new Uint16Array(1)").unwrap()),
+        ("int8_array", eval(scope, "new Int8Array(1)").unwrap()),
+        (
+            "uint8_clamped_array",
+            eval(scope, "new Uint8ClampedArray(1)").unwrap(),
+        ),
+        ("uint8_array", eval(scope, "new Uint8Array(1)").unwrap()),
+        ("float16_array", eval(scope, "new Float16Array(1)").unwrap()),
+        ("array_buffer", eval(scope, "new ArrayBuffer(1)").unwrap()),
+        ("weak_set", eval(scope, "new WeakSet()").unwrap()),
+        ("weak_map", eval(scope, "new WeakMap()").unwrap()),
+        ("set_iterator", eval(scope, "new Set().values()").unwrap()),
+        ("map_iterator", eval(scope, "new Map().keys()").unwrap()),
+        ("set", eval(scope, "new Set()").unwrap()),
+        ("map", eval(scope, "new Map()").unwrap()),
+        ("promise", eval(scope, "Promise.resolve(1)").unwrap()),
+        (
+            "generator_function",
+            eval(scope, "(function*(){})").unwrap(),
+        ),
+        (
+            "async_function",
+            eval(scope, "(async function(){})").unwrap(),
+        ),
+        ("regexp", eval(scope, "/x/").unwrap()),
+        ("date", eval(scope, "new Date(0)").unwrap()),
+        ("number", eval(scope, "1").unwrap()),
+        ("boolean", eval(scope, "true").unwrap()),
+        ("bigint", eval(scope, "1n").unwrap()),
+        ("array", eval(scope, "[]").unwrap()),
+        ("function", eval(scope, "(function(){})").unwrap()),
+        ("symbol", eval(scope, "Symbol('s')").unwrap()),
+        ("string", eval(scope, "'s'").unwrap()),
+        ("null", eval(scope, "null").unwrap()),
+        ("undefined", eval(scope, "undefined").unwrap()),
+        ("plain_object", eval(scope, "({})").unwrap()),
+    ];
+    let mut actual_pairs = Vec::with_capacity(samples.len() + 1);
+    actual_pairs.push((
+        "is_module_namespace_object",
+        Json::b(namespace_value.is_module_namespace_object()),
+    ));
+    for (name, value) in samples.drain(..) {
+        actual_pairs.push((name, Json::s(value.type_repr())));
+    }
+    let actual = Json::obj(actual_pairs);
+    let expected = Json::obj(vec![
+        ("is_module_namespace_object", Json::b(true)),
+        ("module_namespace", Json::s("Module")),
+        ("wasm_module", Json::s("WASM module")),
+        ("wasm_memory", Json::s("WASM memory object")),
+        ("proxy", Json::s("Proxy")),
+        ("shared_array_buffer", Json::s("SharedArrayBuffer")),
+        ("data_view", Json::s("DataView")),
+        ("big_uint64_array", Json::s("BigUint64Array")),
+        ("big_int64_array", Json::s("BigInt64Array")),
+        ("float64_array", Json::s("Float64Array")),
+        ("float32_array", Json::s("Float32Array")),
+        ("int32_array", Json::s("Int32Array")),
+        ("uint32_array", Json::s("Uint32Array")),
+        ("int16_array", Json::s("Int16Array")),
+        ("uint16_array", Json::s("Uint16Array")),
+        ("int8_array", Json::s("Int8Array")),
+        ("uint8_clamped_array", Json::s("Uint8ClampedArray")),
+        ("uint8_array", Json::s("Uint8Array")),
+        ("float16_array", Json::s("TypedArray")),
+        ("array_buffer", Json::s("ArrayBuffer")),
+        ("weak_set", Json::s("WeakSet")),
+        ("weak_map", Json::s("WeakMap")),
+        ("set_iterator", Json::s("Set Iterator")),
+        ("map_iterator", Json::s("Map Iterator")),
+        ("set", Json::s("Set")),
+        ("map", Json::s("Map")),
+        ("promise", Json::s("Promise")),
+        ("generator_function", Json::s("Generator function")),
+        ("async_function", Json::s("Async function")),
+        ("regexp", Json::s("RegExp")),
+        ("date", Json::s("Date")),
+        ("number", Json::s("Number")),
+        ("boolean", Json::s("Boolean")),
+        ("bigint", Json::s("bigint")),
+        ("array", Json::s("array")),
+        ("function", Json::s("function")),
+        ("symbol", Json::s("symbol")),
+        ("string", Json::s("string")),
+        ("null", Json::s("null")),
+        ("undefined", Json::s("undefined")),
+        ("plain_object", Json::s("unknown")),
+    ]);
+    vec![expect_eq(
+        "obj-ops/predicates/module_namespace_and_type_repr",
+        expected,
+        actual,
+    )]
+}
+
 // ---------------------------------------------------------------------------
 // Registry and entry point (order is the observable contract).
 // ---------------------------------------------------------------------------
@@ -2437,6 +2802,9 @@ const CHECKS: &[CheckFn] = &[
     value_hash_semantics,
     type_representation,
     predicates_missing_inventory,
+    data_predicates_and_identity,
+    residual_local_conversions,
+    module_namespace_and_type_repr,
 ];
 
 fn main() -> std::process::ExitCode {

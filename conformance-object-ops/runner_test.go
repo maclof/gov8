@@ -1,6 +1,6 @@
 //go:build windows && amd64
 
-// The conformance-object-ops runner: it executes the 22 checks in the fixed
+// The conformance-object-ops runner: it executes the 25 checks in the fixed
 // oracle order, renders the same normalized JSON-lines report as the other
 // slices, and compares the report byte-for-byte against the pinned fixture.
 // The shape, order, and determinism tests mirror
@@ -62,7 +62,7 @@ func runAll(t *testing.T) string {
 	return sb.String()
 }
 
-// TestConformanceFixture runs all 22 checks in oracle order and compares the
+// TestConformanceFixture runs all 25 checks in oracle order and compares the
 // report byte-for-byte against the pinned fixture.
 func TestConformanceFixture(t *testing.T) {
 	report := runAll(t)
@@ -141,7 +141,8 @@ func TestConformanceFixtureShapeIsSane(t *testing.T) {
 // TestConformanceFixtureCoversAllAreasInOrder mirrors
 // conformance_object_ops_fixture_covers_all_areas_in_order: prototype,
 // property, identity, receiver, lazy, call, convert, instanceof, equality,
-// typeof, and predicates appear exactly in the documented group order.
+// typeof, predicates, Data, residual conversions, and residual helper checks
+// appear exactly in the documented order.
 func TestConformanceFixtureCoversAllAreasInOrder(t *testing.T) {
 	report := runAll(t)
 	lines := strings.Split(strings.TrimRight(report, "\n"), "\n")
@@ -157,6 +158,9 @@ func TestConformanceFixtureCoversAllAreasInOrder(t *testing.T) {
 		"obj-ops/equality/",
 		"obj-ops/typeof/",
 		"obj-ops/predicates/",
+		"obj-ops/data/predicates_and_identity",
+		"obj-ops/convert/residual_locals",
+		"obj-ops/predicates/module_namespace_and_type_repr",
 	}
 	positions := make([]int, 0, len(expectedPrefixes))
 	for _, prefix := range expectedPrefixes {

@@ -66,6 +66,9 @@ func TestSnapshotCreateBlobPolicies(t *testing.T) {
 		if !blob.IsValid() {
 			t.Fatalf("keep=%v: blob not valid", keep)
 		}
+		if !blob.CanBeRehashed() {
+			t.Fatalf("keep=%v: blob cannot be rehashed", keep)
+		}
 		if err := blob.Release(); err != nil {
 			t.Errorf("Release: %v", err)
 		}
@@ -80,12 +83,18 @@ func TestSnapshotStartupDataGuard(t *testing.T) {
 	if gov8.StartupDataFromBytes(nil).IsValid() {
 		t.Fatal("nil-byte blob must be invalid")
 	}
+	if gov8.StartupDataFromBytes(nil).CanBeRehashed() {
+		t.Fatal("nil-byte blob must not be reported rehashable")
+	}
 	if !gov8.StartupDataFromBytes(nil).IsEmpty() {
 		t.Fatal("nil-byte blob must be empty")
 	}
 	short := gov8.StartupDataFromBytes(make([]byte, 80))
 	if short.IsValid() {
 		t.Fatal("80-byte blob must be invalid (version header bound)")
+	}
+	if short.CanBeRehashed() {
+		t.Fatal("80-byte blob must not be reported rehashable")
 	}
 	if gov8.StartupDataFromBytes(make([]byte, 81)).IsEmpty() {
 		t.Fatal("sanity: 81-byte blob is not empty")

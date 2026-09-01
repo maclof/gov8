@@ -146,10 +146,31 @@ const v8::Integer* v8__Value__ToInteger(const v8::Value& self,
                                         const v8::Context& context);
 const v8::BigInt* v8__Value__ToBigInt(const v8::Value& self,
                                       const v8::Context& context);
+const v8::Number* v8__Value__ToNumber(const v8::Value& self,
+                                      const v8::Context& context);
+const v8::String* v8__Value__ToString(const v8::Value& self,
+                                      const v8::Context& context);
 const v8::String* v8__Value__ToDetailString(const v8::Value& self,
                                             const v8::Context& context);
+const v8::Uint32* v8__Value__ToUint32(const v8::Value& self,
+                                      const v8::Context& context);
+const v8::Int32* v8__Value__ToInt32(const v8::Value& self,
+                                    const v8::Context& context);
 void v8__Value__InstanceOf(const v8::Value& self, const v8::Context& context,
                            const v8::Object& object, v8::Maybe<bool>* out);
+
+bool v8__Data__EQ(const v8::Data* self, const v8::Data* other);
+bool v8__Data__IsBigInt(const v8::Data& self);
+bool v8__Data__IsBoolean(const v8::Data& self);
+bool v8__Data__IsContext(const v8::Data& self);
+bool v8__Data__IsFunctionTemplate(const v8::Data& self);
+bool v8__Data__IsModule(const v8::Data& self);
+bool v8__Data__IsName(const v8::Data& self);
+bool v8__Data__IsNumber(const v8::Data& self);
+bool v8__Data__IsObjectTemplate(const v8::Data& self);
+bool v8__Data__IsPrivate(const v8::Data& self);
+bool v8__Data__IsString(const v8::Data& self);
+bool v8__Data__IsSymbol(const v8::Data& self);
 
 bool v8__Value__IsFalse(const v8::Value& self);
 bool v8__Value__IsArgumentsObject(const v8::Value& self);
@@ -163,6 +184,7 @@ bool v8__Value__IsSetIterator(const v8::Value& self);
 bool v8__Value__IsGeneratorObject(const v8::Value& self);
 bool v8__Value__IsWeakMap(const v8::Value& self);
 bool v8__Value__IsWeakSet(const v8::Value& self);
+bool v8__Value__IsModuleNamespaceObject(const v8::Value& self);
 }
 
 extern "C" {
@@ -954,6 +976,43 @@ __declspec(dllexport) int64_t gov8_oo_value_to_big_int(v8::Isolate* iso,
   } GOV8_RV_END_CATCH("oo_value_to_big_int")
 }
 
+#define GOV8_OO_LOCAL_CONVERSION(name, binding, label)                         \
+  __declspec(dllexport) int64_t name(                                          \
+      v8::Isolate* iso, void* ctxw, void* tcw, void* scope, void* v,           \
+      void** out) {                                                             \
+    ClearErr();                                                                 \
+    GOV8_RV_NULL_WIRE(v)                                                        \
+    CtxWrap* w = AsCtx(ctxw);                                                   \
+    if (w == nullptr || out == nullptr || !ScopeIs(iso, scope) ||              \
+        !OwnedBy(iso, w->iso)) {                                                \
+      SetErr("invalid argument");                                              \
+      return kErrBadArg;                                                        \
+    }                                                                           \
+    try {                                                                       \
+      Gov8IsolateScope iso_scope(iso);                                          \
+      FallbackTryCatch fallback;                                                \
+      v8::TryCatch* tc = nullptr;                                               \
+      if (!RvResolveTc(iso, tcw, &fallback, &tc)) return kErrBadArg;            \
+      v8::Local<v8::Context> ctx = w->ctx->Get(iso);                            \
+      v8::Context::Scope ctx_scope(ctx);                                        \
+      const void* got = binding(                                                \
+          gov8_snap_impl::DerefLocal(FromWire<v8::Value>(v)),                  \
+          gov8_snap_impl::DerefLocal(ctx));                                     \
+      return MaybeLocalStatus(got, out);                                        \
+    } GOV8_RV_END_CATCH(label)                                                  \
+  }
+
+GOV8_OO_LOCAL_CONVERSION(gov8_oo_value_to_number, v8__Value__ToNumber,
+                         "oo_value_to_number")
+GOV8_OO_LOCAL_CONVERSION(gov8_oo_value_to_string, v8__Value__ToString,
+                         "oo_value_to_string")
+GOV8_OO_LOCAL_CONVERSION(gov8_oo_value_to_uint32, v8__Value__ToUint32,
+                         "oo_value_to_uint32")
+GOV8_OO_LOCAL_CONVERSION(gov8_oo_value_to_int32, v8__Value__ToInt32,
+                         "oo_value_to_int32")
+
+#undef GOV8_OO_LOCAL_CONVERSION
+
 __declspec(dllexport) int64_t gov8_oo_value_to_detail_string(
     v8::Isolate* iso, void* ctxw, void* tcw, void* scope, void* v,
     void** out) {
@@ -1047,5 +1106,91 @@ GOV8_OO_PREDICATE(gov8_oo_is_set_iterator, v8__Value__IsSetIterator)
 GOV8_OO_PREDICATE(gov8_oo_is_generator_object, v8__Value__IsGeneratorObject)
 GOV8_OO_PREDICATE(gov8_oo_is_weak_map, v8__Value__IsWeakMap)
 GOV8_OO_PREDICATE(gov8_oo_is_weak_set, v8__Value__IsWeakSet)
+GOV8_OO_PREDICATE(gov8_oo_is_module_namespace_object,
+                  v8__Value__IsModuleNamespaceObject)
+
+// Data locals include metadata objects which are not Values. These endpoints
+// therefore bind as Data from the start and use the pinned artifact's Data
+// predicates rather than downcasting through Value.
+#define GOV8_OO_DATA_PREDICATE(name, artifact)                                  \
+  __declspec(dllexport) int64_t name(v8::Isolate* iso, void* wire) {            \
+    ClearErr();                                                                 \
+    if (iso == nullptr || wire == nullptr) {                                    \
+      SetErr("invalid data predicate argument");                               \
+      return kErrBadArg;                                                        \
+    }                                                                           \
+    try {                                                                       \
+      Gov8IsolateScope iso_scope(iso);                                          \
+      return artifact(                                                          \
+                 gov8_snap_impl::DerefLocal(FromWire<v8::Data>(wire)))         \
+                 ? 1                                                            \
+                 : 0;                                                           \
+    } GOV8_RV_END_CATCH(#name)                                                  \
+  }
+
+GOV8_OO_DATA_PREDICATE(gov8_oo_data_is_big_int, v8__Data__IsBigInt)
+GOV8_OO_DATA_PREDICATE(gov8_oo_data_is_boolean, v8__Data__IsBoolean)
+GOV8_OO_DATA_PREDICATE(gov8_oo_data_is_context, v8__Data__IsContext)
+GOV8_OO_DATA_PREDICATE(gov8_oo_data_is_function_template,
+                       v8__Data__IsFunctionTemplate)
+GOV8_OO_DATA_PREDICATE(gov8_oo_data_is_module, v8__Data__IsModule)
+GOV8_OO_DATA_PREDICATE(gov8_oo_data_is_name, v8__Data__IsName)
+GOV8_OO_DATA_PREDICATE(gov8_oo_data_is_number, v8__Data__IsNumber)
+GOV8_OO_DATA_PREDICATE(gov8_oo_data_is_object_template,
+                       v8__Data__IsObjectTemplate)
+GOV8_OO_DATA_PREDICATE(gov8_oo_data_is_private, v8__Data__IsPrivate)
+GOV8_OO_DATA_PREDICATE(gov8_oo_data_is_string, v8__Data__IsString)
+GOV8_OO_DATA_PREDICATE(gov8_oo_data_is_symbol, v8__Data__IsSymbol)
+
+#undef GOV8_OO_DATA_PREDICATE
+
+__declspec(dllexport) int64_t gov8_oo_data_equal(v8::Isolate* iso, void* a,
+                                                  void* b) {
+  ClearErr();
+  if (iso == nullptr || a == nullptr || b == nullptr) {
+    SetErr("invalid data equality argument");
+    return kErrBadArg;
+  }
+  try {
+    Gov8IsolateScope iso_scope(iso);
+    return v8__Data__EQ(
+               &gov8_snap_impl::DerefLocal(FromWire<v8::Data>(a)),
+               &gov8_snap_impl::DerefLocal(FromWire<v8::Data>(b)))
+               ? 1
+               : 0;
+  } GOV8_RV_END_CATCH("oo_data_equal")
+}
+
+__declspec(dllexport) int64_t gov8_oo_context_data(
+    v8::Isolate* iso, void* ctxw, void* scope, void** out) {
+  ClearErr();
+  CtxWrap* w = AsCtx(ctxw);
+  if (w == nullptr || out == nullptr || !ScopeIs(iso, scope) ||
+      !OwnedBy(iso, w->iso)) {
+    SetErr("invalid context data argument");
+    return kErrBadArg;
+  }
+  try {
+    Gov8IsolateScope iso_scope(iso);
+    *out = ToWire(w->ctx->Get(iso));
+    return kOk;
+  } GOV8_RV_END_CATCH("oo_context_data")
+}
+
+__declspec(dllexport) int64_t gov8_oo_module_data(
+    v8::Isolate* iso, void* modulew, void* scope, void** out) {
+  ClearErr();
+  ModuleWrap* w = AsModule(modulew);
+  if (w == nullptr || out == nullptr || !ScopeIs(iso, scope) ||
+      !OwnedBy(iso, w->iso)) {
+    SetErr("invalid module data argument");
+    return kErrBadArg;
+  }
+  try {
+    Gov8IsolateScope iso_scope(iso);
+    *out = ToWire(w->module->Get(iso));
+    return kOk;
+  } GOV8_RV_END_CATCH("oo_module_data")
+}
 
 }  // extern "C"

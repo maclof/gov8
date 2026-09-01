@@ -95,6 +95,24 @@ func (s *StartupData) IsValid() bool {
 	return s != nil && startupBytesValid(s.bytes)
 }
 
+// CanBeRehashed reports whether V8 can rehash the startup blob when loading
+// it. The pinned crate documents this query for blobs returned by
+// SnapshotCreator.CreateBlob. Invalid and truncated embedder-provided data is
+// answered locally as false because passing it to V8 can trip a fatal CHECK.
+func (s *StartupData) CanBeRehashed() bool {
+	if s == nil || len(s.bytes) < minValidStartupSize {
+		return false
+	}
+	var out int32
+	r1, _, _ := proc("gov8_snapshot_blob_can_be_rehashed").Call(
+		uintptr(unsafe.Pointer(&s.bytes[0])), uintptr(len(s.bytes)),
+		uintptr(unsafe.Pointer(&out)))
+	if int64(r1) < 0 {
+		return false
+	}
+	return out == 1
+}
+
 func startupBytesValid(b []byte) bool {
 	if len(b) < minValidStartupSize {
 		return false

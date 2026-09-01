@@ -99,6 +99,7 @@ size_t v8__SnapshotCreator__AddData_to_context(void* self,
 v8::StartupData v8__SnapshotCreator__CreateBlob(
     void* self, v8::SnapshotCreator::FunctionCodeHandling function_code_handling);
 bool v8__StartupData__IsValid(const v8::StartupData& self);
+bool v8__StartupData__CanBeRehashed(const v8::StartupData& self);
 void v8__StartupData__data__DELETE(const char* data);
 const v8::Data* v8__Isolate__GetDataFromSnapshotOnce(v8::Isolate* isolate,
                                                     size_t index);
@@ -305,6 +306,31 @@ __declspec(dllexport) int64_t gov8_snapshot_blob_is_valid(const char* p,
     return kOk;
   } catch (...) {
     SetErr("C++ exception in snapshot_blob_is_valid");
+    return kErrCpp;
+  }
+}
+
+// Guarded rehashability query. As with IsValid, truncated input never reaches
+// V8 because its snapshot header checks are fatal rather than recoverable.
+__declspec(dllexport) int64_t gov8_snapshot_blob_can_be_rehashed(
+    const char* p, int64_t len, int32_t* out) {
+  ClearErr();
+  if (out == nullptr || (p == nullptr && len > 0)) {
+    SetErr("invalid argument");
+    return kErrBadArg;
+  }
+  if (len < gov8_snap_impl::kMinValidRawSize) {
+    *out = 0;
+    return kOk;
+  }
+  v8::StartupData tmp;
+  tmp.data = p;
+  tmp.raw_size = static_cast<int>(len);
+  try {
+    *out = v8__StartupData__CanBeRehashed(tmp) ? 1 : 0;
+    return kOk;
+  } catch (...) {
+    SetErr("C++ exception in snapshot_blob_can_be_rehashed");
     return kErrCpp;
   }
 }

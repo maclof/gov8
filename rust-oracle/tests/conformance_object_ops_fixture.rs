@@ -82,7 +82,8 @@ fn object_ops_fixture_shape_is_sane() {
 /// property (has/delete + real-named), identity (hash / creation context /
 /// constructor name), receivers, lazy+instance accessors, call-as-*
 /// operations and predicates, conversions, instanceof, equality/hash,
-/// type representation and the missing-predicates inventory.
+/// type representation, the missing-predicates inventory, Data, residual
+/// local conversions, and the remaining predicate/helper surface.
 #[test]
 fn object_ops_fixture_covers_all_areas_in_order() {
     let expected_prefixes = [
@@ -108,6 +109,9 @@ fn object_ops_fixture_covers_all_areas_in_order() {
         "obj-ops/equality/value_hash",
         "obj-ops/typeof/type_representation",
         "obj-ops/predicates/missing_inventory",
+        "obj-ops/data/predicates_and_identity",
+        "obj-ops/convert/residual_locals",
+        "obj-ops/predicates/module_namespace_and_type_repr",
     ];
     let positions: Vec<Option<usize>> = expected_prefixes
         .iter()

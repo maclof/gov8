@@ -454,10 +454,12 @@ fn startup_data_predicates() -> Vec<CheckOutcome> {
     let actual = Json::obj(vec![
         ("blob_len_gt_zero", Json::b(!blob.is_empty())),
         ("blob_is_valid", Json::b(blob.is_valid())),
+        ("blob_can_be_rehashed", Json::b(blob.can_be_rehashed())),
     ]);
     let expected = Json::obj(vec![
         ("blob_len_gt_zero", Json::b(true)),
         ("blob_is_valid", Json::b(true)),
+        ("blob_can_be_rehashed", Json::b(true)),
     ]);
     vec![expect_eq(
         "snapshot/startup_data_predicates",

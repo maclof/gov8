@@ -358,6 +358,143 @@ func (e *objEnv) mustGlobalObject(expr string) *gov8.Object {
 	return o
 }
 
+func TestValueResidualConversionsAndTypeRepr(t *testing.T) {
+	e := newObjectEnv(t)
+	defer e.close()
+
+	input := e.mustString("4294967297.9")
+	number, err := input.ToNumber(e.scope, e.ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, ok, err := number.NumberValue(e.ctx); err != nil || !ok || got != 4294967297.9 {
+		t.Fatalf("ToNumber = %v/%v, %v", got, ok, err)
+	}
+	uint32Value, err := input.ToUint32(e.scope, e.ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, ok, err := uint32Value.Uint32Value(e.ctx); err != nil || !ok || got != 1 {
+		t.Fatalf("ToUint32 = %v/%v, %v", got, ok, err)
+	}
+	int32Value, err := input.ToInt32(e.scope, e.ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, ok, err := int32Value.Int32Value(e.ctx); err != nil || !ok || got != 1 {
+		t.Fatalf("ToInt32 = %v/%v, %v", got, ok, err)
+	}
+	text, err := input.ToStringValue(e.scope, e.ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := text.StringValue(); err != nil || got != "4294967297.9" {
+		t.Fatalf("ToStringValue = %q, %v", got, err)
+	}
+
+	samples := []struct {
+		expr string
+		want string
+	}{
+		{"undefined", "undefined"}, {"null", "null"}, {"1", "Number"},
+		{"true", "Boolean"}, {"1n", "bigint"}, {"'x'", "string"},
+		{"Symbol('x')", "symbol"}, {"[]", "array"}, {"(function(){})", "function"},
+		{"new Float16Array(1)", "TypedArray"},
+	}
+	for _, sample := range samples {
+		got, err := e.evalValue(sample.expr).TypeRepr()
+		if err != nil || got != sample.want {
+			t.Fatalf("TypeRepr(%s) = %q, %v; want %q", sample.expr, got, err, sample.want)
+		}
+	}
+}
+
+func TestDataResidualPredicatesIdentityAndViews(t *testing.T) {
+	e := newObjectEnv(t)
+	defer e.close()
+
+	assert := func(name string, data gov8.Data, predicate func(gov8.Data) (bool, error)) {
+		t.Helper()
+		if got, err := predicate(data); err != nil || !got {
+			t.Fatalf("%s = %v, %v", name, got, err)
+		}
+	}
+	valueData := func(v gov8.Value) gov8.Data {
+		d, err := v.Data()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return d
+	}
+
+	assert("bigint", valueData(e.evalValue("1n")), gov8.Data.IsBigInt)
+	assert("boolean", valueData(e.evalValue("true")), gov8.Data.IsBoolean)
+	assert("name/string", valueData(e.mustString("name")), gov8.Data.IsName)
+	assert("string", valueData(e.mustString("string")), gov8.Data.IsString)
+	assert("number", valueData(e.mustInt(7)), gov8.Data.IsNumber)
+	assert("symbol", valueData(e.evalValue("Symbol('s')")), gov8.Data.IsSymbol)
+
+	contextData, err := e.ctx.Data(e.scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assert("context", contextData, gov8.Data.IsContext)
+
+	privateName := e.mustString("private")
+	private, err := e.scope.NewPrivate(privateName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	privateData, err := private.Data()
+	if err != nil {
+		t.Fatal(err)
+	}
+	assert("private", privateData, gov8.Data.IsPrivate)
+
+	functionTemplate, err := e.iso.NewFunctionTemplate(e.scope,
+		func(*gov8.CallbackScope, gov8.FunctionCallbackArguments, gov8.ReturnValue) {}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	functionTemplateData, err := functionTemplate.Data()
+	if err != nil {
+		t.Fatal(err)
+	}
+	assert("function template", functionTemplateData, gov8.Data.IsFunctionTemplate)
+
+	objectTemplate, err := e.iso.NewObjectTemplate(e.scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	objectTemplateData, err := objectTemplate.Data()
+	if err != nil {
+		t.Fatal(err)
+	}
+	assert("object template", objectTemplateData, gov8.Data.IsObjectTemplate)
+
+	module, err := e.ctx.CompileModule(e.scope, "export const x = 1;", "data.mjs", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = module.Close() }()
+	moduleData, err := module.Data(e.scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assert("module", moduleData, gov8.Data.IsModule)
+
+	objectA := e.mustObject()
+	dataA := valueData(objectA.Value)
+	dataACopy := valueData(objectA.Value)
+	dataB := valueData(e.mustObject().Value)
+	if equal, err := dataA.Equal(dataACopy); err != nil || !equal {
+		t.Fatalf("same Data identity = %v, %v", equal, err)
+	}
+	if equal, err := dataA.Equal(dataB); err != nil || equal {
+		t.Fatalf("distinct Data identity = %v, %v", equal, err)
+	}
+}
+
 // --- lazy properties and instance accessors ---------------------------------------
 
 func TestObjectLazyDataPropertyFiresOnce(t *testing.T) {

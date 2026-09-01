@@ -1,6 +1,6 @@
 //go:build windows && amd64
 
-// The 22 object-ops checks in the fixed oracle order (the order is part of
+// The 25 object-ops checks in the fixed oracle order (the order is part of
 // the observable contract). Every check normalizes its observations with
 // the rules of rust-oracle/src/json.rs: no addresses, no raw hash values
 // (identity hashes are per-isolate seeded), exact engine strings for the
@@ -2170,6 +2170,334 @@ func checkPredicatesMissingInventory(t tester) obs {
 	return wantGot("obj-ops/predicates/missing_inventory", want, got)
 }
 
+func checkDataPredicatesAndIdentity(t tester) obs {
+	t.Helper()
+	r := newRuntime(t)
+	defer r.close(t)
+
+	mustData := func(data gov8.Data, err error) gov8.Data {
+		t.Helper()
+		if err != nil {
+			t.Fatalf("Data conversion: %v", err)
+		}
+		return data
+	}
+	must := func(data gov8.Data, pred func(gov8.Data) (bool, error)) bool {
+		t.Helper()
+		value, err := pred(data)
+		if err != nil {
+			t.Fatalf("Data predicate: %v", err)
+		}
+		return value
+	}
+	valueData := func(value gov8.Value) gov8.Data { return mustData(value.Data()) }
+
+	functionTemplate, err := r.iso.NewFunctionTemplate(r.scope,
+		func(*gov8.CallbackScope, gov8.FunctionCallbackArguments, gov8.ReturnValue) {}, nil)
+	if err != nil {
+		t.Fatalf("NewFunctionTemplate: %v", err)
+	}
+	objectTemplate, err := r.iso.NewObjectTemplate(r.scope)
+	if err != nil {
+		t.Fatalf("NewObjectTemplate: %v", err)
+	}
+	privateName := scopeString(t, r.scope, "private")
+	private, err := r.scope.NewPrivate(privateName)
+	if err != nil {
+		t.Fatalf("NewPrivate: %v", err)
+	}
+	module, err := r.ctx.CompileModule(r.scope,
+		"import './dep.mjs'; export const x = 1;", "residual.mjs", nil)
+	if err != nil {
+		t.Fatalf("CompileModule: %v", err)
+	}
+	defer func() {
+		if err := module.Close(); err != nil {
+			t.Errorf("Module.Close: %v", err)
+		}
+	}()
+	requests, err := module.ModuleRequests(r.scope)
+	if err != nil {
+		t.Fatalf("ModuleRequests: %v", err)
+	}
+	moduleRequest, ok, err := requests.Get(r.scope, 0)
+	if err != nil || !ok {
+		t.Fatalf("module request: ok=%v err=%v", ok, err)
+	}
+	stringValue := scopeString(t, r.scope, "name")
+	objectA := mustNewObjectValue(t, r)
+	objectB := mustNewObjectValue(t, r)
+	dataA := valueData(objectA)
+	dataACopy := valueData(objectA)
+	dataB := valueData(objectB)
+	sameIdentity, err := dataA.Equal(dataACopy)
+	if err != nil {
+		t.Fatalf("Data.Equal(same): %v", err)
+	}
+	distinctIdentity, err := dataA.Equal(dataB)
+	if err != nil {
+		t.Fatalf("Data.Equal(distinct): %v", err)
+	}
+	contextData := mustData(r.ctx.Data(r.scope))
+	functionTemplateData := mustData(functionTemplate.Data())
+	moduleData := mustData(module.Data(r.scope))
+	stringData := valueData(stringValue)
+	numberData := valueData(scopeNumber(t, r.scope, 1.5))
+	objectTemplateData := mustData(objectTemplate.Data())
+	privateData := mustData(private.Data())
+
+	got := jobj(
+		kv("is_big_int", jbool(must(valueData(scopeBigIntI64(t, r.scope, 1)), gov8.Data.IsBigInt))),
+		kv("is_boolean", jbool(must(valueData(scopeBoolean(t, r.scope, true)), gov8.Data.IsBoolean))),
+		kv("is_context", jbool(must(contextData, gov8.Data.IsContext))),
+		kv("is_fixed_array", jbool(must(requests.Data, gov8.Data.IsFixedArray))),
+		kv("is_function_template", jbool(must(functionTemplateData, gov8.Data.IsFunctionTemplate))),
+		kv("is_module", jbool(must(moduleData, gov8.Data.IsModule))),
+		kv("is_module_request", jbool(must(moduleRequest, gov8.Data.IsModuleRequest))),
+		kv("is_name", jbool(must(stringData, gov8.Data.IsName))),
+		kv("is_number", jbool(must(numberData, gov8.Data.IsNumber))),
+		kv("is_object_template", jbool(must(objectTemplateData, gov8.Data.IsObjectTemplate))),
+		kv("is_primitive", jbool(must(stringData, gov8.Data.IsPrimitive))),
+		kv("is_private", jbool(must(privateData, gov8.Data.IsPrivate))),
+		kv("is_string", jbool(must(stringData, gov8.Data.IsString))),
+		kv("is_symbol", jbool(must(valueData(mustSymbolValue(t, r)), gov8.Data.IsSymbol))),
+		kv("is_value", jbool(must(dataA, gov8.Data.IsValue))),
+		kv("number_is_not_string", jbool(!must(numberData, gov8.Data.IsString))),
+		kv("string_is_not_number", jbool(!must(stringData, gov8.Data.IsNumber))),
+		kv("context_is_not_value", jbool(!must(contextData, gov8.Data.IsValue))),
+		kv("module_is_not_value", jbool(!must(moduleData, gov8.Data.IsValue))),
+		kv("private_is_not_value", jbool(!must(privateData, gov8.Data.IsValue))),
+		kv("object_template_is_not_function_template", jbool(!must(objectTemplateData, gov8.Data.IsFunctionTemplate))),
+		kv("value_is_not_module_request", jbool(!must(dataA, gov8.Data.IsModuleRequest))),
+		kv("fixed_array_is_not_value", jbool(!must(requests.Data, gov8.Data.IsValue))),
+		kv("same_data_identity", jbool(sameIdentity)),
+		kv("distinct_data_identity", jbool(!distinctIdentity)),
+	)
+	want := jobj(
+		kv("is_big_int", jbool(true)), kv("is_boolean", jbool(true)),
+		kv("is_context", jbool(true)), kv("is_fixed_array", jbool(true)),
+		kv("is_function_template", jbool(true)), kv("is_module", jbool(true)),
+		kv("is_module_request", jbool(true)), kv("is_name", jbool(true)),
+		kv("is_number", jbool(true)), kv("is_object_template", jbool(true)),
+		kv("is_primitive", jbool(true)), kv("is_private", jbool(true)),
+		kv("is_string", jbool(true)), kv("is_symbol", jbool(true)),
+		kv("is_value", jbool(true)),
+		kv("number_is_not_string", jbool(true)), kv("string_is_not_number", jbool(true)),
+		kv("context_is_not_value", jbool(true)), kv("module_is_not_value", jbool(true)),
+		kv("private_is_not_value", jbool(true)), kv("object_template_is_not_function_template", jbool(true)),
+		kv("value_is_not_module_request", jbool(true)), kv("fixed_array_is_not_value", jbool(true)),
+		kv("same_data_identity", jbool(true)),
+		kv("distinct_data_identity", jbool(true)),
+	)
+	return wantGot("obj-ops/data/predicates_and_identity", want, got)
+}
+
+func checkResidualLocalConversions(t tester) obs {
+	t.Helper()
+	r := newRuntime(t)
+	defer r.close(t)
+	input := scopeString(t, r.scope, "4294967297.9")
+	number, err := input.ToNumber(r.scope, r.ctx, nil)
+	if err != nil {
+		t.Fatalf("ToNumber: %v", err)
+	}
+	stringValue, err := input.ToStringValue(r.scope, r.ctx, nil)
+	if err != nil {
+		t.Fatalf("ToStringValue: %v", err)
+	}
+	uint32Value, err := input.ToUint32(r.scope, r.ctx, nil)
+	if err != nil {
+		t.Fatalf("ToUint32: %v", err)
+	}
+	int32Value, err := input.ToInt32(r.scope, r.ctx, nil)
+	if err != nil {
+		t.Fatalf("ToInt32: %v", err)
+	}
+	negative := scopeNumber(t, r.scope, -1.9)
+	negativeUint32, err := negative.ToUint32(r.scope, r.ctx, nil)
+	if err != nil {
+		t.Fatalf("negative ToUint32: %v", err)
+	}
+	negativeInt32, err := negative.ToInt32(r.scope, r.ctx, nil)
+	if err != nil {
+		t.Fatalf("negative ToInt32: %v", err)
+	}
+	mustNumber := func(value gov8.Value) float64 {
+		result, ok, err := value.NumberValue(r.ctx)
+		if err != nil || !ok {
+			t.Fatalf("NumberValue: ok=%v err=%v", ok, err)
+		}
+		return result
+	}
+	mustUint32 := func(value gov8.Value) uint32 {
+		result, ok, err := value.Uint32Value(r.ctx)
+		if err != nil || !ok {
+			t.Fatalf("Uint32Value: ok=%v err=%v", ok, err)
+		}
+		return result
+	}
+	mustInt32 := func(value gov8.Value) int32 {
+		result, ok, err := value.Int32Value(r.ctx)
+		if err != nil || !ok {
+			t.Fatalf("Int32Value: ok=%v err=%v", ok, err)
+		}
+		return result
+	}
+	numberResult := mustNumber(number)
+	uint32Result := mustUint32(uint32Value)
+	int32Result := mustInt32(int32Value)
+	negativeUint32Result := mustUint32(negativeUint32)
+	negativeInt32Result := mustInt32(negativeInt32)
+	symbol := mustSymbolValue(t, r)
+	bigint := scopeBigIntI64(t, r.scope, 1)
+	failed := func(call func(*gov8.TryCatch) error) (bool, bool) {
+		tc := r.tc(t)
+		err := call(tc)
+		caught := mustHasCaught(t, tc)
+		closeTryCatch(t, tc)
+		return err != nil, caught
+	}
+	symbolNumberNone, symbolNumberCaught := failed(func(tc *gov8.TryCatch) error {
+		_, err := symbol.ToNumber(r.scope, r.ctx, tc)
+		return err
+	})
+	symbolStringNone, symbolStringCaught := failed(func(tc *gov8.TryCatch) error {
+		_, err := symbol.ToStringValue(r.scope, r.ctx, tc)
+		return err
+	})
+	bigintUint32None, bigintUint32Caught := failed(func(tc *gov8.TryCatch) error {
+		_, err := bigint.ToUint32(r.scope, r.ctx, tc)
+		return err
+	})
+	bigintInt32None, bigintInt32Caught := failed(func(tc *gov8.TryCatch) error {
+		_, err := bigint.ToInt32(r.scope, r.ctx, tc)
+		return err
+	})
+	got := jobj(
+		kv("number", jfloat(numberResult)),
+		kv("string", jstr(valueText(t, r, stringValue))),
+		kv("uint32", jint(int64(uint32Result))), kv("int32", jint(int64(int32Result))),
+		kv("negative_uint32", jint(int64(negativeUint32Result))),
+		kv("negative_int32", jint(int64(negativeInt32Result))),
+		kv("symbol_number_none", jbool(symbolNumberNone)),
+		kv("symbol_number_caught", jbool(symbolNumberCaught)),
+		kv("symbol_string_none", jbool(symbolStringNone)),
+		kv("symbol_string_caught", jbool(symbolStringCaught)),
+		kv("bigint_uint32_none", jbool(bigintUint32None)),
+		kv("bigint_uint32_caught", jbool(bigintUint32Caught)),
+		kv("bigint_int32_none", jbool(bigintInt32None)),
+		kv("bigint_int32_caught", jbool(bigintInt32Caught)),
+	)
+	want := jobj(
+		kv("number", jfloat(4294967297.9)), kv("string", jstr("4294967297.9")),
+		kv("uint32", jint(1)), kv("int32", jint(1)),
+		kv("negative_uint32", jint(4294967295)), kv("negative_int32", jint(-1)),
+		kv("symbol_number_none", jbool(true)), kv("symbol_number_caught", jbool(true)),
+		kv("symbol_string_none", jbool(true)), kv("symbol_string_caught", jbool(true)),
+		kv("bigint_uint32_none", jbool(true)), kv("bigint_uint32_caught", jbool(true)),
+		kv("bigint_int32_none", jbool(true)), kv("bigint_int32_caught", jbool(true)),
+	)
+	return wantGot("obj-ops/convert/residual_locals", want, got)
+}
+
+func checkModuleNamespaceAndTypeRepr(t tester) obs {
+	t.Helper()
+	r := newRuntime(t)
+	defer r.close(t)
+	module, err := r.ctx.CompileModule(r.scope, "export const x = 1;", "residual.mjs", nil)
+	if err != nil {
+		t.Fatalf("CompileModule: %v", err)
+	}
+	defer func() {
+		if err := module.Close(); err != nil {
+			t.Errorf("Module.Close: %v", err)
+		}
+	}()
+	linked, err := module.Instantiate(r.scope, func(gov8.ModuleResolveRequest) (*gov8.Module, error) {
+		t.Fatal("unexpected module resolver call")
+		return nil, nil
+	}, nil)
+	if err != nil || !linked {
+		t.Fatalf("Instantiate: linked=%v err=%v", linked, err)
+	}
+	namespace, err := module.Namespace(r.scope)
+	if err != nil {
+		t.Fatalf("Namespace: %v", err)
+	}
+	samples := []struct {
+		name string
+		v    gov8.Value
+	}{
+		{"module_namespace", namespace},
+		{"wasm_module", r.mustEval(t, "new WebAssembly.Module(new Uint8Array([0,97,115,109,1,0,0,0]))")},
+		{"wasm_memory", r.mustEval(t, "new WebAssembly.Memory({initial:1})")},
+		{"proxy", r.mustEval(t, "new Proxy({}, {})")},
+		{"shared_array_buffer", r.mustEval(t, "new SharedArrayBuffer(1)")},
+		{"data_view", r.mustEval(t, "new DataView(new ArrayBuffer(1))")},
+		{"big_uint64_array", r.mustEval(t, "new BigUint64Array(1)")},
+		{"big_int64_array", r.mustEval(t, "new BigInt64Array(1)")},
+		{"float64_array", r.mustEval(t, "new Float64Array(1)")},
+		{"float32_array", r.mustEval(t, "new Float32Array(1)")},
+		{"int32_array", r.mustEval(t, "new Int32Array(1)")},
+		{"uint32_array", r.mustEval(t, "new Uint32Array(1)")},
+		{"int16_array", r.mustEval(t, "new Int16Array(1)")},
+		{"uint16_array", r.mustEval(t, "new Uint16Array(1)")},
+		{"int8_array", r.mustEval(t, "new Int8Array(1)")},
+		{"uint8_clamped_array", r.mustEval(t, "new Uint8ClampedArray(1)")},
+		{"uint8_array", r.mustEval(t, "new Uint8Array(1)")},
+		{"float16_array", r.mustEval(t, "new Float16Array(1)")},
+		{"array_buffer", r.mustEval(t, "new ArrayBuffer(1)")},
+		{"weak_set", r.mustEval(t, "new WeakSet()")},
+		{"weak_map", r.mustEval(t, "new WeakMap()")},
+		{"set_iterator", r.mustEval(t, "new Set().values()")},
+		{"map_iterator", r.mustEval(t, "new Map().keys()")},
+		{"set", r.mustEval(t, "new Set()")}, {"map", r.mustEval(t, "new Map()")},
+		{"promise", r.mustEval(t, "Promise.resolve(1)")},
+		{"generator_function", r.mustEval(t, "(function*(){})")},
+		{"async_function", r.mustEval(t, "(async function(){})")},
+		{"regexp", r.mustEval(t, "/x/")}, {"date", r.mustEval(t, "new Date(0)")},
+		{"number", r.mustEval(t, "1")}, {"boolean", r.mustEval(t, "true")},
+		{"bigint", r.mustEval(t, "1n")}, {"array", r.mustEval(t, "[]")},
+		{"function", r.mustEval(t, "(function(){})")},
+		{"symbol", r.mustEval(t, "Symbol('s')")}, {"string", r.mustEval(t, "'s'")},
+		{"null", r.mustEval(t, "null")}, {"undefined", r.mustEval(t, "undefined")},
+		{"plain_object", r.mustEval(t, "({})")},
+	}
+	moduleNamespace, err := namespace.IsModuleNamespaceObject()
+	if err != nil {
+		t.Fatalf("IsModuleNamespaceObject: %v", err)
+	}
+	gotPairs := jsonObj{kv("is_module_namespace_object", jbool(moduleNamespace))}
+	for _, sample := range samples {
+		repr, err := sample.v.TypeRepr()
+		if err != nil {
+			t.Fatalf("TypeRepr(%s): %v", sample.name, err)
+		}
+		gotPairs = append(gotPairs, kv(sample.name, jstr(repr)))
+	}
+	wantPairs := jsonObj{
+		kv("is_module_namespace_object", jbool(true)), kv("module_namespace", jstr("Module")),
+		kv("wasm_module", jstr("WASM module")), kv("wasm_memory", jstr("WASM memory object")),
+		kv("proxy", jstr("Proxy")), kv("shared_array_buffer", jstr("SharedArrayBuffer")),
+		kv("data_view", jstr("DataView")), kv("big_uint64_array", jstr("BigUint64Array")),
+		kv("big_int64_array", jstr("BigInt64Array")), kv("float64_array", jstr("Float64Array")),
+		kv("float32_array", jstr("Float32Array")), kv("int32_array", jstr("Int32Array")),
+		kv("uint32_array", jstr("Uint32Array")), kv("int16_array", jstr("Int16Array")),
+		kv("uint16_array", jstr("Uint16Array")), kv("int8_array", jstr("Int8Array")),
+		kv("uint8_clamped_array", jstr("Uint8ClampedArray")), kv("uint8_array", jstr("Uint8Array")),
+		kv("float16_array", jstr("TypedArray")), kv("array_buffer", jstr("ArrayBuffer")),
+		kv("weak_set", jstr("WeakSet")), kv("weak_map", jstr("WeakMap")),
+		kv("set_iterator", jstr("Set Iterator")), kv("map_iterator", jstr("Map Iterator")),
+		kv("set", jstr("Set")), kv("map", jstr("Map")), kv("promise", jstr("Promise")),
+		kv("generator_function", jstr("Generator function")), kv("async_function", jstr("Async function")),
+		kv("regexp", jstr("RegExp")), kv("date", jstr("Date")), kv("number", jstr("Number")),
+		kv("boolean", jstr("Boolean")), kv("bigint", jstr("bigint")), kv("array", jstr("array")),
+		kv("function", jstr("function")), kv("symbol", jstr("symbol")), kv("string", jstr("string")),
+		kv("null", jstr("null")), kv("undefined", jstr("undefined")), kv("plain_object", jstr("unknown")),
+	}
+	return wantGot("obj-ops/predicates/module_namespace_and_type_repr", wantPairs, gotPairs)
+}
+
 // --- registry (order is the observable contract) -------------------------------------------------
 
 type checkFn func(t tester) obs
@@ -2197,4 +2525,7 @@ var checks = []checkFn{
 	checkValueHashSemantics,
 	checkTypeRepresentation,
 	checkPredicatesMissingInventory,
+	checkDataPredicatesAndIdentity,
+	checkResidualLocalConversions,
+	checkModuleNamespaceAndTypeRepr,
 }

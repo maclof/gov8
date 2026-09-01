@@ -1,5 +1,5 @@
 {"check":"snapshot/create_blob_policies","ok":true,"value":[{"len_gt_zero":true,"is_valid":true},{"len_gt_zero":true,"is_valid":true}]}
-{"check":"snapshot/startup_data_predicates","ok":true,"value":{"blob_len_gt_zero":true,"blob_is_valid":true}}
+{"check":"snapshot/startup_data_predicates","ok":true,"value":{"blob_len_gt_zero":true,"blob_is_valid":true,"blob_can_be_rehashed":true}}
 {"check":"snapshot/default_context_create_params_roundtrip","ok":true,"value":{"a_is_7":"true","f_call":"14","f_is_function":true}}
 {"check":"snapshot/chained_roundtrip","ok":true,"value":{"second_blob_valid":true,"a":"7","b":"8"}}
 {"check":"snapshot/add_context_from_snapshot","ok":true,"value":{"index0":0,"index1":1,"marker0":"c0","marker1":"c1","oob_is_none":true,"readd_index":0}}

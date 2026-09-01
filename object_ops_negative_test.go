@@ -30,6 +30,64 @@ func confoundedObject(e *objEnv) *gov8.Object {
 	return &gov8.Object{Value: e.mustInt(7)}
 }
 
+func TestResidualDataValueSafety(t *testing.T) {
+	e := newNegativeEnv(t)
+	defer e.close()
+	value := e.mustString("1")
+
+	if _, err := value.ToNumber(nil, e.ctx, nil); err == nil || !strings.Contains(err.Error(), "nil scope") {
+		t.Fatalf("ToNumber nil scope = %v", err)
+	}
+	if _, err := e.ctx.Data(nil); err == nil || !strings.Contains(err.Error(), "nil scope") {
+		t.Fatalf("Context.Data nil scope = %v", err)
+	}
+	if _, err := (gov8.Data{}).IsString(); err == nil || !strings.Contains(err.Error(), "zero data") {
+		t.Fatalf("zero Data predicate = %v", err)
+	}
+
+	data, err := value.Data()
+	if err != nil {
+		t.Fatal(err)
+	}
+	other := newNegativeEnv(t)
+	defer other.close()
+	foreign, err := other.mustString("1").Data()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := data.Equal(foreign); err == nil || !strings.Contains(err.Error(), "different isolate") {
+		t.Fatalf("foreign Data equality = %v", err)
+	}
+
+	threadResult := make(chan error, 1)
+	go func() {
+		_, err := data.IsString()
+		threadResult <- err
+	}()
+	if err := <-threadResult; err == nil || !strings.Contains(err.Error(), "thread affinity") {
+		t.Fatalf("wrong-thread Data predicate = %v", err)
+	}
+
+	closed, err := e.iso.NewScope()
+	if err != nil {
+		t.Fatal(err)
+	}
+	closedValue, err := closed.NewString("closed")
+	if err != nil {
+		t.Fatal(err)
+	}
+	closedData, err := closedValue.Data()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := closed.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := closedData.IsString(); err == nil || !strings.Contains(err.Error(), "scope used after Close") {
+		t.Fatalf("closed Data predicate = %v", err)
+	}
+}
+
 func TestNegativeConfoundedReceiverWholeFamily(t *testing.T) {
 	e := newNegativeEnv(t)
 	defer e.close()

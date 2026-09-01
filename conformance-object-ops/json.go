@@ -29,6 +29,8 @@ type jsonBool bool
 
 type jsonInt int64
 
+type jsonFloat float64
+
 type jsonStr string
 
 type jsonPair struct {
@@ -41,6 +43,7 @@ type jsonObj []jsonPair
 func jobj(pairs ...jsonPair) jsonObj    { return jsonObj(pairs) }
 func jstr(v string) jsonValue           { return jsonStr(v) }
 func jint(v int64) jsonValue            { return jsonInt(v) }
+func jfloat(v float64) jsonValue        { return jsonFloat(v) }
 func jbool(v bool) jsonValue            { return jsonBool(v) }
 func kv(k string, v jsonValue) jsonPair { return jsonPair{k, v} }
 
@@ -53,6 +56,10 @@ func (v jsonBool) writeTo(b *strings.Builder) {
 }
 
 func (v jsonInt) writeTo(b *strings.Builder) { b.WriteString(strconv.FormatInt(int64(v), 10)) }
+
+func (v jsonFloat) writeTo(b *strings.Builder) {
+	b.WriteString(strconv.FormatFloat(float64(v), 'f', -1, 64))
+}
 
 func (v jsonStr) writeTo(b *strings.Builder) { writeEscaped(string(v), b) }
 

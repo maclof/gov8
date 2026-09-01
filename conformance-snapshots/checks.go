@@ -158,10 +158,12 @@ func checkStartupDataPredicates(t *testing.T) obs {
 		jobj(
 			kv("blob_len_gt_zero", jbool(true)),
 			kv("blob_is_valid", jbool(true)),
+			kv("blob_can_be_rehashed", jbool(true)),
 		),
 		jobj(
 			kv("blob_len_gt_zero", jbool(!blob.IsEmpty())),
 			kv("blob_is_valid", jbool(blob.IsValid())),
+			kv("blob_can_be_rehashed", jbool(blob.CanBeRehashed())),
 		))
 }
 
