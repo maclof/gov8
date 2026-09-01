@@ -34,3 +34,25 @@ this is recorded as a regression rather than accepted performance parity.
 Raw Criterion estimates, samples, Tukey fences, and reports are stored in
 `criterion-wasm-streaming-2026-09-01/`. Machine metadata is in
 `env-2026-09-01-DESKTOP-VJI58KR.txt`.
+
+## Resolution-allocation follow-up
+
+The Go implementation was subsequently changed to bundle all callback-local
+resolution wrappers in one allocation, store resolution registrations by
+value, allocate callback IDs atomically, and cache fixed-arity exports for
+creation, byte delivery, finish, and message-loop pumping. Focused normal and
+race tests plus vet passed. Observable callback-local invalidation and pending
+compilation teardown guards are unchanged.
+
+A clean-HEAD baseline using the same ABI-37 DLL produced 21444, 23802, 29083,
+30936, 29249, 31297, 30521, 31055, 29477, and 29615 ns/op at 316 B/op and 12
+allocations/op. The optimized samples were 20961, 23466, 29669, 28434, 30781,
+28650, 28173, 28635, 28583, and 27947 ns/op at 196 B/op and 4 allocations/op.
+The median fell from 29546 to 28508.5 ns/op (3.5%), bytes fell 38.0%, and
+allocations fell 66.7%. Asynchronous V8 scheduling dominates the noisy timing,
+but the allocation reduction is deterministic.
+
+An immediately following pinned Rust run reported a 12.134-14.006 us slope
+95% confidence interval with a 13.188 us point estimate. The optimized Go
+median remains about 2.16x slower, so callback and scheduling boundaries remain
+measured performance work rather than accepted parity.

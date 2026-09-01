@@ -17,7 +17,7 @@ func TestPendingWasmResolutionBlocksHostStateRelease(t *testing.T) {
 		t.Fatal(err)
 	}
 	wasmStreamingRegistry.Lock()
-	wasmStreamingRegistry.resolutions[id] = &wasmResolutionEntry{
+	wasmStreamingRegistry.resolutions[id] = wasmResolutionEntry{
 		iso: iso, callback: func(*WasmModuleCompilationResult) {},
 	}
 	wasmStreamingRegistry.Unlock()

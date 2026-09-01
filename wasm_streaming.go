@@ -9,6 +9,7 @@ import (
 	"os"
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"unicode/utf8"
 	"unsafe"
@@ -93,6 +94,17 @@ type wasmResolutionEntry struct {
 	callback WasmModuleCompilationCallback
 }
 
+// wasmResolutionCallbackFrame keeps all callback-local wrappers in one heap
+// object. The callback API exposes pointers to these values, so separate local
+// variables would each escape independently. Their observable lifetime is
+// unchanged: every wrapper is invalidated immediately after the callback.
+type wasmResolutionCallbackFrame struct {
+	scope         Scope
+	callbackScope CallbackScope
+	result        WasmModuleCompilationResult
+	module        WasmModuleObject
+}
+
 type wasmStreamingFrame struct {
 	id           uint64
 	isolate      uintptr
@@ -113,17 +125,17 @@ type wasmResolutionFrame struct {
 
 var wasmStreamingRegistry = struct {
 	sync.Mutex
-	next            uint64
+	next            atomic.Uint64
 	streams         map[uint64]*wasmStreamingEntry
 	streamByISO     map[*Isolate]uint64
 	caching         map[uint64]ModuleCachingCallback
-	resolutions     map[uint64]*wasmResolutionEntry
+	resolutions     map[uint64]wasmResolutionEntry
 	serializations  map[uint64]WasmSerializationCallback
 	activeStreams   map[*Isolate]uint64
 	activeCallbacks map[*Isolate]uint64
 }{
 	streams: make(map[uint64]*wasmStreamingEntry), streamByISO: make(map[*Isolate]uint64),
-	caching: make(map[uint64]ModuleCachingCallback), resolutions: make(map[uint64]*wasmResolutionEntry),
+	caching: make(map[uint64]ModuleCachingCallback), resolutions: make(map[uint64]wasmResolutionEntry),
 	serializations:  make(map[uint64]WasmSerializationCallback),
 	activeStreams:   make(map[*Isolate]uint64),
 	activeCallbacks: make(map[*Isolate]uint64),
@@ -146,19 +158,35 @@ func endWasmCallback(i *Isolate) {
 }
 
 func nextWasmCallbackID() (uint64, error) {
-	wasmStreamingRegistry.Lock()
-	defer wasmStreamingRegistry.Unlock()
-	if wasmStreamingRegistry.next == math.MaxUint64 {
-		return 0, errors.New("gov8: wasm callback registry exhausted")
+	for {
+		current := wasmStreamingRegistry.next.Load()
+		if current == math.MaxUint64 {
+			return 0, errors.New("gov8: wasm callback registry exhausted")
+		}
+		if wasmStreamingRegistry.next.CompareAndSwap(current, current+1) {
+			return current + 1, nil
+		}
 	}
-	wasmStreamingRegistry.next++
-	return wasmStreamingRegistry.next, nil
 }
 
 var (
 	wasmDispatchersOnce sync.Once
 	wasmDispatchersErr  error
+	wasmHotProcsOnce    sync.Once
+	wasmCompilationNew  uintptr
+	wasmCompilationFeed uintptr
+	wasmCompilationDone uintptr
+	wasmPumpMessageLoop uintptr
 )
+
+func ensureWasmHotProcs() {
+	wasmHotProcsOnce.Do(func() {
+		wasmCompilationNew = proc("gov8_wmc_new").Addr()
+		wasmCompilationFeed = proc("gov8_wmc_on_bytes").Addr()
+		wasmCompilationDone = proc("gov8_wmc_finish").Addr()
+		wasmPumpMessageLoop = proc("gov8_ws_pump_message_loop").Addr()
+	})
+}
 
 var wasmStreamingDispatcher = syscall.NewCallback(func(frame *wasmStreamingFrame) (result uintptr) {
 	defer wasmCallbackPanicBoundary("streaming callback")
@@ -214,41 +242,45 @@ var wasmCachingDispatcher = syscall.NewCallback(func(id, handle uintptr) (result
 var wasmResolutionDispatcher = syscall.NewCallback(func(frame *wasmResolutionFrame) (result uintptr) {
 	defer wasmCallbackPanicBoundary("module compilation callback")
 	wasmStreamingRegistry.Lock()
-	entry := wasmStreamingRegistry.resolutions[frame.id]
+	entry, found := wasmStreamingRegistry.resolutions[frame.id]
+	valid := found && entry.iso != nil && entry.callback != nil && entry.iso.handle == frame.isolate
+	if valid {
+		delete(wasmStreamingRegistry.resolutions, frame.id)
+		wasmStreamingRegistry.activeCallbacks[entry.iso]++
+	}
 	wasmStreamingRegistry.Unlock()
-	if entry == nil || entry.iso == nil || entry.callback == nil || entry.iso.handle != frame.isolate {
+	if !valid {
 		fatalHostMisuse("wasm resolution callback for unknown handle %d", frame.id)
 		return 1
 	}
 	if err := entry.iso.check(); err != nil {
+		endWasmCallback(entry.iso)
 		fatalHostMisuse("wasm resolution callback lifecycle: %v", err)
 		return 1
 	}
-	beginWasmCallback(entry.iso)
-	defer func() {
-		wasmStreamingRegistry.Lock()
-		delete(wasmStreamingRegistry.resolutions, frame.id)
-		wasmStreamingRegistry.Unlock()
-		endWasmCallback(entry.iso)
-	}()
-	borrowed := &Scope{iso: entry.iso, handle: frame.scopeWire, borrowed: true}
-	callbackScope := &CallbackScope{iso: entry.iso, sc: borrowed, ctxWire: frame.contextWire}
-	resolved := &WasmModuleCompilationResult{CallbackScope: callbackScope}
+	defer endWasmCallback(entry.iso)
+	callbackFrame := &wasmResolutionCallbackFrame{}
+	callbackFrame.scope = Scope{iso: entry.iso, handle: frame.scopeWire, borrowed: true}
+	callbackFrame.callbackScope = CallbackScope{
+		iso: entry.iso, sc: &callbackFrame.scope, ctxWire: frame.contextWire,
+	}
+	callbackFrame.result.CallbackScope = &callbackFrame.callbackScope
 	if frame.moduleWire != 0 {
-		resolved.Module = &WasmModuleObject{Value: Value{iso: entry.iso, sc: borrowed, h: frame.moduleWire}}
+		callbackFrame.module.Value = Value{iso: entry.iso, sc: &callbackFrame.scope, h: frame.moduleWire}
+		callbackFrame.result.Module = &callbackFrame.module
 	} else {
-		resolved.Error = Value{iso: entry.iso, sc: borrowed, h: frame.errorWire}
+		callbackFrame.result.Error = Value{iso: entry.iso, sc: &callbackFrame.scope, h: frame.errorWire}
 	}
 	defer func() {
-		borrowed.closed = true
-		callbackScope.iso = nil
-		callbackScope.sc = nil
-		callbackScope.ctxWire = 0
-		resolved.CallbackScope = nil
-		resolved.Module = nil
-		resolved.Error = Value{}
+		callbackFrame.scope.closed = true
+		callbackFrame.callbackScope.iso = nil
+		callbackFrame.callbackScope.sc = nil
+		callbackFrame.callbackScope.ctxWire = 0
+		callbackFrame.result.CallbackScope = nil
+		callbackFrame.result.Module = nil
+		callbackFrame.result.Error = Value{}
 	}()
-	entry.callback(resolved)
+	entry.callback(&callbackFrame.result)
 	return 0
 })
 
@@ -644,9 +676,10 @@ func NewWasmModuleCompilation() (*WasmModuleCompilation, error) {
 	if err := ensureWasmDispatchers(); err != nil {
 		return nil, err
 	}
-	handle, err := callHandle("WasmModuleCompilation.New", proc("gov8_wmc_new"))
-	if err != nil {
-		return nil, err
+	ensureWasmHotProcs()
+	handle, _, _ := syscall.Syscall(wasmCompilationNew, 0, 0, 0, 0)
+	if handle == 0 {
+		return nil, shimError("WasmModuleCompilation.New", 0)
 	}
 	return &WasmModuleCompilation{handle: handle, state: wasmStreamingOpen}, nil
 }
@@ -664,17 +697,22 @@ func (c *WasmModuleCompilation) OnBytesReceived(data []byte) error {
 		return errors.New("gov8: nil wasm module compilation")
 	}
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	if err := c.lockOpen("OnBytesReceived"); err != nil {
+		c.mu.Unlock()
 		return err
 	}
-	err := callErr("WasmModuleCompilation.OnBytesReceived", proc("gov8_wmc_on_bytes"),
-		c.handle, slicePointer(data), uintptr(len(data)))
+	ensureWasmHotProcs()
+	r1, _, _ := syscall.Syscall(wasmCompilationFeed, 3,
+		c.handle, uintptr(sliceUnsafePointer(data)), uintptr(len(data)))
 	runtime.KeepAlive(data)
-	if err == nil {
-		c.received = true
+	if int64(r1) < 0 {
+		err := shimError("WasmModuleCompilation.OnBytesReceived", r1)
+		c.mu.Unlock()
+		return err
 	}
-	return err
+	c.received = true
+	c.mu.Unlock()
+	return nil
 }
 
 // SetURL sets the compiled module source URL and may run on any thread.
@@ -799,21 +837,23 @@ func (c *WasmModuleCompilation) Finish(scope *Scope, context *Context, cacheCall
 		return err
 	}
 	wasmStreamingRegistry.Lock()
-	wasmStreamingRegistry.resolutions[resolutionID] = &wasmResolutionEntry{iso: scope.iso, callback: callback}
+	wasmStreamingRegistry.resolutions[resolutionID] = wasmResolutionEntry{iso: scope.iso, callback: callback}
 	wasmStreamingRegistry.Unlock()
 	handle := c.handle
 	c.handle = 0
 	c.state = wasmStreamingFinished
 	c.mu.Unlock()
 	defer dropWasmCachingCallback(cacheID)
-	err = callErr("WasmModuleCompilation.Finish", proc("gov8_wmc_finish"), handle,
+	ensureWasmHotProcs()
+	r1, _, _ := syscall.Syscall6(wasmCompilationDone, 6, handle,
 		scope.iso.handleAssumingCheck(), context.handle, scope.handle, uintptr(cacheID), uintptr(resolutionID))
-	if err != nil {
+	if int64(r1) < 0 {
 		wasmStreamingRegistry.Lock()
 		delete(wasmStreamingRegistry.resolutions, resolutionID)
 		wasmStreamingRegistry.Unlock()
+		return shimError("WasmModuleCompilation.Finish", r1)
 	}
-	return err
+	return nil
 }
 
 // Abort consumes the compilation and may run on any thread.
@@ -860,7 +900,8 @@ func (i *Isolate) PumpMessageLoop(waitForWork bool) (bool, error) {
 	if waitForWork {
 		wait = 1
 	}
-	r1, _, _ := proc("gov8_ws_pump_message_loop").Call(i.handleAssumingCheck(), wait)
+	ensureWasmHotProcs()
+	r1, _, _ := syscall.Syscall(wasmPumpMessageLoop, 2, i.handleAssumingCheck(), wait, 0)
 	if int64(r1) < 0 {
 		return false, shimError("Isolate.PumpMessageLoop", r1)
 	}
