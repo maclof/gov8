@@ -323,3 +323,49 @@ then-only fixed-2,000,000-iteration confirmation changed samples from 2632,
 2349 to 2218.5 ns (-5.6%; 5/6 pair wins), with allocations unchanged. The
 final median is 5.40x the pinned Rust confidence-interval midpoint of 410.7 ns;
 the 1,000,000-iteration resolver control is 9.22x its 125.03 ns Rust midpoint.
+
+## ABI-41 deferred terminal Int32 callback return
+
+Function callbacks now defer the common terminal `ReturnValue.SetInt32` write
+into two function-only callback-frame fields and apply it natively after the Go
+dispatcher returns successfully. Other setters and `Get` first materialize a
+pending integer, preserving last-successful-write behavior. The capability is
+guarded by a function-only marker; accessor and interceptor callbacks keep the
+legacy path. The 160-byte callback-frame and 16-byte `ReturnValue` layouts,
+ABI version, and export surface are unchanged.
+
+The frozen baseline DLL was
+`4645ACCB14EDB83C5140B0EC439ED6A608823836BC61B7330B7D0F4AD13132AF`;
+the retained candidate is
+`E56EAAF01D2E582EF4444DA50784C7D7B7E045E7380DE393F72D69EDD6D8BBB6`.
+`dumpbin /exports` reported 939 names for each DLL with an empty set delta,
+and both report ABI 41. Frozen old- and new-Go test executables passed all four
+old/new DLL combinations: old Go with the old DLL, new Go with the old-DLL
+fallback, old Go ignoring the new marker, and new Go using the deferred path.
+The matrix covered plain and constructor calls, nested re-entry, exception and
+panic exits, integer boundaries, last-write wins, `Get`, wrong-thread and
+retained-return rejection, and exact frame/wrapper sizes.
+
+The first timing batch used eight order-balanced pairs at a fixed 1,000,000
+iterations per workload:
+
+| Workload | Baseline samples (ns/op) | Deferred samples (ns/op) | Median change | Candidate pair wins | B/op; allocs/op |
+|---|---:|---:|---:|---:|---:|
+| callback/native_call_from_js | 2022, 2024, 2087, 4816, 2010, 1851, 1963, 1860 | 2117, 2399, 3032, 2007, 2001, 1943, 1827, 1834 | 2016 to 2004 (-0.6%, neutral) | 4/8 | 272; 5 |
+| callback/native_call_from_host | 2467, 2622, 2517, 3335, 2322, 2515, 2379, 2413 | 2547, 4279, 5074, 2421, 2300, 2383, 2097, 2195 | 2491 to 2402 (-3.6%) | 5/8 | 320; 8 |
+| callback/function_new_call | 5697, 5686, 5461, 5534, 4951, 5066, 5024, 5311 | 5154, 5489, 5691, 6312, 4975, 4850, 5058, 4876 | 5386 to 5106 (-5.2%) | 4/8 | 512; 9 |
+
+An independent six-pair, fixed-2,000,000-iteration confirmation retained the
+host and function directions while the JavaScript path remained neutral:
+
+| Workload | Baseline samples (ns/op) | Deferred samples (ns/op) | Median change | Candidate pair wins | B/op; allocs/op |
+|---|---:|---:|---:|---:|---:|
+| callback/native_call_from_js | 2089, 2038, 2082, 2064, 2031, 2184 | 1956, 2078, 3058, 1877, 2152, 2012 | 2073 to 2045 (-1.4%, neutral) | 3/6 | 272; 5 |
+| callback/native_call_from_host | 2551, 2686, 2847, 2433, 3359, 4158 | 2394, 2575, 2609, 2388, 2783, 2617 | 2766.5 to 2592 (-6.3%) | 6/6 | 320; 8 |
+| callback/function_new_call | 4695, 6388, 4661, 5213, 5000, 5776 | 4642, 6117, 4639, 4594, 5134, 5026 | 5106.5 to 4834 (-5.3%) | 5/6 | 512; 9 |
+
+The confirmation candidate medians are about 13.2x, 18.7x, and 4.87x the
+respective pinned Rust midpoints. Absolute sub-microsecond control variance was
+high, so retention is based on the repeated paired host and function gains,
+not the neutral JavaScript median. Go allocations are unchanged; the saving is
+one Windows DLL transition on a terminal integer return.

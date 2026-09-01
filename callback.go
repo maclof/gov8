@@ -478,71 +478,71 @@ func hostCallbackDispatch(frame *hostCallbackFrame) uintptr {
 	switch frame.kind {
 	case cbKindFunction:
 		entry.fn(cs, FunctionCallbackArguments{cs: cs, frame: frame},
-			ReturnValue{cs: cs, word: frame.rvWord})
+			ReturnValue{cs: cs, frame: frame})
 	case cbKindAccessorGet:
 		entry.get(cs, PropertyCallbackArguments{cs: cs, frame: frame},
-			ReturnValue{cs: cs, word: frame.rvWord})
+			ReturnValue{cs: cs, frame: frame})
 	case cbKindAccessorSet:
 		entry.set(cs, PropertyCallbackArguments{cs: cs, frame: frame},
 			cs.wrap(frame.valueWire))
 	case cbKindNamedGet:
 		frame.outIntercepted = int32(entry.nget(cs, cs.wrap(frame.propertyWire),
 			PropertyCallbackArguments{cs: cs, frame: frame},
-			ReturnValue{cs: cs, word: frame.rvWord}))
+			ReturnValue{cs: cs, frame: frame}))
 	case cbKindNamedSet:
 		frame.outIntercepted = int32(entry.nset(cs, cs.wrap(frame.propertyWire),
 			cs.wrap(frame.valueWire),
 			PropertyCallbackArguments{cs: cs, frame: frame},
-			ReturnValue{cs: cs, word: frame.rvWord}))
+			ReturnValue{cs: cs, frame: frame}))
 	case cbKindNamedQuery:
 		frame.outIntercepted = int32(entry.nquery(cs, cs.wrap(frame.propertyWire),
 			PropertyCallbackArguments{cs: cs, frame: frame},
-			ReturnValue{cs: cs, word: frame.rvWord}))
+			ReturnValue{cs: cs, frame: frame}))
 	case cbKindNamedDelete:
 		frame.outIntercepted = int32(entry.ndel(cs, cs.wrap(frame.propertyWire),
 			PropertyCallbackArguments{cs: cs, frame: frame},
-			ReturnValue{cs: cs, word: frame.rvWord}))
+			ReturnValue{cs: cs, frame: frame}))
 	case cbKindNamedEnum:
 		entry.nenum(cs, PropertyCallbackArguments{cs: cs, frame: frame},
-			ReturnValue{cs: cs, word: frame.rvWord})
+			ReturnValue{cs: cs, frame: frame})
 	case cbKindNamedDefine:
 		frame.outIntercepted = int32(entry.ndefine(cs, cs.wrap(frame.propertyWire),
 			propertyDescriptorFromFrame(cs, frame),
 			PropertyCallbackArguments{cs: cs, frame: frame},
-			ReturnValue{cs: cs, word: frame.rvWord}))
+			ReturnValue{cs: cs, frame: frame}))
 	case cbKindNamedDescriptor:
 		frame.outIntercepted = int32(entry.ndesc(cs, cs.wrap(frame.propertyWire),
 			PropertyCallbackArguments{cs: cs, frame: frame},
-			ReturnValue{cs: cs, word: frame.rvWord}))
+			ReturnValue{cs: cs, frame: frame}))
 	case cbKindIndexedGet:
 		frame.outIntercepted = int32(entry.iget(cs, frame.index,
 			PropertyCallbackArguments{cs: cs, frame: frame},
-			ReturnValue{cs: cs, word: frame.rvWord}))
+			ReturnValue{cs: cs, frame: frame}))
 	case cbKindIndexedSet:
 		frame.outIntercepted = int32(entry.iset(cs, frame.index,
 			cs.wrap(frame.valueWire),
 			PropertyCallbackArguments{cs: cs, frame: frame},
-			ReturnValue{cs: cs, word: frame.rvWord}))
+			ReturnValue{cs: cs, frame: frame}))
 	case cbKindIndexedQuery:
 		frame.outIntercepted = int32(entry.iquery(cs, frame.index,
 			PropertyCallbackArguments{cs: cs, frame: frame},
-			ReturnValue{cs: cs, word: frame.rvWord}))
+			ReturnValue{cs: cs, frame: frame}))
 	case cbKindIndexedDelete:
 		frame.outIntercepted = int32(entry.idel(cs, frame.index,
 			PropertyCallbackArguments{cs: cs, frame: frame},
-			ReturnValue{cs: cs, word: frame.rvWord}))
+			ReturnValue{cs: cs, frame: frame}))
 	case cbKindIndexedEnum:
 		entry.ienum(cs, PropertyCallbackArguments{cs: cs, frame: frame},
-			ReturnValue{cs: cs, word: frame.rvWord})
+			ReturnValue{cs: cs, frame: frame})
 	case cbKindIndexedDefine:
 		frame.outIntercepted = int32(entry.idefine(cs, frame.index,
 			propertyDescriptorFromFrame(cs, frame),
 			PropertyCallbackArguments{cs: cs, frame: frame},
-			ReturnValue{cs: cs, word: frame.rvWord}))
+			ReturnValue{cs: cs, frame: frame}))
 	case cbKindIndexedDescriptor:
 		frame.outIntercepted = int32(entry.idesc(cs, frame.index,
 			PropertyCallbackArguments{cs: cs, frame: frame},
-			ReturnValue{cs: cs, word: frame.rvWord}))
+			ReturnValue{cs: cs, frame: frame}))
 	default:
 		fatalUnknownHostCallbackKind(frame.kind)
 		return 1
@@ -1025,8 +1025,8 @@ func propertyDescriptorFromFrame(cs *CallbackScope, frame *hostCallbackFrame) Ca
 // running callback; the engine pre-seeds it with undefined, so a callback
 // that sets nothing returns undefined.
 type ReturnValue struct {
-	cs   *CallbackScope
-	word uintptr
+	cs    *CallbackScope
+	frame *hostCallbackFrame
 }
 
 var (
@@ -1048,6 +1048,12 @@ const (
 	returnValueEmptyString
 )
 
+const (
+	callbackDeferredRVInt32Magic int32 = 0x47565231 // "GVR1"
+	callbackDeferredRVNone       int32 = 0
+	callbackDeferredRVInt32      int32 = 1
+)
+
 func resolveCallbackScalarProcs() {
 	callbackIntegerValueAddr = proc("gov8_wctx_integer_value_direct").Addr()
 	returnValueInt32ProcAddr = proc("gov8_rv_set_int32").Addr()
@@ -1065,17 +1071,73 @@ func resolveCallbackScalarProcs() {
 	}
 }
 
-func (rv ReturnValue) setFixed(op string, kind returnValueSetter, value uintptr) error {
+// checkedFrame proves callback lifetime and owner-thread affinity before a
+// ReturnValue operation dereferences the native callback frame. The frame is
+// stack-owned by the C++ trampoline and may remain referenced by a retained
+// ReturnValue after dispatch; the borrowed Scope is invalidated first so such
+// a retained value fails here without reading stale native memory.
+func (rv ReturnValue) checkedFrame() (*hostCallbackFrame, error) {
 	if err := rv.cs.sc.check(); err != nil {
+		return nil, err
+	}
+	if rv.frame == nil {
+		return nil, fmt.Errorf("gov8: invalid callback return value")
+	}
+	return rv.frame, nil
+}
+
+func deferredInt32Capable(frame *hostCallbackFrame) bool {
+	return frame.kind == cbKindFunction && frame.pdPad == callbackDeferredRVInt32Magic
+}
+
+func (rv ReturnValue) setInt32Native(frame *hostCallbackFrame, value int32) error {
+	callbackScalarProcsOnce.Do(resolveCallbackScalarProcs)
+	r1, _, _ := syscall.Syscall(returnValueInt32ProcAddr, 2,
+		frame.rvWord, uintptr(value), 0)
+	if int64(r1) < 0 {
+		return shimError("gov8_rv_set_int32", r1)
+	}
+	return nil
+}
+
+// materializeDeferredInt32 applies a pending function-callback integer before
+// an operation that must observe or supersede it. Non-function callbacks and
+// older ABI-41 DLLs carry no capability marker and stay on the legacy path.
+func (rv ReturnValue) materializeDeferredInt32(frame *hostCallbackFrame) error {
+	if !deferredInt32Capable(frame) {
+		return nil
+	}
+	switch frame.outIntercepted {
+	case callbackDeferredRVNone:
+		return nil
+	case callbackDeferredRVInt32:
+		if err := rv.setInt32Native(frame, int32(frame.index)); err != nil {
+			// The previously accepted SetInt32 remains pending and is still the
+			// last successful write if this defensive native error is surfaced.
+			return err
+		}
+		frame.outIntercepted = callbackDeferredRVNone
+		return nil
+	default:
+		return fmt.Errorf("gov8: invalid deferred callback return state")
+	}
+}
+
+func (rv ReturnValue) setFixed(op string, kind returnValueSetter, value uintptr) error {
+	frame, err := rv.checkedFrame()
+	if err != nil {
+		return err
+	}
+	if err := rv.materializeDeferredInt32(frame); err != nil {
 		return err
 	}
 	callbackScalarProcsOnce.Do(resolveCallbackScalarProcs)
 	address := returnValueSetterAddrs[kind]
 	var r1 uintptr
 	if kind >= returnValueNull {
-		r1, _, _ = syscall.Syscall(address, 1, rv.word, 0, 0)
+		r1, _, _ = syscall.Syscall(address, 1, frame.rvWord, 0, 0)
 	} else {
-		r1, _, _ = syscall.Syscall(address, 2, rv.word, value, 0)
+		r1, _, _ = syscall.Syscall(address, 2, frame.rvWord, value, 0)
 	}
 	if int64(r1) < 0 {
 		return shimError(op, r1)
@@ -1093,26 +1155,30 @@ func (rv ReturnValue) Set(v Value) error {
 
 // SetInt32 stores an int32 (surfacing as a JS number).
 func (rv ReturnValue) SetInt32(v int32) error {
-	if err := rv.cs.sc.check(); err != nil {
+	frame, err := rv.checkedFrame()
+	if err != nil {
 		return err
 	}
-	callbackScalarProcsOnce.Do(resolveCallbackScalarProcs)
-	r1, _, _ := syscall.Syscall(returnValueInt32ProcAddr, 2,
-		rv.word, uintptr(v), 0)
-	if int64(r1) < 0 {
-		return shimError("gov8_rv_set_int32", r1)
+	if deferredInt32Capable(frame) {
+		frame.index = uint32(v)
+		frame.outIntercepted = callbackDeferredRVInt32
+		return nil
 	}
-	return nil
+	return rv.setInt32Native(frame, v)
 }
 
 // SetUint32 stores a uint32 (surfacing as a JS number).
 func (rv ReturnValue) SetUint32(v uint32) error {
-	if err := rv.cs.sc.check(); err != nil {
+	frame, err := rv.checkedFrame()
+	if err != nil {
+		return err
+	}
+	if err := rv.materializeDeferredInt32(frame); err != nil {
 		return err
 	}
 	callbackScalarProcsOnce.Do(resolveCallbackScalarProcs)
 	r1, _, _ := syscall.Syscall(returnValueUint32ProcAddr, 2,
-		rv.word, uintptr(v), 0)
+		frame.rvWord, uintptr(v), 0)
 	if int64(r1) < 0 {
 		return shimError("gov8_rv_set_uint32", r1)
 	}
@@ -1153,10 +1219,14 @@ func (rv ReturnValue) SetEmptyString() error {
 // (v8 ReturnValue::Get). The result is bound to the running callback's
 // scope and must not outlive it.
 func (rv ReturnValue) Get() (Value, error) {
-	if err := rv.cs.sc.check(); err != nil {
+	frame, err := rv.checkedFrame()
+	if err != nil {
 		return Value{}, err
 	}
-	h, err := callHandle("ReturnValue.Get", proc("gov8_rv_get"), rv.word)
+	if err := rv.materializeDeferredInt32(frame); err != nil {
+		return Value{}, err
+	}
+	h, err := callHandle("ReturnValue.Get", proc("gov8_rv_get"), frame.rvWord)
 	if err != nil {
 		return Value{}, err
 	}

@@ -256,6 +256,39 @@ int64_t CallGoDispatcherWithScope(CallbackFrame* frame) {
   return CallGoDispatcher(frame);
 }
 
+constexpr int32_t kHostFunctionDeferredRVInt32Magic = 0x47565231;  // "GVR1"
+constexpr int32_t kHostFunctionDeferredRVNone = 0;
+constexpr int32_t kHostFunctionDeferredRVInt32 = 1;
+
+// Function callbacks may defer their overwhelmingly common terminal int32
+// result into fields that are otherwise used only by interceptor callbacks.
+// The capability marker makes this bidirectionally compatible with older
+// ABI-41 Go/DLL pairs: old Go leaves the state at zero, while new Go falls
+// back to the exported setter when an old DLL leaves the marker at zero.
+int64_t CallGoFunctionDispatcherWithScope(
+    CallbackFrame* frame, v8::ReturnValue<v8::Value> return_value) {
+  CallbackDispatchScope callback_scope(frame->isolate, frame);
+  frame->pd_pad = kHostFunctionDeferredRVInt32Magic;
+  const int64_t status = CallGoDispatcher(frame);
+  if (status != 0) {
+    return status;
+  }
+  switch (frame->out_intercepted) {
+    case kHostFunctionDeferredRVNone:
+      return status;
+    case kHostFunctionDeferredRVInt32: {
+      static_assert(sizeof(frame->index) == sizeof(int32_t));
+      int32_t value = 0;
+      std::memcpy(&value, &frame->index, sizeof(value));
+      return_value.Set(value);
+      frame->out_intercepted = kHostFunctionDeferredRVNone;
+      return status;
+    }
+    default:
+      return kErrBadArg;
+  }
+}
+
 void AbortBadCallbackStatus() {
   // The Go dispatcher reported a misuse it could not recover from (wrong
   // thread, stale registration). Like the oracle's fail-fast boundary this
@@ -301,7 +334,7 @@ void HostFunctionTrampoline(const v8::FunctionCallbackInfo<v8::Value>& info) {
     }
     frame.argv = argv;
   }
-  if (CallGoDispatcherWithScope(&frame) != 0) {
+  if (CallGoFunctionDispatcherWithScope(&frame, rv) != 0) {
     AbortBadCallbackStatus();
   }
 }

@@ -392,7 +392,10 @@ func TestCallbackNestedCoercionConversions(t *testing.T) {
 func TestCallbackThrowFromNative(t *testing.T) {
 	iso, ctx, scope := newTestRuntime(t)
 
-	cbThrowError := func(cs *gov8.CallbackScope, _ gov8.FunctionCallbackArguments, _ gov8.ReturnValue) {
+	cbThrowError := func(cs *gov8.CallbackScope, _ gov8.FunctionCallbackArguments, rv gov8.ReturnValue) {
+		if err := rv.SetInt32(1); err != nil {
+			panic(err)
+		}
 		exc, err := cs.NewError("native-boom")
 		if err != nil {
 			panic(err)
@@ -603,9 +606,12 @@ func asExitError(err error, target **exec.ExitError) bool {
 func callbackPanicChild(t *testing.T) {
 	iso, ctx, scope := newTestRuntime(t)
 
-	cbPanic := func(cs *gov8.CallbackScope, _ gov8.FunctionCallbackArguments, _ gov8.ReturnValue) {
+	cbPanic := func(cs *gov8.CallbackScope, _ gov8.FunctionCallbackArguments, rv gov8.ReturnValue) {
 		_ = cs
 		os.Stderr.WriteString("marker:callback-entered\n")
+		if err := rv.SetInt32(1); err != nil {
+			panic(err)
+		}
 		panic("host-callback-panic")
 	}
 	f, err := iso.NewFunction(scope, ctx, cbPanic, nil)
