@@ -56,3 +56,18 @@ An immediately following pinned Rust run reported a 12.134-14.006 us slope
 95% confidence interval with a 13.188 us point estimate. The optimized Go
 median remains about 2.16x slower, so callback and scheduling boundaries remain
 measured performance work rather than accepted parity.
+
+## Matched polling-boundary follow-up
+
+The Go harness previously called `runtime.Gosched` whenever a nonblocking
+message-loop pump found no task. The Rust harness performs only its spin hint
+and next poll, so the scheduler yield added work outside the matched operation.
+Removing that yield changes benchmark polling only; public platform and Wasm
+runtime behavior is unchanged.
+
+Six controlled old/new pairs changed the median from 26.26 to 12.94 us, a
+50.7% reduction, with allocations unchanged at 196 B/4. A ten-sample
+order-balanced final control measured 13.53 us, about 1.03x the archived Rust
+13.19 us result. Profiling now attributes 72.7% flat time to required native
+crossings; a separate duplicate-validation experiment regressed 2.2% and was
+fully reverted.

@@ -142,3 +142,19 @@ about 1030-1128 ns and then/checkpoint at about 1909-2693 ns, with 112 B/3 and
 176 B/5 allocations. Against the pinned Rust midpoints, the representative
 ratios are about 8.43x and 4.74x; native transitions, affinity validation and
 the required checkpoint remain the measured floor.
+
+## ABI-40 remaining scalar-constructor and ReturnValue follow-up
+
+The canonical empty-string constructor was the last value constructor still
+using the generic closure/variadic path. Cached fixed-arity dispatch changed
+seven 500 ms samples from a 155.8 ns median at 16 B/1 allocation to 89.2 ns at
+zero allocations, a 42.8% improvement. The regression now requires both
+`Int32` and `EmptyString` constructors to remain allocation-free in steady
+state.
+
+Arbitrary, float, bool, null, undefined and empty-string ReturnValue setters
+now use cached fixed-arity calls; the already optimized integer setters are
+unchanged. Seven alternating frozen-binary bool-callback pairs changed the
+median from 1465 to 1461 ns while allocations fell from 280 B/8 to 256 B/6.
+The 0.3% timing difference is neutral; the 24-byte/two-allocation reduction is
+repeatable and applies directly at the callback boundary.
