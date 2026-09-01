@@ -8,8 +8,21 @@ import (
 	"fmt"
 	"math"
 	"runtime"
+	"sync"
+	"syscall"
 	"unsafe"
 )
+
+var (
+	moduleCacheCompileProcOnce sync.Once
+	moduleCacheCompileProc     *syscall.Proc
+)
+
+func ensureModuleCacheCompileProc() {
+	moduleCacheCompileProcOnce.Do(func() {
+		moduleCacheCompileProc = proc("gov8_module_cache_compile")
+	})
+}
 
 // UnboundModuleScript is the context-independent compiled script underlying a
 // SourceTextModule. It is isolate- and thread-affine, but remains valid after
@@ -258,7 +271,11 @@ func (c *Context) CompileModuleCached(s *Scope, source string,
 	nameBytes := []byte(options.ResourceName)
 	var out uintptr
 	var rejectedInt int32
-	r1, _, _ := proc("gov8_module_cache_compile").Call(
+	ensureModuleCacheCompileProc()
+	// Syscall15 is the fixed-arity form of SyscallN on Windows. Using it here
+	// avoids a heap-allocated variadic frame for this 15-argument hot path; its
+	// uintptrkeepalive contract also keeps the transient Go buffers live.
+	r1, _, _ := syscall.Syscall15(moduleCacheCompileProc.Addr(), 15,
 		c.iso.handleAssumingCheck(), c.handle, scopeHandle, tryCatchHandle,
 		bytesArg(sourceBytes), uintptr(len(sourceBytes)),
 		bytesArg(nameBytes), uintptr(len(nameBytes)),

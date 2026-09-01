@@ -38,3 +38,27 @@ Raw Criterion estimates, samples, Tukey fences, and reports are stored in
 The copied Criterion directories also retain `base/` and `change/` data from
 the immediately preceding calibration run. Criterion's displayed change labels
 therefore compare two same-day calibration runs, not released gov8 baselines.
+
+## Persistent-global module-cache follow-up
+
+After the consumption benchmark was tightened to retain the compiled module in
+a persistent global exactly like Rust, the Go implementation cached the native
+export and replaced its heap-allocated 15-argument variadic frame with the
+fixed-arity Windows syscall form. The matched command was:
+
+```text
+go test . -run '^$' -bench '^BenchmarkModuleCodeCacheConsume$' -benchmem -benchtime=1s -count=10
+cargo bench --locked --bench module_cache -- consume_compile_persistent_global
+```
+
+| Version | Go ns/op samples | Go B/op; allocs/op |
+|---|---:|---:|
+| baseline | 1552, 2035, 2173, 2104, 1953, 2052, 2033, 1918, 2026, 2096 | 264; 7 |
+| optimized | 1263, 1267, 1806, 1906, 1975, 2044, 2088, 1870, 1694, 1819 | 120; 5 |
+
+The paired median improved from 2034 to 1844.5 ns/op (9.3%) and removed 144
+bytes plus two allocations. The final Rust Criterion time interval was
+569.85-636.49 ns/op (606.21 ns midpoint), leaving roughly 3x overhead in V8/DLL
+calls, scope lifecycle, persistent-wrapper registration and disposal. Complete
+Rust samples and reports are stored in
+`criterion-module-cache-fixed-2026-09-01/`.
