@@ -158,3 +158,30 @@ unchanged. Seven alternating frozen-binary bool-callback pairs changed the
 median from 1465 to 1461 ns while allocations fell from 280 B/8 to 256 B/6.
 The 0.3% timing difference is neutral; the 24-byte/two-allocation reduction is
 repeatable and applies directly at the callback boundary.
+
+## ABI-41 callback lifecycle and Function construction
+
+The isolate's closed state now has an atomic mirror, so callback-adjacent
+validity checks avoid the lifecycle mutex while preserving owner-thread and
+shutdown rules. The direct Function constructor consumes the callback entry
+that was just registered and uses a fixed-arity export after validating the
+scope. Eight frozen original/candidate pairs measured these medians:
+
+| Workload | Original | ABI-41 | Allocation change | Ratio to Rust |
+|---|---:|---:|---:|---:|
+| callback/native_call_from_js | 2051.5 ns | 2008.5 ns | unchanged at 280 B/6 | about 13.0x |
+| callback/native_call_from_host | 2006.5 ns | 1981 ns | unchanged at 320 B/8 | about 14.3x |
+| callback/function_new_call | 3885 ns | 3696 ns | 584 B/11 to 512 B/9 | about 3.72x |
+
+The changes improve the paired medians 2.1%, 1.3%, and 4.9%. An independent
+atomic-only run improved the callback medians 5.5-6.8%; a direct-construction
+control removed the same two allocations and improved Function create/call
+2.1%. A fixed-arity Windows thread-ID experiment subsequently produced a 1.7%
+regression in one order and a 1.7% gain in reverse order, so it was rejected.
+
+An ABI-41 Promise reprofile retained no production changes. The canonical
+loaded medians were 1441.5 ns at 112 B/3 for resolver creation and 2403 ns at
+176 B/5 for then/checkpoint, about 11.53x and 5.85x the Rust midpoints. A lower
+interleaved control measured about 7.73x and 4.51x, confirming that these small
+native-transition workloads remain load-sensitive. Removing another lifecycle
+check was neutral or slower and was reverted.
