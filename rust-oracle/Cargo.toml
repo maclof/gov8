@@ -109,6 +109,16 @@ name = "object"
 path = "benches/object.rs"
 harness = false
 
+[[bench]]
+name = "array_buffer_allocator"
+path = "benches/array_buffer_allocator.rs"
+harness = false
+
+[[bench]]
+name = "fast_api_residual"
+path = "benches/fast_api_residual.rs"
+harness = false
+
 [profile.dev.package.v8]
 # The V8 engine itself is always the prebuilt release static library on
 # Windows; optimizing the thin Rust binding layer only speeds up test and

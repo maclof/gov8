@@ -6,6 +6,7 @@ import (
 	"os"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -61,7 +62,9 @@ func benchmarkFastAPIExecution(b *testing.B, useFast bool) {
 	if err != nil {
 		b.Fatal(err)
 	}
+	var slowCalls atomic.Uint64
 	callback := func(_ *CallbackScope, args FunctionCallbackArguments, rv ReturnValue) {
+		slowCalls.Add(1)
 		value, _ := args.Get(0)
 		number, _, _ := value.Uint32Value(ctx)
 		_ = rv.SetUint32(number + 1)
@@ -135,6 +138,7 @@ func benchmarkFastAPIExecution(b *testing.B, useFast bool) {
 		b.Fatal("warm-up never selected the native fast path")
 	}
 	before, _, _ := proc("gov8_fast_api_residual_counter").Call(0)
+	beforeSlow := slowCalls.Load()
 	b.ReportAllocs()
 	b.ResetTimer()
 	for range b.N {
@@ -142,11 +146,15 @@ func benchmarkFastAPIExecution(b *testing.B, useFast bool) {
 	}
 	b.StopTimer()
 	after, _, _ := proc("gov8_fast_api_residual_counter").Call(0)
+	afterSlow := slowCalls.Load()
+	expected := uint64(b.N * callsPerIteration)
 	if useFast {
-		delta := after - before
-		if delta == 0 {
-			b.Fatal("measured workload never selected the native fast path")
+		delta := uint64(after - before)
+		if delta != expected || afterSlow-beforeSlow != 0 {
+			b.Fatalf("measured workload fast=%d slow=%d, want fast=%d slow=0", delta, afterSlow-beforeSlow, expected)
 		}
 		b.ReportMetric(float64(delta)/float64(b.N*callsPerIteration), "fast/call")
+	} else if uint64(after-before) != 0 || afterSlow-beforeSlow != expected {
+		b.Fatalf("measured workload fast=%d slow=%d, want fast=0 slow=%d", after-before, afterSlow-beforeSlow, expected)
 	}
 }
