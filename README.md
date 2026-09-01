@@ -152,10 +152,11 @@ handles, callbacks/templates/interceptors, native promises, buffers and all
 typed-array kinds, structured clone delegates, snapshots, and the complete
 pinned simdutf and ICU surfaces. External-reference tables and snapshot remaps,
 the audited String/BigInt surface, and all safe specialized runtime values are
-also covered. The Rust fixtures contain 358 normalized checks: 349 compare
+also covered. The Rust fixtures contain 374 normalized checks: 362 compare
 byte-for-byte with Go, one stack-frame check has a narrowly documented
-memory-safety normalization, and eight checks remain oracle-only (seven
-platform/task observations plus one Inspector-dependent Function check).
+memory-safety normalization, and 11 checks remain oracle-only (seven residual
+script/compiler checks, three custom platform/task observations, and one
+Inspector-dependent Function check).
 Separate fatal and panic-boundary subprocess tests cover unsafe lifecycle and
 callback edges.
 

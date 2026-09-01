@@ -708,6 +708,20 @@ func TestExternalBackingStoreDeleter(t *testing.T) {
 	}
 }
 
+func TestSharedBackingStoreConstructorValidation(t *testing.T) {
+	iso, _, _ := newTestRuntime(t)
+	if _, err := iso.NewSharedArrayBufferBackingStoreFromPtr(nil, 1, func(unsafe.Pointer, int, uintptr) {}, 0); err == nil {
+		t.Error("nil pointer with positive length accepted")
+	}
+	memory := []byte{1}
+	if _, err := iso.NewSharedArrayBufferBackingStoreFromPtr(unsafe.Pointer(&memory[0]), 1, nil, 0); err == nil {
+		t.Error("nil deleter accepted")
+	}
+	if _, err := iso.NewSharedArrayBufferBackingStoreFromPtr(unsafe.Pointer(&memory[0]), -1, func(unsafe.Pointer, int, uintptr) {}, 0); err == nil {
+		t.Error("negative length accepted")
+	}
+}
+
 func allByte(b []byte, v byte) bool {
 	for _, x := range b {
 		if x != v {

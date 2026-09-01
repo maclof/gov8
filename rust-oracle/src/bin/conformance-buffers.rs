@@ -535,6 +535,114 @@ fn ab_backing_store_shared_sab() -> Vec<CheckOutcome> {
     )]
 }
 
+/// Owned-byte and raw-pointer constructors for SharedArrayBuffer backing
+/// stores. Both produce shared stores; the raw-pointer deleter observes the
+/// original callback arguments exactly once after the final reference drops.
+fn sab_backing_store_owned_external() -> Vec<CheckOutcome> {
+    struct DeleterState {
+        invocations: AtomicUsize,
+        observed_len: AtomicUsize,
+        data_echo: AtomicUsize,
+    }
+
+    unsafe extern "C" fn counting_deleter(
+        data: *mut c_void,
+        byte_length: usize,
+        deleter_data: *mut c_void,
+    ) {
+        let state = unsafe { &*(deleter_data as *const DeleterState) };
+        state.invocations.fetch_add(1, Ordering::SeqCst);
+        state.observed_len.store(byte_length, Ordering::SeqCst);
+        state
+            .data_echo
+            .store(deleter_data as usize, Ordering::SeqCst);
+        if byte_length > 0 {
+            let slice = std::ptr::slice_from_raw_parts_mut(data.cast::<u8>(), byte_length);
+            drop(unsafe { Box::from_raw(slice) });
+        }
+    }
+
+    let isolate = &mut v8::Isolate::new(Default::default());
+    let owned = v8::SharedRef::from(v8::SharedArrayBuffer::new_backing_store_from_vec(vec![
+        1, 3, 5, 7,
+    ]));
+    let owned_is_shared = owned.is_shared();
+    let owned_contents = hex(&backing_store_bytes(&owned));
+    let owned_attached_length = {
+        v8::scope!(let scope, isolate);
+        let context = v8::Context::new(scope, Default::default());
+        let scope = &mut v8::ContextScope::new(scope, context);
+        v8::SharedArrayBuffer::with_backing_store(scope, &owned).byte_length()
+    };
+    isolate.low_memory_notification();
+    drop(owned);
+
+    let state = Box::leak(Box::new(DeleterState {
+        invocations: AtomicUsize::new(0),
+        observed_len: AtomicUsize::new(0),
+        data_echo: AtomicUsize::new(0),
+    }));
+    let state_addr = state as *const DeleterState as usize;
+    let memory = vec![9u8, 8, 6].into_boxed_slice();
+    let raw_memory = Box::into_raw(memory);
+    let external = v8::SharedRef::from(unsafe {
+        v8::SharedArrayBuffer::new_backing_store_from_ptr(
+            raw_memory.cast::<c_void>(),
+            3,
+            counting_deleter,
+            state as *const DeleterState as *mut c_void,
+        )
+    });
+    let external_is_shared = external.is_shared();
+    let external_contents = hex(&backing_store_bytes(&external));
+    {
+        v8::scope!(let scope, isolate);
+        let context = v8::Context::new(scope, Default::default());
+        let scope = &mut v8::ContextScope::new(scope, context);
+        let _ = v8::SharedArrayBuffer::with_backing_store(scope, &external);
+    }
+    isolate.low_memory_notification();
+    drop(external);
+
+    let actual = Json::obj(vec![
+        ("owned_is_shared", Json::b(owned_is_shared)),
+        ("owned_contents", Json::s(&owned_contents)),
+        (
+            "owned_attached_byte_length",
+            Json::i(owned_attached_length as i64),
+        ),
+        ("external_is_shared", Json::b(external_is_shared)),
+        ("external_contents", Json::s(&external_contents)),
+        (
+            "external_invocations",
+            Json::i(state.invocations.load(Ordering::SeqCst) as i64),
+        ),
+        (
+            "external_observed_byte_length",
+            Json::i(state.observed_len.load(Ordering::SeqCst) as i64),
+        ),
+        (
+            "external_deleter_data_roundtrip",
+            Json::b(state.data_echo.load(Ordering::SeqCst) == state_addr),
+        ),
+    ]);
+    let expected = Json::obj(vec![
+        ("owned_is_shared", Json::b(true)),
+        ("owned_contents", Json::s("01030507")),
+        ("owned_attached_byte_length", Json::i(4)),
+        ("external_is_shared", Json::b(true)),
+        ("external_contents", Json::s("090806")),
+        ("external_invocations", Json::i(1)),
+        ("external_observed_byte_length", Json::i(3)),
+        ("external_deleter_data_roundtrip", Json::b(true)),
+    ]);
+    vec![expect_eq(
+        "buffers/sab_backing_store_owned_external",
+        expected,
+        actual,
+    )]
+}
+
 /// A JS-created resizable ArrayBuffer reports
 /// `is_resizable_by_user_javascript` on its backing store.
 fn ab_resizable_backing_store() -> Vec<CheckOutcome> {
@@ -1582,6 +1690,7 @@ const CHECKS: &[fn() -> Vec<CheckOutcome>] = &[
     ab_backing_store_ownership,
     ab_backing_store_alias,
     ab_backing_store_shared_sab,
+    sab_backing_store_owned_external,
     ab_resizable_backing_store,
     ab_detach_basic,
     ab_detach_key_gate,

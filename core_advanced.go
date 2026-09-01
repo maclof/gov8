@@ -328,8 +328,8 @@ func slotStateOf(c *Context) *ctxSlotState {
 // content is an internal oddball, not a JS value — only predicates are
 // meaningful on it (the pinned oracle records exactly those).
 func (c *Context) GetEmbedderData(s *Scope, slot int) (Value, bool, error) {
-	if slot < 0 {
-		return Value{}, false, fmt.Errorf("gov8: embedder data slot out of range: %d", slot)
+	if err := validateContextEmbedderDataSlot(slot); err != nil {
+		return Value{}, false, err
 	}
 	if err := c.check(); err != nil {
 		return Value{}, false, err
@@ -357,8 +357,8 @@ func (c *Context) GetEmbedderData(s *Scope, slot int) (Value, bool, error) {
 
 // SetEmbedderData writes a JS value into embedder slot slot.
 func (c *Context) SetEmbedderData(s *Scope, slot int, v Value) error {
-	if slot < 0 {
-		return fmt.Errorf("gov8: embedder data slot out of range: %d", slot)
+	if err := validateContextEmbedderDataSlot(slot); err != nil {
+		return err
 	}
 	if err := c.check(); err != nil {
 		return err
@@ -394,8 +394,8 @@ func (c *Context) SetEmbedderData(s *Scope, slot int, v Value) error {
 // (the engine never dereferences it). Alignment is validated Go-side: the
 // upstream ApiCheck-fatals ("Pointer is not aligned") on unaligned values.
 func (c *Context) SetAlignedPointerInEmbedderData(slot int, p uintptr) error {
-	if slot < 0 {
-		return fmt.Errorf("gov8: embedder data slot out of range: %d", slot)
+	if err := validateContextEmbedderDataSlot(slot); err != nil {
+		return err
 	}
 	if p%8 != 0 {
 		return fmt.Errorf("gov8: embedder pointer is not aligned: %#x", p)
@@ -419,8 +419,8 @@ func (c *Context) SetAlignedPointerInEmbedderData(slot int, p uintptr) error {
 // GetAlignedPointerFromEmbedderData reads the aligned pointer from embedder
 // slot slot.
 func (c *Context) GetAlignedPointerFromEmbedderData(slot int) (uintptr, error) {
-	if slot < 0 {
-		return 0, fmt.Errorf("gov8: embedder data slot out of range: %d", slot)
+	if err := validateContextEmbedderDataSlot(slot); err != nil {
+		return 0, err
 	}
 	if err := c.check(); err != nil {
 		return 0, err

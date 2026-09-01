@@ -413,6 +413,10 @@ v8::BackingStore* v8__ArrayBuffer__NewBackingStore__with_data(
     void* deleter_data);
 v8::BackingStore* v8__SharedArrayBuffer__NewBackingStore__with_byte_length(
     v8::Isolate* isolate, size_t byte_length);
+v8::BackingStore* v8__SharedArrayBuffer__NewBackingStore__with_data(
+    void* data, size_t byte_length,
+    void (*deleter)(void* data, size_t length, void* deleter_data),
+    void* deleter_data);
 
 // ArrayBuffer / SharedArrayBuffer construction and access.
 const v8::ArrayBuffer* v8__ArrayBuffer__New__with_byte_length(
@@ -656,6 +660,74 @@ __declspec(dllexport) void* gov8_sab_backing_store_new(v8::Isolate* iso,
         iso, std__shared_ptr__v8__BackingStore__CONVERT__std__unique_ptr(unique));
   } catch (...) {
     SetErr("C++ exception in sab_backing_store_new");
+    return nullptr;
+  }
+}
+
+// Creates a shared backing store owning a malloc'd copy of the given bytes
+// (SharedArrayBuffer::new_backing_store_from_vec / from_boxed_slice).
+__declspec(dllexport) void* gov8_sab_backing_store_from_slice(
+    v8::Isolate* iso, const char* data, int64_t len) {
+  ClearErr();
+  if (iso == nullptr || len < 0 || (data == nullptr && len > 0)) {
+    SetErr("invalid slice");
+    return nullptr;
+  }
+  try {
+    void* copy = nullptr;
+    if (len > 0) {
+      copy = malloc(static_cast<size_t>(len));
+      if (copy == nullptr) {
+        SetErr("shared backing store allocation failed");
+        return nullptr;
+      }
+      memcpy(copy, data, static_cast<size_t>(len));
+    }
+    v8::BackingStore* unique =
+        v8__SharedArrayBuffer__NewBackingStore__with_data(
+            copy, static_cast<size_t>(len),
+            gov8_buf_impl::Gov8OwnedSliceDeleter, nullptr);
+    if (unique == nullptr) {
+      free(copy);
+      SetErr("SharedArrayBuffer::NewBackingStore failed");
+      return nullptr;
+    }
+    return gov8_buf_impl::BsNew(
+        iso, std__shared_ptr__v8__BackingStore__CONVERT__std__unique_ptr(unique));
+  } catch (...) {
+    SetErr("C++ exception in sab_backing_store_from_slice");
+    return nullptr;
+  }
+}
+
+// Creates a shared backing store over caller-owned memory with the same
+// registry-backed deleter contract as gov8_backing_store_from_ptr.
+__declspec(dllexport) void* gov8_sab_backing_store_from_ptr(
+    v8::Isolate* iso, void* data, int64_t byte_length, int64_t go_handle) {
+  ClearErr();
+  if (iso == nullptr || byte_length < 0 ||
+      (data == nullptr && byte_length > 0)) {
+    SetErr("invalid pointer range");
+    return nullptr;
+  }
+  if (go_handle <= 0) {
+    SetErr("invalid deleter registry handle");
+    return nullptr;
+  }
+  try {
+    v8::BackingStore* unique =
+        v8__SharedArrayBuffer__NewBackingStore__with_data(
+            data, static_cast<size_t>(byte_length),
+            gov8_buf_impl::Gov8BsDeleterTrampoline,
+            reinterpret_cast<void*>(static_cast<intptr_t>(go_handle)));
+    if (unique == nullptr) {
+      SetErr("SharedArrayBuffer::NewBackingStore failed");
+      return nullptr;
+    }
+    return gov8_buf_impl::BsNew(
+        iso, std__shared_ptr__v8__BackingStore__CONVERT__std__unique_ptr(unique));
+  } catch (...) {
+    SetErr("C++ exception in sab_backing_store_from_ptr");
     return nullptr;
   }
 }

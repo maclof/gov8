@@ -342,6 +342,105 @@ func checkABBackingStoreSharedSAB(t tester) obs {
 		))
 }
 
+func checkSABBackingStoreOwnedExternal(t tester) obs {
+	iso, err := gov8.NewIsolate()
+	if err != nil {
+		t.Fatalf("NewIsolate: %v", err)
+	}
+	defer func() { _ = iso.Close() }()
+
+	owned, err := iso.NewSharedArrayBufferBackingStoreFromSlice([]byte{1, 3, 5, 7})
+	if err != nil {
+		t.Fatalf("NewSharedArrayBufferBackingStoreFromSlice: %v", err)
+	}
+	ownedShared, _ := owned.IsShared()
+	ownedBytes := make([]byte, 4)
+	_, _ = owned.ReadAt(ownedBytes, 0)
+	ownedAttachedLength := 0
+	func() {
+		ctx, err := iso.NewContext()
+		if err != nil {
+			t.Fatalf("NewContext: %v", err)
+		}
+		defer func() { _ = ctx.Close() }()
+		scope, err := iso.NewScope()
+		if err != nil {
+			t.Fatalf("NewScope: %v", err)
+		}
+		defer func() { _ = scope.Close() }()
+		sab, err := gov8.NewSharedArrayBufferWithBackingStore(scope, ctx, owned)
+		if err != nil {
+			t.Fatalf("NewSharedArrayBufferWithBackingStore: %v", err)
+		}
+		ownedAttachedLength, _ = sab.ByteLength()
+	}()
+	_ = iso.LowMemoryNotification()
+	if err := owned.Close(); err != nil {
+		t.Fatalf("owned.Close: %v", err)
+	}
+
+	invocations := 0
+	observedLen := 0
+	observedData := uintptr(0)
+	registered := uintptr(0x6B6B6B6B6E)
+	memory := []byte{9, 8, 6}
+	external, err := iso.NewSharedArrayBufferBackingStoreFromPtr(
+		unsafe.Pointer(&memory[0]), len(memory),
+		func(_ unsafe.Pointer, byteLength int, deleterData uintptr) {
+			invocations++
+			observedLen = byteLength
+			observedData = deleterData
+		}, registered)
+	if err != nil {
+		t.Fatalf("NewSharedArrayBufferBackingStoreFromPtr: %v", err)
+	}
+	externalShared, _ := external.IsShared()
+	externalBytes := make([]byte, 3)
+	_, _ = external.ReadAt(externalBytes, 0)
+	func() {
+		ctx, err := iso.NewContext()
+		if err != nil {
+			t.Fatalf("NewContext: %v", err)
+		}
+		defer func() { _ = ctx.Close() }()
+		scope, err := iso.NewScope()
+		if err != nil {
+			t.Fatalf("NewScope: %v", err)
+		}
+		defer func() { _ = scope.Close() }()
+		if _, err := gov8.NewSharedArrayBufferWithBackingStore(scope, ctx, external); err != nil {
+			t.Fatalf("NewSharedArrayBufferWithBackingStore: %v", err)
+		}
+	}()
+	_ = iso.LowMemoryNotification()
+	if err := external.Close(); err != nil {
+		t.Fatalf("external.Close: %v", err)
+	}
+	stdruntime.KeepAlive(memory)
+
+	return wantGot("buffers/sab_backing_store_owned_external",
+		obj(
+			kv("owned_is_shared", b(true)),
+			kv("owned_contents", s("01030507")),
+			kv("owned_attached_byte_length", i(4)),
+			kv("external_is_shared", b(true)),
+			kv("external_contents", s("090806")),
+			kv("external_invocations", i(1)),
+			kv("external_observed_byte_length", i(3)),
+			kv("external_deleter_data_roundtrip", b(true)),
+		),
+		obj(
+			kv("owned_is_shared", b(ownedShared)),
+			kv("owned_contents", s(lowerHex(ownedBytes))),
+			kv("owned_attached_byte_length", i(int64(ownedAttachedLength))),
+			kv("external_is_shared", b(externalShared)),
+			kv("external_contents", s(lowerHex(externalBytes))),
+			kv("external_invocations", i(int64(invocations))),
+			kv("external_observed_byte_length", i(int64(observedLen))),
+			kv("external_deleter_data_roundtrip", b(observedData == registered)),
+		))
+}
+
 func checkABResizableBackingStore(t tester) obs {
 	r := newRuntime(t)
 	defer r.close(t)
@@ -1302,6 +1401,7 @@ func allChecks() []checkFn {
 		checkABBackingStoreOwnership,
 		checkABBackingStoreAlias,
 		checkABBackingStoreSharedSAB,
+		checkSABBackingStoreOwnedExternal,
 		checkABResizableBackingStore,
 		checkABDetachBasic,
 		checkABDetachKeyGate,

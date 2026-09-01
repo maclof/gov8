@@ -382,6 +382,9 @@ func (sc *SnapshotCreator) CreateBlob(policy FunctionCodeHandling) (*StartupData
 	if policy != FunctionCodeClear && policy != FunctionCodeKeep {
 		return nil, fmt.Errorf("gov8: invalid FunctionCodeHandling %d", int32(policy))
 	}
+	if contextHasUnclearedSlots(sc.iso) {
+		return nil, fmt.Errorf("gov8: snapshot creator has uncleared Context slots; call Context.ClearAllSlots before CreateBlob")
+	}
 	var dataPtr uintptr
 	var size int64
 	r1, _, _ := proc("gov8_snapshot_create_blob").Call(

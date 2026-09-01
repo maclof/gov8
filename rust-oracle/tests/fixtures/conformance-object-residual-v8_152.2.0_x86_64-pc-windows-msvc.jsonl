@@ -1,0 +1,5 @@
+{"check":"object-residual/constructor/prototype_properties","ok":true,"value":{"prototype_is_null":true,"alpha":"42","symbol":"payload","attributes_none":true,"has_alpha":true,"has_symbol":true}}
+{"check":"object-residual/names/own_filters","ok":true,"value":{"length":4,"inherited_excluded":true,"index_included_despite_arg":true,"enumerable_present":true,"non_enumerable_present":true,"symbol_present":true}}
+{"check":"object-residual/preview/collections","ok":true,"value":{"keys_length":3,"keys_key_value":false,"keys_first":"1","entries_length":4,"entries_key_value":true,"map_length":4,"map_key_value":true,"plain_absent":true,"plain_key_value":false}}
+{"check":"object-residual/api_wrapper/classification","ok":true,"value":{"plain":false,"internal_fields_only":true,"function_template_instance":true}}
+{"summary":{"total":4,"passed":4,"failed":0}}

@@ -66,12 +66,11 @@ func storePlatform(s platformState) {
 	atomic.StoreInt32((*int32)(&platform), int32(s))
 }
 
-// Initialize installs the default platform (thread_pool_size 0, no idle-task
-// support — the pinned oracle configuration), calls V8::Initialize, and
-// prepares the default ArrayBuffer allocator. It must be called exactly once
-// per process before any other engine API and returns an error on a second
-// call (the pinned crate panics with "Invalid global state" here; see the
-// package documentation for the panic-to-error deviation).
+// Initialize installs the platform selected by ConfigurePlatform, calls
+// V8::Initialize, and prepares the default ArrayBuffer allocator. With no
+// explicit selection it preserves the original default configuration (worker
+// count 0, idle tasks disabled). It must be called exactly once per process;
+// invalid lifecycle transitions are returned as errors.
 func Initialize() error {
 	if err := loadShim(); err != nil {
 		return err
@@ -81,7 +80,7 @@ func Initialize() error {
 	if loadPlatform() != stateUninitialized {
 		return fmt.Errorf("gov8: invalid global state: Initialize called in state %d", loadPlatform())
 	}
-	if err := callErr("Initialize", proc("gov8_initialize_platform")); err != nil {
+	if err := initializeSelectedPlatform(); err != nil {
 		return err
 	}
 	storePlatform(stateInitialized)

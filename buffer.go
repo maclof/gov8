@@ -20,7 +20,9 @@ import (
 //	v8::ArrayBuffer::new_backing_store{,_from_vec,_from_boxed_slice,_from_ptr}
 //	-> NewBackingStore / NewBackingStoreFromSlice / NewBackingStoreFromPtr
 //	v8::SharedArrayBuffer::{new, with_backing_store, byte_length,
-//	get_backing_store, new_backing_store} -> the SharedArrayBuffer methods
+//	get_backing_store, new_backing_store,
+//	new_backing_store_from_{vec,boxed_slice,ptr}} -> the
+//	SharedArrayBuffer methods
 //	v8::{Uint8Array,Float64Array,...}::new and ArrayBufferView geometry ->
 //	NewUint8Array / NewFloat64Array / NewBigInt64Array and the view methods
 //	v8::SharedRef<BackingStore>::{is_shared, byte_length,
@@ -62,6 +64,9 @@ import (
 //     survive a V8 CHECK, so the shim prevalidates the geometry at the
 //     boundary and construction returns an error instead. Every in-bounds
 //     observation is unchanged.
+//   - The pinned crate exposes no ArrayBuffer externalize method. Allocator
+//     selection belongs to CreateParams; its unsafe custom-callback variant is
+//     tracked explicitly in the Isolate parity row.
 
 // Isolate.LowMemoryNotification requests a full garbage collection (the
 // crate's isolate.low_memory_notification). Used to make engine-side drops of
@@ -733,6 +738,63 @@ func (i *Isolate) NewSharedArrayBufferBackingStore(byteLength int) (*BackingStor
 	h, err := callHandle("NewSharedArrayBufferBackingStore",
 		proc("gov8_sab_backing_store_new"), i.handle, uintptr(byteLength))
 	if err != nil {
+		return nil, err
+	}
+	return &BackingStore{iso: i, handle: h}, nil
+}
+
+// NewSharedArrayBufferBackingStoreFromSlice creates a shared backing store
+// that owns a copy of data (the crate's new_backing_store_from_vec /
+// new_backing_store_from_boxed_slice). The Go slice is never retained.
+func (i *Isolate) NewSharedArrayBufferBackingStoreFromSlice(data []byte) (*BackingStore, error) {
+	if err := i.check(); err != nil {
+		return nil, err
+	}
+	var p uintptr
+	if len(data) > 0 {
+		p = uintptr(unsafe.Pointer(&data[0]))
+	}
+	h, err := callHandle("NewSharedArrayBufferBackingStoreFromSlice",
+		proc("gov8_sab_backing_store_from_slice"), i.handle, p, uintptr(len(data)))
+	if err != nil {
+		return nil, err
+	}
+	return &BackingStore{iso: i, handle: h}, nil
+}
+
+// NewSharedArrayBufferBackingStoreFromPtr creates a shared backing store over
+// caller-owned memory. The memory and deleter have the same lifetime contract
+// as NewBackingStoreFromPtr.
+func (i *Isolate) NewSharedArrayBufferBackingStoreFromPtr(data unsafe.Pointer, byteLength int, fn BackingStoreDeleter, deleterData uintptr) (*BackingStore, error) {
+	if byteLength < 0 {
+		return nil, fmt.Errorf("gov8: negative backing store length %d", byteLength)
+	}
+	if data == nil && byteLength > 0 {
+		return nil, fmt.Errorf("gov8: nil data pointer with positive length")
+	}
+	if fn == nil {
+		return nil, fmt.Errorf("gov8: nil backing store deleter")
+	}
+	if err := i.check(); err != nil {
+		return nil, err
+	}
+	if err := installDeleterEntry(); err != nil {
+		return nil, err
+	}
+	deleterRegistry.mu.Lock()
+	deleterRegistry.next++
+	handle := deleterRegistry.next
+	deleterRegistry.entries[handle] = BackingStoreDeleterEntry{
+		data: data, byteLength: byteLength, deleterData: deleterData, fn: fn,
+	}
+	deleterRegistry.mu.Unlock()
+	h, err := callHandle("NewSharedArrayBufferBackingStoreFromPtr",
+		proc("gov8_sab_backing_store_from_ptr"), i.handle, uintptr(data),
+		uintptr(byteLength), uintptr(handle))
+	if err != nil {
+		deleterRegistry.mu.Lock()
+		delete(deleterRegistry.entries, handle)
+		deleterRegistry.mu.Unlock()
 		return nil, err
 	}
 	return &BackingStore{iso: i, handle: h}, nil

@@ -1,6 +1,6 @@
 //go:build windows && amd64
 
-// The conformance-buffers runner: it executes the 20 buffers/serialization
+// The conformance-buffers runner: it executes the 21 buffers/serialization
 // checks in the fixed oracle order, renders the same normalized JSON-lines
 // report as the other slices, and compares the report byte-for-byte against
 // the pinned fixture. The shape test mirrors
@@ -61,7 +61,7 @@ func runAll(t *testing.T) string {
 	return sb.String()
 }
 
-// TestConformanceBuffersFixture runs all 20 checks in oracle order and
+// TestConformanceBuffersFixture runs all 21 checks in oracle order and
 // compares the report byte-for-byte against the pinned fixture.
 func TestConformanceBuffersFixture(t *testing.T) {
 	report := runAll(t)
