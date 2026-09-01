@@ -218,6 +218,41 @@ var weakRegistry = struct {
 	entries map[int64]*weakEntry
 }{entries: make(map[int64]*weakEntry)}
 
+// weakLiveness counts every non-empty Weak wrapper, including handles with no
+// finalizer registration. rusty_v8 refuses OwnedIsolate::try_into_shared while
+// any such handle is alive and refuses creating one after conversion.
+var weakLiveness = struct {
+	sync.Mutex
+	byIsolate map[*Isolate]int
+}{byIsolate: make(map[*Isolate]int)}
+
+func registerWeakLiveness(w *Weak) {
+	weakLiveness.Lock()
+	weakLiveness.byIsolate[w.iso]++
+	w.tracked = true
+	weakLiveness.Unlock()
+}
+
+func unregisterWeakLiveness(w *Weak) {
+	if w == nil || !w.tracked {
+		return
+	}
+	weakLiveness.Lock()
+	if count := weakLiveness.byIsolate[w.iso]; count <= 1 {
+		delete(weakLiveness.byIsolate, w.iso)
+	} else {
+		weakLiveness.byIsolate[w.iso] = count - 1
+	}
+	w.tracked = false
+	weakLiveness.Unlock()
+}
+
+func liveWeakCount(i *Isolate) int {
+	weakLiveness.Lock()
+	defer weakLiveness.Unlock()
+	return weakLiveness.byIsolate[i]
+}
+
 var (
 	weakDispatcherOnce sync.Once
 	weakDispatcherErr  error
@@ -285,11 +320,12 @@ func removeWeakEntry(id int64) {
 
 // Weak is a weak persistent handle to a JS value.
 type Weak struct {
-	iso    *Isolate
-	wrap   uintptr // engine WeakWrap; 0 for empty weaks
-	empty  bool
-	id     int64 // Go finalizer registry id; 0 = none
-	closed bool
+	iso     *Isolate
+	wrap    uintptr // engine WeakWrap; 0 for empty weaks
+	empty   bool
+	id      int64 // Go finalizer registry id; 0 = none
+	tracked bool
+	closed  bool
 }
 
 // NewWeak creates a weak handle over the global's object without a
@@ -324,6 +360,9 @@ func (g *Global) newWeak(regular WeakFinalizer, guaranteed func()) (*Weak, error
 	if err := g.check(); err != nil {
 		return nil, err
 	}
+	if isolateIsShared(g.iso) {
+		return nil, fmt.Errorf("gov8: weak handles are not supported on shared isolates")
+	}
 	if err := ensureWeakDispatcher(); err != nil {
 		return nil, err
 	}
@@ -341,6 +380,7 @@ func (g *Global) newWeak(regular WeakFinalizer, guaranteed func()) (*Weak, error
 		return nil, err
 	}
 	w := &Weak{iso: g.iso, wrap: wrap, id: id}
+	registerWeakLiveness(w)
 	if id != 0 {
 		weakRegistry.mu.Lock()
 		weakRegistry.entries[id] = &weakEntry{
@@ -389,6 +429,7 @@ func DrainGuaranteedWeakFinalizers(i *Isolate) error {
 		}
 		removeWeakEntry(p.id)
 		if p.w != nil {
+			unregisterWeakLiveness(p.w)
 			p.w.closed = true
 			p.w.wrap = 0
 			p.w.id = 0
@@ -509,7 +550,9 @@ func (w *Weak) Clone() (*Weak, error) {
 	if r1 == 0 {
 		return &Weak{iso: w.iso, empty: true}, nil
 	}
-	return &Weak{iso: w.iso, wrap: r1}, nil
+	clone := &Weak{iso: w.iso, wrap: r1}
+	registerWeakLiveness(clone)
+	return clone, nil
 }
 
 // EqualWeak reports weak-to-weak equality with the pinned crate's
@@ -607,6 +650,7 @@ func (w *Weak) Close() error {
 		return fmt.Errorf("gov8: weak already closed")
 	}
 	if w.empty || isolateClosed(w.iso) {
+		unregisterWeakLiveness(w)
 		w.closed = true
 		removeWeakEntry(w.id)
 		return nil
@@ -625,5 +669,6 @@ func (w *Weak) Close() error {
 	case int64(r1) < 0:
 		return shimError("Weak.Close", r1)
 	}
+	unregisterWeakLiveness(w)
 	return nil
 }

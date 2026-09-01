@@ -3,6 +3,7 @@
 package gov8_test
 
 import (
+	"strings"
 	"sync"
 	"testing"
 
@@ -196,10 +197,8 @@ func TestIntoSharedRejections(t *testing.T) {
 		t.Fatalf("bottom Close: %v", err)
 	}
 
-	// Part B: a live weak handle rejects; closing it allows conversion.
-	// The finalizer variant is used because the Go-side liveness registry
-	// counts finalizer registrations (a finalizer-less weak is invisible
-	// to it; see the parity notes).
+	// Part B: any live non-empty weak handle rejects; closing it allows
+	// conversion, including a weak without a finalizer.
 	owned := newIso(t)
 	weakHolder := func() *gov8.Weak {
 		scope := newScope(t, owned)
@@ -214,7 +213,7 @@ func TestIntoSharedRejections(t *testing.T) {
 		if err != nil {
 			t.Fatalf("NewGlobal: %v", err)
 		}
-		w, err := g.NewWeakWithFinalizer(func(*gov8.Isolate) {})
+		w, err := g.NewWeak()
 		if err != nil {
 			t.Fatalf("NewWeak: %v", err)
 		}
@@ -250,6 +249,56 @@ func TestIntoSharedRejections(t *testing.T) {
 	}
 	if err := shared2.Close(); err != nil {
 		t.Fatalf("shared Close: %v", err)
+	}
+}
+
+func TestWeakCreationOnSharedIsolateRejectedAndUsable(t *testing.T) {
+	iso := newIso(t)
+	shared, err := iso.TryIntoShared()
+	if err != nil {
+		t.Fatalf("TryIntoShared: %v", err)
+	}
+	locker, err := shared.Lock()
+	if err != nil {
+		t.Fatalf("Lock: %v", err)
+	}
+	scope := newScope(t, iso)
+	ctx := newCtx(t, iso)
+	obj, err := scope.NewObject(ctx)
+	if err != nil {
+		t.Fatalf("NewObject: %v", err)
+	}
+	g, err := gov8.NewGlobal(scope, obj.Value)
+	if err != nil {
+		t.Fatalf("NewGlobal: %v", err)
+	}
+	if _, err = g.NewWeak(); err == nil || !strings.Contains(err.Error(), "not supported on shared isolates") {
+		t.Fatalf("NewWeak error = %v", err)
+	}
+	empty, err := iso.EmptyWeak()
+	if err != nil {
+		t.Fatalf("EmptyWeak: %v", err)
+	}
+	if err := empty.Close(); err != nil {
+		t.Fatalf("empty Weak Close: %v", err)
+	}
+	if err := g.Close(); err != nil {
+		t.Fatalf("Global Close: %v", err)
+	}
+	if err := ctx.Close(); err != nil {
+		t.Fatalf("Context Close: %v", err)
+	}
+	if err := scope.Close(); err != nil {
+		t.Fatalf("Scope Close: %v", err)
+	}
+	if err := locker.Close(); err != nil {
+		t.Fatalf("Locker Close: %v", err)
+	}
+	if got := lockedEval(t, shared, "6 * 7"); got != 42 {
+		t.Errorf("locked run after rejection = %d, want 42", got)
+	}
+	if err := shared.Close(); err != nil {
+		t.Fatalf("SharedIsolate Close: %v", err)
 	}
 }
 

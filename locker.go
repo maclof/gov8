@@ -36,11 +36,9 @@ import (
 // engine operations on any thread (the affinity check fails everywhere),
 // except the thread-safe ThreadSafeHandle controls, which mirror the pinned
 // IsolateHandle. Weak handles are not supported on shared isolates by the
-// pinned crate; this port rejects the CONVERSION of an isolate with live
-// weaks or pending finalizers (the fixture-observable path). Creating a
-// fresh weak under a lock is NOT rejected here — that guard lives in the
-// weak-handle implementation outside this slice's ownership and is tracked
-// as a gap.
+// pinned crate; this port rejects conversion with any live non-empty weak or
+// pending finalizer and rejects creation of a non-empty weak after conversion.
+// Empty weak handles remain valid because they own no engine handle.
 //
 // SharedIsolate.Close may be called from any thread that satisfies the
 // no-lock-held state machine; only the creating goroutine drops its OS
@@ -104,6 +102,12 @@ func sharedStateOf(i *Isolate) *sharedState {
 	return sharedRegistry.m[i]
 }
 
+func isolateIsShared(i *Isolate) bool {
+	sharedRegistry.mu.Lock()
+	defer sharedRegistry.mu.Unlock()
+	return sharedStateOf(i) != nil
+}
+
 func isolateClosedLocked(i *Isolate) bool {
 	i.mu.Lock()
 	defer i.mu.Unlock()
@@ -149,20 +153,6 @@ func (i *Isolate) TryIntoShared() (*SharedIsolate, error) {
 	i.tid = 0
 	i.mu.Unlock()
 	return &SharedIsolate{iso: i}, nil
-}
-
-// liveWeakCount counts the isolate's live weak-registry entries (live weak
-// handles and pending finalizers, mirroring the pinned annex counters).
-func liveWeakCount(i *Isolate) int {
-	weakRegistry.mu.Lock()
-	defer weakRegistry.mu.Unlock()
-	n := 0
-	for _, e := range weakRegistry.entries {
-		if e.iso == i {
-			n++
-		}
-	}
-	return n
 }
 
 // SharedIsolate is an isolate usable from multiple threads, one at a time.

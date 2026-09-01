@@ -429,10 +429,8 @@ func checkThreadIntoSharedRejections(t tester) obs {
 	closeIsolate(t, top)
 	closeIsolate(t, bottom)
 
-	// Part B: a live weak handle rejects; dropping it allows conversion.
-	// The Go weak handle uses the finalizer variant here: the finalizer
-	// registration is what the Go-side liveness check counts (a
-	// finalizer-less weak is invisible to it — see the parity notes).
+	// Part B: any live non-empty weak handle rejects; dropping it allows
+	// conversion, including a weak without a finalizer.
 	owned := newIsolate(t)
 	weak := func() *gov8.Weak {
 		scope := newIsolateScope(t, owned)
@@ -444,7 +442,7 @@ func checkThreadIntoSharedRejections(t tester) obs {
 		if err != nil {
 			t.Fatalf("NewGlobal: %v", err)
 		}
-		w, err := g.NewWeakWithFinalizer(func(*gov8.Isolate) {})
+		w, err := g.NewWeak()
 		if err != nil {
 			t.Fatalf("NewWeak: %v", err)
 		}
