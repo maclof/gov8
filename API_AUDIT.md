@@ -12,14 +12,14 @@ and constants, fields, enum variants and trait members are included.
 
 | Classification | Declarations | Percent |
 |---|---:|---:|
-| Matched Go equivalent or documented semantic shape | 1,669 | 89.8% |
+| Matched Go equivalent or documented semantic shape | 1,670 | 89.9% |
 | Partial behavior or evidence | 24 | 1.3% |
-| Missing executable surface | 10 | 0.5% |
+| Missing executable surface | 9 | 0.5% |
 | Unsafe or intentionally unsupported Rust ownership shape | 155 | 8.3% |
 | Ambiguous pending exact executable evidence | 0 | 0.0% |
 | Total | 1,858 | 100% |
 
-The confirmed executable remainder is 34 declarations. There is no remaining
+The confirmed executable remainder is 33 declarations. There is no remaining
 ambiguous bucket. The 155 intentionally unsupported declarations are not
 implementation backlog unless the project
 chooses a comparably safe Go abstraction.
@@ -42,7 +42,7 @@ chooses a comparably safe Go abstraction.
 | `regexp.rs` and `string.rs` | 103 | Matched with checked and owned Go shapes |
 | `array_buffer.rs` | 14 | Buffer behavior matched; allocator factories and vtable ownership remain |
 | `function.rs` and `template.rs` | 140 | Normal callbacks/templates matched; Fast API tracked separately |
-| Script/compiler/module families | 80 | Safe surface matched except dynamic-import `kDefer` delivery |
+| Script/compiler/module families | 80 | Safe surface matched, including dynamic-import `kDefer` delivery |
 | Promise and snapshot families | 19 | Safe behavior matched; allocator and custom-heap/snapshot composition gaps live under CreateParams |
 | Serializer/deserializer | 40 | Matched |
 | `wasm.rs` | 28 | Safe executable surface matched, including positive serialized-cache behavior |
@@ -64,7 +64,6 @@ denominator above is authoritative.
 2. ArrayBuffer allocator types, vtable ownership and default/custom factories.
 3. Full executable Fast API constructor/type/flag matrix.
 4. Safe Go fast-callback adaptation, if a non-borrowed design can preserve V8's ABI and lifetime rules.
-5. Dynamic-import `ModuleImportPhase::kDefer` callback delivery.
 
 The Fast API residual oracle resolved the former ambiguous bucket. Two
 constructors remain partial; six callback-local native/borrowed-pointer items

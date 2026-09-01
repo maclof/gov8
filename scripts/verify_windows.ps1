@@ -59,6 +59,7 @@ $ConformancePackages = @(
     './conformance-cppgc-member',
     './conformance-cppgc-persistent',
     './conformance-create-params-snapshot',
+    './conformance-dynamic-import-defer',
     './conformance-exceptions-advanced',
     './conformance-exception-constructors',
     './conformance-exception-string-local',
