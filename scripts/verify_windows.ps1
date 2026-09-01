@@ -63,6 +63,7 @@ $ConformancePackages = @(
     './conformance-inspector-session-controls',
     './conformance-inspector-object-wrapping',
     './conformance-inspector-inspected-object',
+    './conformance-inspector-runtime-events',
     './conformance-fixed-primitive-arrays',
     './conformance-handles-residual',
     './conformance-host-promises',

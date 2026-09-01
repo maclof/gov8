@@ -157,10 +157,11 @@ platform/task dispatch, configured/lazy object callbacks, attributed template
 Data, advanced module embedding hooks, snapshot-aware CreateParams, initial
 Inspector transport/evaluation, isolate Wasm policy callbacks, and complete
 serializer Wasm/legacy behavior, the safe native-descriptor substrate for Fast
-API calls, Inspector remote-object wrapping/unwrapping, and `$0`–`$4`
-inspected-object history. The Rust fixtures contain 424 normalized checks: 422
-compare byte-for-byte with Go and two have narrowly documented
-safety normalizations.
+API calls, Inspector remote-object wrapping/unwrapping, `$0`–`$4`
+inspected-object history, Inspector idle/async-task lifecycle, owned Inspector
+stack traces, and exception reporting. The Rust fixtures contain 442 normalized
+checks: 429 compare byte-for-byte with Go, two have narrowly documented safety
+normalizations, and eleven are executable oracle targets awaiting Go integration.
 Separate fatal and panic-boundary subprocess tests cover unsafe lifecycle and
 callback edges.
 

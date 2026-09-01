@@ -407,7 +407,7 @@ Checked on this machine (2026-09-01, Rust toolchain 1.98.0, Go 1.26.2):
 - `cargo fmt --check` — clean
 - `cargo check` — clean (only the documented LNK4098 linker warning)
 - `cargo test --locked` — all unit, fixture, deterministic-process,
-  lifecycle, panic, and fatal-path tests pass; the fixture corpus contains 374
+  lifecycle, panic, and fatal-path tests pass; the fixture corpus contains 442
   normalized checks
 - `cargo clippy --all-targets -- -D warnings` — clean
 - `cargo bench --locked -- --test` — every benchmark smoke-runs successfully
