@@ -64,6 +64,13 @@
 
 namespace gov8_rv_impl {
 
+// Direct-return NumberValue uses a per-thread result slot because every
+// uint64 bit pattern is a valid IEEE-754 double, leaving no in-band encoding
+// for an empty Maybe or a negative shim status. The export below publishes to
+// this slot only after conversion (and any nested JavaScript/Go re-entry) has
+// completed.
+thread_local double g_value_number_value_result = 0;
+
 // support.h's MaybeBool mirror. The ABI type is a 4-byte enumeration
 // (JustFalse = 0, JustTrue = 1, Nothing = 2); declared here because
 // support.h is not part of the vendored include set.
@@ -340,6 +347,30 @@ using namespace gov8_rv_impl;
     SetErr("C++ exception in " op);                                            \
     return kErrCpp;                                                            \
   }
+
+// Direct-return NumberValue encoding: negative values retain the shim error
+// convention, zero is an empty Maybe<double>, and a positive value addresses
+// shim-owned thread-local double storage. Keeping the legacy output-pointer
+// export in shim.cc preserves the prior C ABI entry point.
+__declspec(dllexport) int64_t gov8_value_number_value_direct(
+    v8::Isolate* iso, void* ctxw, void* v) {
+  ClearErr();
+  CtxWrap* w = AsCtx(ctxw);
+  if (w == nullptr || v == nullptr || !OwnedBy(iso, w->iso)) {
+    SetErr("invalid argument");
+    return kErrBadArg;
+  }
+  try {
+    Gov8IsolateScope iso_scope(iso);
+    v8::Local<v8::Context> ctx = w->ctx->Get(iso);
+    v8::Context::Scope ctx_scope(ctx);
+    double value;
+    if (!FromWire<v8::Value>(v)->NumberValue(ctx).To(&value)) return 0;
+    g_value_number_value_result = value;
+    return static_cast<int64_t>(
+        reinterpret_cast<intptr_t>(&g_value_number_value_result));
+  } GOV8_RV_END_CATCH("value_number_value_direct")
+}
 
 // Direct-return Uint32Value encoding: every uint32 result occupies
 // [0, 2^32), 2^32 means the Maybe conversion was empty, and negative int64

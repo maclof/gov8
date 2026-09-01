@@ -12,7 +12,8 @@
 #        sha256: a10fe1a92da5c32c7c7f838ce36c0ccfcfd5edf0865b58bdde820aa64cea9888
 #        (the crate vendors the full V8 source; only v8/include is extracted)
 #   3. internal/shim/shim.cc compiled with cl.exe into build/shim/gov8_shim.dll
-#      linked against the pinned static library.
+#      linked against the pinned static library. The resulting DLL reports
+#      shim ABI 42, matching the exact version required by ffi.go.
 #
 # Concurrency and atomicity:
 #   - The whole run is serialized by a named OS mutex ("build lock") so two

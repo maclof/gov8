@@ -48,6 +48,8 @@ const (
 var (
 	primitiveConstructorsOnce sync.Once
 	primitiveConstructorAddrs [primitiveBigIntUint64 + 1]uintptr
+	numberValueDirectOnce     sync.Once
+	numberValueDirectAddr     uintptr
 )
 
 func resolvePrimitiveConstructors() {
@@ -65,6 +67,10 @@ func resolvePrimitiveConstructors() {
 	for index, name := range names {
 		primitiveConstructorAddrs[index] = proc(name).Addr()
 	}
+}
+
+func resolveNumberValueDirect() {
+	numberValueDirectAddr = proc("gov8_value_number_value_direct").Addr()
 }
 
 // constructPrimitive keeps the public validation order while avoiding the
@@ -347,14 +353,20 @@ func (v Value) NumberValue(c *Context) (val float64, ok bool, err error) {
 	if err := v.ctxHandle(c); err != nil {
 		return 0, false, err
 	}
-	var out float64
-	var okv int32
-	r1, _, _ := proc("gov8_value_number_value").Call(
-		v.iso.handle, c.handle, v.h, uintptr(unsafe.Pointer(&out)), uintptr(unsafe.Pointer(&okv)))
-	if int64(r1) < 0 {
-		return 0, false, shimError("NumberValue", r1)
+	numberValueDirectOnce.Do(resolveNumberValueDirect)
+	result, _, _ := syscall.Syscall(numberValueDirectAddr, 3,
+		v.iso.handle, c.handle, v.h)
+	if int64(result) < 0 {
+		return 0, false, shimError("NumberValue", result)
 	}
-	return out, okv == 1, nil
+	if result == 0 {
+		return 0, false, nil
+	}
+	// The native address refers to per-thread shim storage and is consumed
+	// immediately on the isolate's locked owner thread. Bit-copy through a
+	// pointer word so vet does not treat uintptr arithmetic as a Go pointer.
+	pointer := *(*unsafe.Pointer)(unsafe.Pointer(&result))
+	return *(*float64)(pointer), true, nil
 }
 
 // IntegerValue returns v8 Value::IntegerValue (a context conversion to i64).

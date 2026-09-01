@@ -369,3 +369,46 @@ respective pinned Rust midpoints. Absolute sub-microsecond control variance was
 high, so retention is based on the repeated paired host and function gains,
 not the neutral JavaScript median. Go allocations are unchanged; the saving is
 one Windows DLL transition on a terminal integer return.
+
+## ABI-42 direct NumberValue result
+
+Generic `Value.NumberValue` now receives its `Maybe<double>` result through a
+shim-owned thread-local slot. Negative return words remain shim statuses, zero
+means an empty Maybe, and a positive word addresses the double. The shim writes
+the slot only after conversion and any nested JavaScript/Go re-entry completes;
+tests cover exact finite, subnormal, signed-zero, infinity and NaN bits, nested
+same-thread coercion, throwing conversion, ownership and lifecycle errors. The
+legacy output-pointer export remains present. The strict ABI version changed
+from 41 to 42: old and new Go executables reject the opposite DLL version at
+load with the expected mismatch error.
+
+The frozen ABI-41 DLL was
+`E56EAAF01D2E582EF4444DA50784C7D7B7E045E7380DE393F72D69EDD6D8BBB6`;
+the retained ABI-42 DLL is
+`92200BFEE71492F878E5D7EE52CCF3643CF7ECEB5E39E96D73DA3AA0ED2714D6`.
+`dumpbin /exports` changed from 939 to 940 names, with
+`gov8_value_number_value_direct` as the sole addition and no removal. Every
+fresh benchmark process reverified its paired executable and DLL hashes.
+
+Ten order-balanced, fixed-500,000-iteration pairs measured the affected
+resolver workload and the independent then/checkpoint control:
+
+| Workload | ABI-41 samples (ns/op) | ABI-42 samples (ns/op) | Median change | Candidate pair wins | Allocation change |
+|---|---:|---:|---:|---:|---:|
+| promise/resolver_new_resolve | 1019, 1062, 985.0, 1055, 999.8, 976.3, 970.0, 985.2, 991.8, 970.4 | 917.5, 931.7, 881.4, 937.6, 951.9, 908.8, 936.8, 940.2, 911.7, 884.9 | 988.5 to 924.6 (-6.5%) | 10/10 | 112 B/3 to 48 B/1 |
+| promise/resolve_then_checkpoint | 1869, 1847, 1868, 1869, 2001, 1832, 1836, 1832, 1831, 1872 | 1856, 1857, 1849, 1989, 2844, 1875, 1858, 1830, 1830, 1788 | 1857.5 to 1856.5 (-0.1%, neutral) | 5/10 | unchanged at 176 B/5 |
+
+Six longer, order-balanced, fixed-2,000,000-iteration pairs confirmed the
+resolver improvement without a control regression:
+
+| Workload | ABI-41 samples (ns/op) | ABI-42 samples (ns/op) | Median change | Candidate pair wins |
+|---|---:|---:|---:|---:|
+| promise/resolver_new_resolve | 981.2, 992.6, 1018, 1037, 1025, 989.4 | 912.9, 900.9, 892.9, 926.7, 1216, 911.2 | 1005.3 to 912.05 (-9.3%) | 5/6 |
+| promise/resolve_then_checkpoint | 2220, 2212, 2308, 2707, 2538, 2216 | 2182, 2312, 2171, 2176, 2397, 2202 | 2264 to 2192 (-3.2%) | 5/6 |
+
+The allocation reduction exceeds the one-allocation target because the cached
+fixed-arity call removes both the escaping output storage and the variadic
+`Proc.Call` frame. Against the pinned Rust midpoint of 125.03 ns, the fixed-run
+ABI-42 resolver median is about 7.40x; the unchanged control is about 4.52x its
+410.7 ns midpoint. No standalone NumberValue benchmark currently exists, so no
+unmatched cross-language ratio is reported.

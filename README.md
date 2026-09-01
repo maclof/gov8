@@ -27,9 +27,10 @@ Pop-Location
 ```
 
 The setup script downloads or reuses the exact pinned artifacts, verifies their
-hashes, and builds the untracked `build\shim\gov8_shim.dll`. No downloaded
-binary is committed. See `rust-oracle/README.md` for the authoritative version
-record and `PARITY.md` for implementation status.
+hashes, and builds the untracked `build\shim\gov8_shim.dll` at shim ABI 42. The
+Go module rejects older or newer DLL ABI versions before resolving feature
+exports. No downloaded binary is committed. See `rust-oracle/README.md` for the
+authoritative version record and `PARITY.md` for implementation status.
 
 ## Goals
 
