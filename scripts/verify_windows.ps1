@@ -52,6 +52,7 @@ $ConformancePackages = @(
     './conformance-core-advanced',
     './conformance-context-residual',
     './conformance-context-scopes-advanced',
+    './conformance-crdtp-core',
     './conformance-cppgc-object-wrapping',
     './conformance-create-params-snapshot',
     './conformance-exceptions-advanced',
