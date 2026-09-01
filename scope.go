@@ -4,8 +4,23 @@ package gov8
 
 import (
 	"fmt"
+	"sync"
+	"syscall"
 	"unsafe"
 )
+
+var (
+	scopeHotProcsOnce sync.Once
+	scopeEnterAddr    uintptr
+	scopeExitAddr     uintptr
+)
+
+func ensureScopeHotProcs() {
+	scopeHotProcsOnce.Do(func() {
+		scopeEnterAddr = proc("gov8_scope_enter").Addr()
+		scopeExitAddr = proc("gov8_scope_exit").Addr()
+	})
+}
 
 // Scope owns a v8 HandleScope. Every local handle (Value) created through a
 // Scope lives in that scope's slot storage and becomes invalid once the
@@ -72,9 +87,10 @@ func (i *Isolate) NewScope() (*Scope, error) {
 	if err != nil {
 		return nil, err
 	}
-	sh, err := callHandle("Scope.New", proc("gov8_scope_enter"), h)
-	if err != nil {
-		return nil, err
+	ensureScopeHotProcs()
+	sh, _, _ := syscall.Syscall(scopeEnterAddr, 1, h, 0, 0)
+	if sh == 0 {
+		return nil, shimError("Scope.New", 0)
 	}
 	scope := &Scope{iso: i, handle: sh}
 	pushHandleScope(i, scope)
@@ -145,7 +161,8 @@ func (s *Scope) Close() error {
 	if err := requireInitialized(); err != nil {
 		return err
 	}
-	r1, _, _ := proc("gov8_scope_exit").Call(s.handle)
+	ensureScopeHotProcs()
+	r1, _, _ := syscall.Syscall(scopeExitAddr, 1, s.handle, 0, 0)
 	s.closed = true
 	if err := popHandleScope(s.iso, s); err != nil {
 		return err
