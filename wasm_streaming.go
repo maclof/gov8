@@ -584,6 +584,10 @@ func (m *ModuleCachingInterface) WireBytes() ([]byte, error) {
 	if !m.active || m.handle == 0 {
 		return nil, errors.New("gov8: module caching interface is no longer active")
 	}
+	return m.wireBytesLocked()
+}
+
+func (m *ModuleCachingInterface) wireBytesLocked() ([]byte, error) {
 	var length uintptr
 	if err := callErr("ModuleCachingInterface.WireBytes", proc("gov8_ws_cache_wire"),
 		m.handle, 0, 0, uintptr(unsafe.Pointer(&length))); err != nil {
@@ -603,7 +607,11 @@ func (m *ModuleCachingInterface) WireBytes() ([]byte, error) {
 	return result, nil
 }
 
-// SetCachedCompiledModuleBytes offers one serialized candidate to V8.
+// SetCachedCompiledModuleBytes offers one raw serialized candidate to V8 and
+// mirrors rusty_v8's byte-slice API. V8 152 CHECK-fails rather than returning
+// false for mismatched wire bytes or a truncated cache; callers with cache
+// provenance should use SetCachedCompiledModule, which validates those fatal
+// preconditions in Go. Repeated calls are rejected safely before FFI.
 func (m *ModuleCachingInterface) SetCachedCompiledModuleBytes(bytes []byte) (bool, error) {
 	if m == nil {
 		return false, errors.New("gov8: nil module caching interface")
@@ -616,6 +624,10 @@ func (m *ModuleCachingInterface) SetCachedCompiledModuleBytes(bytes []byte) (boo
 	if m.setCalled {
 		return false, errors.New("gov8: cached compiled module bytes already set")
 	}
+	return m.setCachedCompiledModuleBytesLocked(bytes)
+}
+
+func (m *ModuleCachingInterface) setCachedCompiledModuleBytesLocked(bytes []byte) (bool, error) {
 	m.setCalled = true
 	var accepted int32
 	err := callErr("ModuleCachingInterface.SetCachedCompiledModuleBytes", proc("gov8_ws_cache_set"),

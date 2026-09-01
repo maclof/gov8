@@ -101,6 +101,7 @@ $ConformancePackages = @(
     './conformance-typed-arrays',
     './conformance-trycatch-listener-residual',
     './conformance-wasm',
+    './conformance-wasm-cache-positive',
     './conformance-wasm-policy-callbacks',
     './conformance-wasm-streaming'
 )

@@ -15,10 +15,10 @@ production Go implementation exists. A family is not promoted merely because a
 type or stub exists.
 
 The fixtures under `rust-oracle/tests/fixtures` currently contain 485 normalized
-checks. Go matches 474 byte-for-byte and two more after documented safety
-normalizations; four positive Wasm-cache and five cppgc Member/WeakMember checks
-are currently oracle-only. Fatal and panic-boundary subprocess tests are
-additional evidence and are not counted in that total.
+checks. Go matches 478 byte-for-byte and two more after documented safety
+normalizations; five cppgc Member/WeakMember checks are currently oracle-only.
+Fatal and panic-boundary subprocess tests are additional evidence and are not
+counted in that total.
 
 | Rust API family / behavior | Go implementation | Conformance and benchmark evidence | Status / remaining gaps |
 |---|---|---|---|
@@ -43,7 +43,7 @@ additional evidence and are not counted in that total.
 | Value serializer/deserializer and delegates | `serializer.go`, `serializer_delegates.go`, `serializer_wasm_legacy.go` | buffer, 25-check delegate and 4-check Wasm/legacy residual fixtures; reader/writer panic boundaries; Go benchmarks | **complete** for the safe executable pinned declarations: typed Wasm-module restoration, repeated-reference identity, full `u32` transfer IDs, wire-version reporting and pre-read legacy control are exact |
 | Snapshots and startup data | `snapshot.go`, `create_params_snapshot.go`; creation, cloning, validation, rehashability, context/data recovery, safe CreateParams composition, external-reference remapping and ownership | 15-check snapshot/handle, 3-check external-reference and 5-check snapshot-CreateParams fixtures; negative, reuse, concurrent-consumer and cross-thread tests; Go benchmarks | **partial**: safe snapshot consumer parameters and external-reference inputs are exact; embedder-owned allocator/heap inputs remain intentionally unsupported |
 | Source-text and synthetic ES modules | `module.go`, `module_cache.go`, `module_synthetic.go`, `module_advanced_residual.go`; source-text/synthetic compile-link-evaluate, phase-aware source resolution/namespaces, deferred evaluation, stalled-TLA diagnostics, import-meta, dynamic import and ShadowRealm callbacks, unbound scripts and opaque code cache | 7-check source-text, 3-check module-cache, 3-check synthetic-module and 9-check advanced residual fixtures exact in Go; callback panic, cache, fatal, lifecycle and thread/race tests; matched Rust/Go module benchmarks | **partial**: the safe executable pinned declarations are covered; dynamic-import `kDefer` callback delivery remains uncharacterized because this build exposes no stable public syntax/flag that drives it |
-| Wasm compile/stream/cache APIs | `wasm.go`, `wasm_streaming.go`, `wasm_policy_callbacks.go`; synchronous and streaming compile, caching callbacks, isolate allow/deny and async-settlement policies, movable experimental async compilation, compiled-module extraction/cross-isolate restoration, serializer transfer, trap activation, memory buffer access and predicates | 2-check core, 5-check streaming/async, 2-check policy, 4-check serializer residual and controls fixtures exact in Go; 4-check positive serialized-cache Rust oracle; negative/panic/lifecycle/thread/race tests; matched sync compile/rehydration, policy callback and end-to-end async benchmarks | **partial**: positive serialized-cache acceptance is characterized for Go integration, including fatal mismatch, truncation, and double-set boundaries |
+| Wasm compile/stream/cache APIs | `wasm.go`, `wasm_streaming.go`, `wasm_cache_positive.go`, `wasm_policy_callbacks.go`; synchronous and streaming compile, typed and raw caching, isolate allow/deny and async-settlement policies, movable experimental async compilation, compiled-module extraction/cross-isolate restoration, serializer transfer, trap activation, memory buffer access and predicates | 2-check core, 5-check streaming/async, 2-check policy, 4-check serializer residual, 4-check positive serialized-cache and controls fixtures exact in Go; fatal mismatch/truncation plus negative/panic/lifecycle/thread/race tests; matched sync compile/rehydration, policy callback and end-to-end async benchmarks | **complete** for the safe executable pinned Wasm surface; Go additionally binds V8's public compiled-module serializer to provide provenance-checked cache reuse |
 | Inspector and CRDTP | `inspector_transport.go`, `inspector_session_controls.go`, `inspector_client_callbacks.go`, `inspector_client_values.go`, `inspector_object_wrapping.go`, `inspector_inspected_object.go`, `inspector_runtime_events.go`, `crdtp.go`, `crdtp_dispatcher.go`; owned 8/16-bit strings, Inspector/context/session lifecycle, CDP dispatch, Channel and optional Client callbacks, method dispatch queries, object-group release, scheduled-pause control, remote-object wrapping/unwrapping, inspected-object history, idle/async-task lifecycle, owned Inspector stack traces and exception reporting, CRDTP conversion, dispatch values, responses, serializable helpers, channels, domains and fallthrough | Function side-effect policy; 5-check session-controls, 5-check client-callback, 4-check client-values, 6-check object-wrapping, 5-check inspected-object, 7-check runtime-events, 7-check CRDTP core and 5-check dispatcher fixtures exact; hardened owner-lifecycle, callback, thread/race and panic tests; matched Rust/Go CRDTP dispatch benchmark | **complete** for the safe executable pinned Inspector/CRDTP behavior; frontend notification/flush receivers are implemented, but the pinned Rust API exposes no public trigger for them, and zero deliveries are verified. The matched Go synchronous route is currently about 2.48x the Rust time and remains an optimization target |
 | cppgc and Rust object tracing | `cppgc.go`, `cppgc_persistent.go`; native-owned managed payloads, atomic API-wrapper attachment, scalar identity/tags, traced V8 targets, trace/destruction observation and strong/weak persistent handles | 6-check default-heap object-wrapping and 5-check Persistent/WeakPersistent fixtures exact; 5-check Member/WeakMember Rust oracle; tag/lifecycle/thread/race tests; trace/destroy panic probes | **partial**: default-heap object wrapping plus strong/weak persistent rooting, clearing, reassignment, reuse and teardown are exact; `Member`/`WeakMember` graph semantics are characterized for Go integration; generic `GarbageCollected` values, custom heaps, `GcCell`, and explicit process controls remain |
 | Fast API / `CFunction` | `fast_api.go`; immutable `CTypeInfo`/`CFunctionInfo`/`CFunction` metadata, native-owned descriptor retention, `FunctionBuilder.BuildFast` and `NewFastFunctionTemplate` | 4-check descriptor, optimized execution, overload/fallback and empty-boundary fixture exact; metadata, ownership, lifecycle, thread/race tests; descriptor-construction benchmark | **partial**: caller-supplied process-lifetime native addresses are supported; arbitrary Go fast callbacks, executable `FastApiCallbackOptions`, the complete type matrix and matched fast-call benchmarks remain |
@@ -88,8 +88,10 @@ additional evidence and are not counted in that total.
   cross-isolate safe until closed.
 - Go requires `SetWasmStreamingCallback` before the isolate's first Context,
   requires an explicit Context when finishing `WasmModuleCompilation`, exposes
-  default-platform pumping on `Isolate`, and restricts the uncharacterized
-  module-cache setter to one call. Pending streams or resolutions make
+  default-platform pumping on `Isolate`, and converts the module-cache
+  double-set fatal check into a one-shot Go error. The raw setter retains V8's
+  fatal mismatch/truncation preconditions; the typed cache path validates wire
+  provenance before native entry. Pending streams or resolutions make
   `ReleaseIsolateHostState` return an error, preventing use-after-free during
   isolate disposal.
 - Go copies ICU common-data input into 16-byte-aligned native process-lifetime
@@ -152,10 +154,10 @@ additional evidence and are not counted in that total.
 
 ## Verification state
 
-On 2026-09-01, the Rust fixtures contain 485 normalized checks. Go compares 474 checks
+On 2026-09-01, the Rust fixtures contain 485 normalized checks. Go compares 478 checks
 byte-for-byte; the advanced stack line and custom-platform inline-deadlock probe
-pass after the two narrow safety normalizations documented above. Four positive
-Wasm-cache and five cppgc Member/WeakMember checks remain oracle-only. The Rust oracle suites pass formatting,
+pass after the two narrow safety normalizations documented above. Five cppgc
+Member/WeakMember checks remain oracle-only. The Rust oracle suites pass formatting,
 strict Clippy and full tests; the Go suite passes
 `go test ./... -count=1`, `go vet ./...`, full race checks and benchmark smoke runs.
 `scripts/verify_windows.ps1` explicitly reruns every current conformance package.
