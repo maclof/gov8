@@ -98,6 +98,10 @@ func (i *Isolate) Close() error {
 		i.mu.Unlock()
 		return err
 	}
+	if err := inspectorInspectableIsolateCloseError(i); err != nil {
+		i.mu.Unlock()
+		return err
+	}
 	disposedHandle := i.handle
 	r1, _, _ := proc("gov8_isolate_dispose").Call(disposedHandle)
 	var fastAPICleanupErr error

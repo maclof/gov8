@@ -877,6 +877,9 @@ func ReleaseIsolateHostState(i *Isolate) error {
 	if err := inspectorIsolateCloseError(i); err != nil {
 		return err
 	}
+	if err := releaseInspectorInspectableHostState(i); err != nil {
+		return err
+	}
 	// Wasm owns callbacks that may still target this isolate. Refuse release
 	// before mutating the other host registries when a stream or asynchronous
 	// compilation is still active; otherwise clear the native binding while

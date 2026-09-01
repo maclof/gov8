@@ -395,6 +395,9 @@ func (i *Inspector) ContextDestroyed(c *Context) error {
 	if _, ok := i.contexts[c]; !ok {
 		return errors.New("gov8: inspector context was not registered")
 	}
+	if inspectorInspectableContextActive(i, c) {
+		return errors.New("gov8: Inspector Inspectable callback is active in this context")
+	}
 	if err := c.checkAssumingIsolate(); err != nil {
 		return err
 	}
@@ -464,6 +467,9 @@ func (s *InspectorSession) DispatchProtocolMessage(message InspectorStringView) 
 	if err := s.check(); err != nil {
 		return err
 	}
+	if inspectorInspectableSessionActive(s) {
+		return errors.New("gov8: cannot dispatch an Inspector protocol message during an Inspectable callback")
+	}
 	is8, p, l := message.native()
 	r, _, _ := proc("gov8_inspector_session_dispatch").Call(s.handle, is8, p, l)
 	runtime.KeepAlive(message)
@@ -475,6 +481,9 @@ func (s *InspectorSession) DispatchProtocolMessage(message InspectorStringView) 
 func (s *InspectorSession) Close() error {
 	if err := s.check(); err != nil {
 		return err
+	}
+	if inspectorInspectableSessionActive(s) {
+		return errors.New("gov8: Inspector Inspectable callback is active")
 	}
 	if err := inspectorClientCloseError(s.inspector); err != nil {
 		return err

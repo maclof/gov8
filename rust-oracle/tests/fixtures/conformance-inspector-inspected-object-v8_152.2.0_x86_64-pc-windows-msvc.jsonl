@@ -1,0 +1,6 @@
+{"check":"inspector-inspected-object/missing_invalid_index","ok":true,"value":{"missing_dollar_0":"undefined","invalid_dollar_5":"ReferenceError"}}
+{"check":"inspector-inspected-object/unadded_lifetime","ok":true,"value":{"drops_before":[],"drops_after":[-1],"get_calls":0}}
+{"check":"inspector-inspected-object/live_identity_mutation","ok":true,"value":{"first":"true,2,2","second":"2","get_calls":5,"callback_context_matches_current":true,"drops":[]}}
+{"check":"inspector-inspected-object/replacement_and_eviction","ok":true,"value":{"after_two_adds":"2,1,100","retained_newest_first":"6,5,4,3,2","beyond_buffer":"ReferenceError","evicted_drops":[1,100],"all_callback_contexts_match":true,"get_calls_by_id":[{"id":1,"calls":1},{"id":2,"calls":2},{"id":3,"calls":1},{"id":4,"calls":1},{"id":5,"calls":1},{"id":6,"calls":1}]}}
+{"check":"inspector-inspected-object/session_owns_retained_values","ok":true,"value":{"all_drops_after_session":[1,2,3,4,5,6,100],"identity_get_calls":6}}
+{"summary":{"total":5,"passed":5,"failed":0}}
