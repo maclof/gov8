@@ -326,6 +326,13 @@ func ensureInspectorDispatch() error {
 }
 
 func NewInspector(i *Isolate) (*Inspector, error) {
+	return newInspector(i, 0)
+}
+
+// newInspector installs clientID in the native client base before V8Inspector
+// construction. V8 invokes GenerateUniqueID during construction, so binding it
+// afterward is observably too late.
+func newInspector(i *Isolate, clientID uint64) (*Inspector, error) {
 	if i == nil {
 		return nil, errors.New("gov8: nil isolate")
 	}
@@ -336,7 +343,7 @@ func NewInspector(i *Isolate) (*Inspector, error) {
 		return nil, err
 	}
 	var out uintptr
-	r, _, _ := proc("gov8_inspector_create").Call(i.handleAssumingCheck(), uintptr(unsafe.Pointer(&out)))
+	r, _, _ := proc("gov8_inspector_create").Call(i.handleAssumingCheck(), uintptr(clientID), uintptr(unsafe.Pointer(&out)))
 	if int64(r) < 0 {
 		return nil, shimError("Inspector.New", r)
 	}

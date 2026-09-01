@@ -27,6 +27,11 @@ void v8_inspector__StringBuffer__DELETE(v8_inspector::StringBuffer*);
 // transport feature. Zero is success; non-zero is unrecoverable host misuse.
 int64_t gov8_isc_dispatch_client(uint64_t id, int32_t kind,
                                  int32_t context_group_id);
+uintptr_t gov8_icc_dispatch_client(uint64_t id, int32_t kind, uintptr_t a0,
+                                   uintptr_t a1, uintptr_t a2, uintptr_t a3,
+                                   uintptr_t a4, uintptr_t a5, uintptr_t a6,
+                                   uintptr_t a7, uintptr_t a8, uintptr_t a9,
+                                   uintptr_t a10);
 }
 
 namespace gov8_inspector_impl {
@@ -105,7 +110,13 @@ v8_inspector__V8Inspector__Channel__BASE__flushProtocolNotifications(
 }
 __declspec(dllexport) int64_t
 v8_inspector__V8InspectorClient__BASE__generateUniqueId(
-    v8_inspector::V8InspectorClient*) { return 0; }
+    v8_inspector::V8InspectorClient* self) {
+  auto* client = reinterpret_cast<ClientRaw*>(self);
+  return client && client->id
+             ? static_cast<int64_t>(gov8_icc_dispatch_client(
+                   client->id, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0))
+             : 0;
+}
 __declspec(dllexport) void
 v8_inspector__V8InspectorClient__BASE__runMessageLoopOnPause(
     v8_inspector::V8InspectorClient* self, int context_group_id) {
@@ -126,12 +137,35 @@ v8_inspector__V8InspectorClient__BASE__quitMessageLoopOnPause(
 }
 __declspec(dllexport) void
 v8_inspector__V8InspectorClient__BASE__runIfWaitingForDebugger(
-    v8_inspector::V8InspectorClient*, int) {}
+    v8_inspector::V8InspectorClient* self, int group) {
+  auto* client = reinterpret_cast<ClientRaw*>(self);
+  if (client && client->id &&
+      gov8_icc_dispatch_client(client->id, 1,
+                               static_cast<uintptr_t>(group), 0, 0, 0, 0, 0,
+                               0, 0, 0, 0, 0) != 0) std::abort();
+}
 __declspec(dllexport) void
 v8_inspector__V8InspectorClient__BASE__consoleAPIMessage(
-    v8_inspector::V8InspectorClient*, int, v8::Isolate::MessageErrorLevel,
-    const v8_inspector::StringView&, const v8_inspector::StringView&, unsigned,
-    unsigned, v8_inspector::V8StackTrace*) {}
+    v8_inspector::V8InspectorClient* self, int group,
+    v8::Isolate::MessageErrorLevel level,
+    const v8_inspector::StringView& message,
+    const v8_inspector::StringView& url, unsigned line, unsigned column,
+    v8_inspector::V8StackTrace* stack) {
+  auto* client = reinterpret_cast<ClientRaw*>(self);
+  if (client && client->id &&
+      gov8_icc_dispatch_client(
+          client->id, 3, static_cast<uintptr_t>(group),
+          static_cast<uintptr_t>(level), message.is8Bit() ? 1 : 0,
+          reinterpret_cast<uintptr_t>(message.is8Bit()
+                                          ? static_cast<const void*>(message.characters8())
+                                          : static_cast<const void*>(message.characters16())),
+          message.length(), url.is8Bit() ? 1 : 0,
+          reinterpret_cast<uintptr_t>(url.is8Bit()
+                                          ? static_cast<const void*>(url.characters8())
+                                          : static_cast<const void*>(url.characters16())),
+          url.length(), line, column, reinterpret_cast<uintptr_t>(stack)) != 0)
+    std::abort();
+}
 __declspec(dllexport) v8_inspector::StringBuffer*
 v8_inspector__V8InspectorClient__BASE__valueSubtype(
     v8_inspector::V8InspectorClient*, v8::Context*, v8::Value*) {
@@ -147,8 +181,18 @@ v8_inspector__V8InspectorClient__BASE__ensureDefaultContextInGroup(
     v8_inspector::V8InspectorClient*, int) { return nullptr; }
 __declspec(dllexport) v8_inspector::StringBuffer*
 v8_inspector__V8InspectorClient__BASE__resourceNameToUrl(
-    v8_inspector::V8InspectorClient*, const v8_inspector::StringView&) {
-  return nullptr;
+    v8_inspector::V8InspectorClient* self,
+    const v8_inspector::StringView& resource) {
+  auto* client = reinterpret_cast<ClientRaw*>(self);
+  if (!client || !client->id) return nullptr;
+  return reinterpret_cast<v8_inspector::StringBuffer*>(
+      gov8_icc_dispatch_client(
+          client->id, 2, resource.is8Bit() ? 1 : 0,
+          reinterpret_cast<uintptr_t>(
+              resource.is8Bit()
+                  ? static_cast<const void*>(resource.characters8())
+                  : static_cast<const void*>(resource.characters16())),
+          resource.length(), 0, 0, 0, 0, 0, 0, 0, 0));
 }
 
 __declspec(dllexport) int64_t gov8_inspector_set_channel_dispatch(void* p) {
@@ -158,6 +202,7 @@ __declspec(dllexport) int64_t gov8_inspector_set_channel_dispatch(void* p) {
   return kOk;
 }
 __declspec(dllexport) int64_t gov8_inspector_create(v8::Isolate* iso,
+                                                    uint64_t client_id,
                                                     void** out) {
   ClearErr();
   if (out) *out = nullptr;
@@ -168,6 +213,7 @@ __declspec(dllexport) int64_t gov8_inspector_create(v8::Isolate* iso,
     w->iso = iso;
     w->client = std::make_unique<ClientRaw>();
     v8_inspector__V8InspectorClient__BASE__CONSTRUCT(w->client.get());
+    w->client->id = client_id;
     w->value = v8_inspector__V8Inspector__create(
         iso, reinterpret_cast<v8_inspector::V8InspectorClient*>(w->client.get()));
     if (!w->value) return kErrGeneric;

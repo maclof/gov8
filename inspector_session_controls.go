@@ -13,12 +13,26 @@ import (
 	"unsafe"
 )
 
-// InspectorClient receives the synchronous pause-loop callbacks made by V8.
-// Implementations must not panic. A panic is an unrecoverable host-boundary
-// failure and terminates the process, matching other native callbacks.
-type InspectorClient interface {
+// InspectorClient is the optional-capability base for Inspector callbacks.
+// Implement the focused capability interfaces for callbacks of interest.
+// Callback methods must not panic; a panic terminates the process.
+type InspectorClient interface{}
+
+// InspectorRunMessageLoopOnPauseClient receives debugger pause-loop entry.
+type InspectorRunMessageLoopOnPauseClient interface {
 	RunMessageLoopOnPause(contextGroupID int32)
+}
+
+// InspectorQuitMessageLoopOnPauseClient receives debugger pause-loop exit.
+type InspectorQuitMessageLoopOnPauseClient interface {
 	QuitMessageLoopOnPause()
+}
+
+// InspectorPauseLoopClient is the convenience combination of both optional
+// pause-loop capabilities.
+type InspectorPauseLoopClient interface {
+	InspectorRunMessageLoopOnPauseClient
+	InspectorQuitMessageLoopOnPauseClient
 }
 
 type inspectorClientEntry struct {
@@ -41,7 +55,7 @@ var inspectorClients = struct {
 var inspectorClientDispatchOnce sync.Once
 var inspectorClientDispatchErr error
 
-var inspectorClientDispatch = syscall.NewCallback(func(idWord, kindWord, groupWord uintptr) uintptr {
+func inspectorClientDispatchCallback(idWord, kindWord, groupWord uintptr) uintptr {
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			fmt.Fprintf(os.Stderr, "gov8: panic in inspector client callback: %v\n", recovered)
@@ -71,19 +85,28 @@ var inspectorClientDispatch = syscall.NewCallback(func(idWord, kindWord, groupWo
 	}
 	switch int32(kindWord) {
 	case 0:
-		entry.client.RunMessageLoopOnPause(int32(groupWord))
+		if client, ok := entry.client.(InspectorRunMessageLoopOnPauseClient); ok {
+			client.RunMessageLoopOnPause(int32(groupWord))
+		}
 	case 1:
-		entry.client.QuitMessageLoopOnPause()
+		if client, ok := entry.client.(InspectorQuitMessageLoopOnPauseClient); ok {
+			client.QuitMessageLoopOnPause()
+		}
 	default:
 		fatalHostMisuse("invalid inspector client callback kind %d", kindWord)
 		return 1
 	}
 	return 0
-})
+}
+
+var inspectorClientDispatch = syscall.NewCallback(inspectorClientDispatchCallback)
 
 func ensureInspectorClientDispatch() error {
 	inspectorClientDispatchOnce.Do(func() {
 		inspectorClientDispatchErr = callErr("Inspector.ClientDispatch", proc("gov8_isc_set_client_dispatch"), inspectorClientDispatch)
+		if inspectorClientDispatchErr == nil {
+			inspectorClientDispatchErr = ensureInspectorExtendedClientDispatch()
+		}
 	})
 	return inspectorClientDispatchErr
 }
@@ -98,27 +121,29 @@ func NewInspectorWithClient(i *Isolate, client InspectorClient) (*Inspector, err
 	if err := ensureInspectorClientDispatch(); err != nil {
 		return nil, err
 	}
-	inspector, err := NewInspector(i)
-	if err != nil {
-		return nil, err
-	}
 	inspectorClients.Lock()
 	if inspectorClients.next == math.MaxUint64 {
 		inspectorClients.Unlock()
-		_ = inspector.Close()
 		return nil, errors.New("gov8: inspector client registry exhausted")
 	}
 	inspectorClients.next++
 	id := inspectorClients.next
-	entry := &inspectorClientEntry{iso: i, inspector: inspector, client: client}
+	entry := &inspectorClientEntry{iso: i, client: client}
 	inspectorClients.byID[id] = entry
-	inspectorClients.byInspector[inspector] = id
 	inspectorClients.Unlock()
-	if err := callErr("Inspector.BindClient", proc("gov8_isc_bind_client"), inspector.handle, uintptr(id)); err != nil {
-		dropInspectorClient(inspector)
-		_ = inspector.Close()
+	inspector, err := newInspector(i, id)
+	if err != nil {
+		inspectorClients.Lock()
+		if inspectorClients.byID[id] == entry {
+			delete(inspectorClients.byID, id)
+		}
+		inspectorClients.Unlock()
 		return nil, err
 	}
+	inspectorClients.Lock()
+	entry.inspector = inspector
+	inspectorClients.byInspector[inspector] = id
+	inspectorClients.Unlock()
 	return inspector, nil
 }
 
