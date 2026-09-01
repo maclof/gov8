@@ -42,22 +42,12 @@ func (e *SyntheticModuleEvaluation) SetExport(name string, value Value) error {
 	if e == nil || e.module == nil || e.scope == nil {
 		return errors.New("gov8: synthetic module evaluation is no longer active")
 	}
-	tc, err := e.module.iso.NewTryCatch()
-	if err != nil {
-		return err
-	}
-	defer tc.Close()
-	_, err = e.module.setSyntheticModuleExport(e.scope.sc, name, value, tc)
-	caught, caughtErr := tc.HasCaught()
-	if caughtErr != nil {
-		return caughtErr
-	}
-	if caught {
-		text, textErr := tc.ExceptionText(e.scope.sc, e.module.ctx)
-		if textErr != nil {
-			return textErr
-		}
-		return errors.New(text)
+	_, err := e.module.setSyntheticModuleExport(e.scope.sc, name, value, nil)
+	if shimErr, ok := err.(*ShimError); ok && shimErr.Code == errException && shimErr.Detail != "" {
+		// The callback-only native path catches the exception and reports its
+		// exact ECMAScript text. Keep the public callback error identical to
+		// the former explicit TryCatch path without three extra DLL crossings.
+		return errors.New(shimErr.Detail)
 	}
 	return err
 }
@@ -86,6 +76,15 @@ func (e *SyntheticModuleEvaluation) Throw(exception Value) error {
 type syntheticModuleEntry struct {
 	module   *Module
 	callback SyntheticModuleEvaluationCallback
+}
+
+// syntheticEvaluationState keeps the three callback-local wrappers in one
+// allocation. It is intentionally not retained by the registry: modules that
+// are created but never evaluated pay no scratch-storage cost.
+type syntheticEvaluationState struct {
+	borrowedScope Scope
+	callbackScope CallbackScope
+	evaluation    SyntheticModuleEvaluation
 }
 
 var syntheticModuleRegistry = struct {
@@ -119,17 +118,22 @@ var syntheticEvaluationDispatcher = syscall.NewCallback(
 			fatalHostMisuse("synthetic module callback lifecycle: %v", err)
 			return 0
 		}
-		borrowedScope := &Scope{iso: entry.module.iso, handle: scopeWire, borrowed: true}
-		callbackScope := &CallbackScope{
+		state := new(syntheticEvaluationState)
+		borrowedScope := &state.borrowedScope
+		*borrowedScope = Scope{iso: entry.module.iso, handle: scopeWire, borrowed: true}
+		callbackScope := &state.callbackScope
+		*callbackScope = CallbackScope{
 			iso: entry.module.iso, sc: borrowedScope, ctxWire: contextWire,
 		}
-		evaluation := &SyntheticModuleEvaluation{module: entry.module, scope: callbackScope}
+		evaluation := &state.evaluation
+		*evaluation = SyntheticModuleEvaluation{module: entry.module, scope: callbackScope}
 		entry.module.syntheticActive = true
 		defer func() {
 			entry.module.syntheticActive = false
 			evaluation.module = nil
 			evaluation.scope = nil
 			borrowedScope.closed = true
+			borrowedScope.handle = 0
 		}()
 		value, err := entry.callback(evaluation)
 		if err != nil {

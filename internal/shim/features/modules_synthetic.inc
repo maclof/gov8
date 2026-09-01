@@ -247,7 +247,22 @@ __declspec(dllexport) int64_t gov8_synthetic_set_export(
     v8::Maybe<bool> result = module->module->Get(iso)->SetSyntheticModuleExport(
         iso, name, FromWire<v8::Value>(value_wire));
     if (result.IsNothing()) {
-      SetErr("synthetic module export update failed");
+      // Callback-local SetExport deliberately omits a caller-owned TryCatch.
+      // Preserve its exact exception text in the thread-local detail while the
+      // fallback catcher is still alive, so Go can return the same error as
+      // the former create/query/destroy TryCatch sequence on the success-hot
+      // path. Calls supplying a TryCatch retain their established behavior.
+      if (fallback.used) {
+        v8::Local<v8::Value> exception = try_catch->Exception();
+        std::string text;
+        if (!exception.IsEmpty() && ValueText(iso, ctx, exception, &text)) {
+          SetErr(text.c_str());
+        } else {
+          SetErr("synthetic module export update failed");
+        }
+      } else {
+        SetErr("synthetic module export update failed");
+      }
       return kErrException;
     }
     *out = result.FromJust() ? 1 : 0;
