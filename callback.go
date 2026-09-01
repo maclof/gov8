@@ -91,7 +91,9 @@ type hostCallbackFrame struct {
 // hostCallbackInvocation keeps the two user-visible callback scope views in
 // one uniquely-owned allocation. Either pointer may be retained by user code;
 // both continue to address this invocation record after dispatch, with scope
-// invalidation making every later operation fail deterministically.
+// invalidation making every later engine-backed operation fail deterministically.
+// FunctionCallbackArguments keeps immutable Length/IsConstructCall snapshots
+// by value and routes all frame-backed access through that invalidation check.
 type hostCallbackInvocation struct {
 	scope    Scope
 	callback CallbackScope
@@ -455,7 +457,7 @@ func hostCallbackDispatch(frame *hostCallbackFrame) uintptr {
 	// deterministically unusable after the callback.
 	invocation := &hostCallbackInvocation{}
 	invocation.scope = Scope{iso: iso, handle: frame.scopeWire, borrowed: true}
-	invocation.callback = CallbackScope{iso: iso, sc: &invocation.scope, ctxWire: frame.ctxWire}
+	invocation.callback = CallbackScope{iso: iso, sc: &invocation.scope, ctxWire: frame.ctxWire, frame: frame}
 	scope := &invocation.scope
 	// Deferred functions run LIFO: the borrowed Go view is invalidated first,
 	// then the panic handler converts a recovered panic into the process abort
@@ -477,7 +479,9 @@ func hostCallbackDispatch(frame *hostCallbackFrame) uintptr {
 	cs := &invocation.callback
 	switch frame.kind {
 	case cbKindFunction:
-		entry.fn(cs, FunctionCallbackArguments{cs: cs, frame: frame},
+		entry.fn(cs, FunctionCallbackArguments{
+			cs: cs, frame: frame, shape: packFunctionCallbackArgumentShape(frame.argc, frame.flags&1 != 0),
+		},
 			ReturnValue{cs: cs, frame: frame})
 	case cbKindAccessorGet:
 		entry.get(cs, PropertyCallbackArguments{cs: cs, frame: frame},
@@ -597,6 +601,7 @@ type CallbackScope struct {
 	iso     *Isolate
 	sc      *Scope
 	ctxWire uintptr
+	frame   *hostCallbackFrame
 }
 
 // Isolate returns the isolate the callback runs on.
@@ -670,6 +675,9 @@ func (cs *CallbackScope) ToString(v Value) (string, error) {
 func (cs *CallbackScope) IntegerValue(v Value) (int64, bool, error) {
 	if err := cs.checkValue(v); err != nil {
 		return 0, false, err
+	}
+	if value, ok := cs.cachedInt32Argument(v); ok {
+		return value, true, nil
 	}
 	callbackScalarProcsOnce.Do(resolveCallbackScalarProcs)
 	result, _, _ := syscall.Syscall(callbackIntegerValueAddr, 3,
@@ -879,32 +887,73 @@ func valueWires(values []Value) []uintptr {
 	return wires
 }
 
-// FunctionCallbackArguments mirrors v8::FunctionCallbackArguments: Length is
-// the number of actually passed arguments; Get returns undefined for
-// out-of-bounds indices (matching the crate's bounds handling); This is the
-// receiver; NewTarget is the constructor function for construct calls and
-// undefined otherwise; Data is the callback data attached at creation time.
+// FunctionCallbackArguments mirrors v8::FunctionCallbackArguments. Length and
+// IsConstructCall are immutable Go-owned snapshots and remain safe to inspect
+// on a copied wrapper. Get, This, NewTarget and Data expose engine locals and
+// are valid only while the callback is running; they validate the callback's
+// borrowed Scope before reading the trampoline-owned native frame. Get returns
+// undefined for out-of-bounds indices (matching the crate's bounds handling),
+// This is the receiver, NewTarget is the constructor function for construct
+// calls and undefined otherwise, and Data is the callback data attached at
+// creation time.
 type FunctionCallbackArguments struct {
 	cs    *CallbackScope
 	frame *hostCallbackFrame
+	shape uintptr
+}
+
+// The native argc source is a non-negative C++ int. Preserve its exact
+// 32-bit representation in the low word and reserve bit 32 for construct
+// status. Length narrows through uint32 before converting to Go int, so the
+// high shape bits can never contaminate or overflow length extraction.
+const functionCallbackConstructShapeBit uintptr = 1 << 32
+
+func packFunctionCallbackArgumentShape(argc int64, construct bool) uintptr {
+	shape := uintptr(uint32(argc))
+	if construct {
+		shape |= functionCallbackConstructShapeBit
+	}
+	return shape
+}
+
+// checkedFrame validates callback lifetime and owner-thread affinity before
+// dereferencing the trampoline-owned frame. A retained argument wrapper keeps
+// its Go callback invocation alive, but the native frame was stack-owned and
+// is already gone; checking the borrowed Scope first makes that misuse fail
+// deterministically without reading stale native memory.
+func (a FunctionCallbackArguments) checkedFrame() (*hostCallbackFrame, error) {
+	if a.cs == nil {
+		return nil, fmt.Errorf("gov8: invalid callback arguments")
+	}
+	if err := a.cs.check(); err != nil {
+		return nil, err
+	}
+	if a.frame == nil {
+		return nil, fmt.Errorf("gov8: invalid callback arguments")
+	}
+	return a.frame, nil
 }
 
 // Length returns the number of actually passed arguments.
-func (a FunctionCallbackArguments) Length() int { return int(a.frame.argc) }
+func (a FunctionCallbackArguments) Length() int { return int(uint32(a.shape)) }
 
 // IsConstructCall reports whether this is a `new F(..)` construct call.
 func (a FunctionCallbackArguments) IsConstructCall() bool {
-	return a.frame.flags&1 != 0
+	return a.shape&functionCallbackConstructShapeBit != 0
 }
 
 // Get returns the argument at index i, or undefined when out of bounds.
 func (a FunctionCallbackArguments) Get(i int) (Value, error) {
-	if i < 0 || i >= int(a.frame.argc) {
+	frame, err := a.checkedFrame()
+	if err != nil {
+		return Value{}, err
+	}
+	if i < 0 || i >= int(frame.argc) {
 		return a.cs.sc.Undefined()
 	}
 	// argv points to a C array of wires laid out by the trampoline; the
 	// slice header re-types the trampoline-owned pointer for this read.
-	args := unsafe.Slice((*uintptr)(a.frame.argv), int(a.frame.argc))
+	args := unsafe.Slice((*uintptr)(frame.argv), int(frame.argc))
 	wire := args[i]
 	if wire == 0 {
 		return a.cs.sc.Undefined()
@@ -914,28 +963,40 @@ func (a FunctionCallbackArguments) Get(i int) (Value, error) {
 
 // This returns the call receiver (the created instance for construct calls).
 func (a FunctionCallbackArguments) This() (*Object, error) {
-	if a.frame.thisWire == 0 {
+	frame, err := a.checkedFrame()
+	if err != nil {
+		return nil, err
+	}
+	if frame.thisWire == 0 {
 		return nil, fmt.Errorf("gov8: callback has no receiver")
 	}
-	return &Object{a.cs.wrap(a.frame.thisWire)}, nil
+	return &Object{a.cs.wrap(frame.thisWire)}, nil
 }
 
 // NewTarget returns new.target: the constructor function for construct
 // calls, undefined for plain calls.
 func (a FunctionCallbackArguments) NewTarget() (Value, error) {
-	if a.frame.newTargetWire == 0 {
+	frame, err := a.checkedFrame()
+	if err != nil {
+		return Value{}, err
+	}
+	if frame.newTargetWire == 0 {
 		return a.cs.sc.Undefined()
 	}
-	return a.cs.wrap(a.frame.newTargetWire), nil
+	return a.cs.wrap(frame.newTargetWire), nil
 }
 
 // Data returns the callback data attached when the function (template) was
 // created; undefined when none was attached.
 func (a FunctionCallbackArguments) Data() (Value, error) {
-	if a.frame.dataWire == 0 {
+	frame, err := a.checkedFrame()
+	if err != nil {
+		return Value{}, err
+	}
+	if frame.dataWire == 0 {
 		return a.cs.sc.Undefined()
 	}
-	return a.cs.wrap(a.frame.dataWire), nil
+	return a.cs.wrap(frame.dataWire), nil
 }
 
 // PropertyCallbackArguments mirrors v8::PropertyCallbackArguments for
@@ -1052,7 +1113,42 @@ const (
 	callbackDeferredRVInt32Magic int32 = 0x47565231 // "GVR1"
 	callbackDeferredRVNone       int32 = 0
 	callbackDeferredRVInt32      int32 = 1
+	callbackInt32ArgsMagic       int32 = 0x47564131 // "GVA1"
+	callbackInt32Arg0Valid       int32 = 1 << 0
+	callbackInt32Arg1Valid       int32 = 1 << 1
 )
+
+// cachedInt32Argument returns a native positive IsInt32 snapshot only when v
+// is the exact local-handle wire captured for one of the first two function
+// arguments. Equal values in other local slots do not match. Negative type
+// results are never cached, so every conversion of a string, fractional
+// number, object, proxy, or other non-Int32 value keeps taking V8's coercive
+// path and preserves repeated conversion side effects.
+//
+// The caller must validate callback lifetime and thread affinity first: frame
+// and argv are owned by the synchronous native trampoline's stack.
+func (cs *CallbackScope) cachedInt32Argument(v Value) (int64, bool) {
+	frame := cs.frame
+	if frame == nil || frame.kind != cbKindFunction ||
+		frame.pdConfigurable != callbackInt32ArgsMagic || frame.argv == nil {
+		return 0, false
+	}
+	argc := int(frame.argc)
+	if argc <= 0 {
+		return 0, false
+	}
+	if argc > 2 {
+		argc = 2
+	}
+	argv := unsafe.Slice((*uintptr)(frame.argv), argc)
+	if frame.pdFlags&callbackInt32Arg0Valid != 0 && argv[0] == v.h {
+		return int64(frame.pdWritable), true
+	}
+	if argc > 1 && frame.pdFlags&callbackInt32Arg1Valid != 0 && argv[1] == v.h {
+		return int64(frame.pdEnumerable), true
+	}
+	return 0, false
+}
 
 func resolveCallbackScalarProcs() {
 	callbackIntegerValueAddr = proc("gov8_wctx_integer_value_direct").Addr()
@@ -1102,7 +1198,7 @@ func (rv ReturnValue) setInt32Native(frame *hostCallbackFrame, value int32) erro
 
 // materializeDeferredInt32 applies a pending function-callback integer before
 // an operation that must observe or supersede it. Non-function callbacks and
-// older ABI-41 DLLs carry no capability marker and stay on the legacy path.
+// older pre-GVR1 DLLs carry no capability marker and stay on the legacy path.
 func (rv ReturnValue) materializeDeferredInt32(frame *hostCallbackFrame) error {
 	if !deferredInt32Capable(frame) {
 		return nil

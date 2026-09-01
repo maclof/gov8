@@ -259,12 +259,15 @@ int64_t CallGoDispatcherWithScope(CallbackFrame* frame) {
 constexpr int32_t kHostFunctionDeferredRVInt32Magic = 0x47565231;  // "GVR1"
 constexpr int32_t kHostFunctionDeferredRVNone = 0;
 constexpr int32_t kHostFunctionDeferredRVInt32 = 1;
+constexpr int32_t kHostFunctionInt32ArgsMagic = 0x47564131;  // "GVA1"
+constexpr int32_t kHostFunctionInt32Arg0Valid = 1 << 0;
+constexpr int32_t kHostFunctionInt32Arg1Valid = 1 << 1;
 
 // Function callbacks may defer their overwhelmingly common terminal int32
 // result into fields that are otherwise used only by interceptor callbacks.
-// The capability marker makes this bidirectionally compatible with older
-// ABI-41 Go/DLL pairs: old Go leaves the state at zero, while new Go falls
-// back to the exported setter when an old DLL leaves the marker at zero.
+// The capability marker keeps this bidirectionally compatible with pre-GVR1
+// Go/DLL pairs: older Go leaves the state at zero, while newer Go falls back
+// to the exported setter when an older DLL leaves the marker at zero.
 int64_t CallGoFunctionDispatcherWithScope(
     CallbackFrame* frame, v8::ReturnValue<v8::Value> return_value) {
   CallbackDispatchScope callback_scope(frame->isolate, frame);
@@ -319,6 +322,12 @@ void HostFunctionTrampoline(const v8::FunctionCallbackInfo<v8::Value>& info) {
   frame.this_wire = ToWire(info.This());
   frame.new_target_wire = ToWire(info.NewTarget());
   frame.rv_word = *reinterpret_cast<uintptr_t*>(&rv);
+  // Function callbacks do not use the property-descriptor extension fields.
+  // Snapshot only positive IsInt32 results for the two common argument slots;
+  // all other values remain uncached so their coercions happen lazily and on
+  // every Go request. A separate marker keeps current-baseline ABI-42 DLLs on
+  // the native fallback path without changing the frame layout or exports.
+  frame.pd_configurable = kHostFunctionInt32ArgsMagic;
   const int argc = info.Length();
   frame.argc = argc;
   void* inline_argv[kHostFunctionInlineArgc];
@@ -330,7 +339,18 @@ void HostFunctionTrampoline(const v8::FunctionCallbackInfo<v8::Value>& info) {
       argv = heap_argv.get();
     }
     for (int i = 0; i < argc; i++) {
-      argv[i] = ToWire(info[i]);
+      const v8::Local<v8::Value> argument = info[i];
+      argv[i] = ToWire(argument);
+      if (i < 2 && argument->IsInt32()) {
+        const int32_t value = argument.As<v8::Int32>()->Value();
+        if (i == 0) {
+          frame.pd_flags |= kHostFunctionInt32Arg0Valid;
+          frame.pd_writable = value;
+        } else {
+          frame.pd_flags |= kHostFunctionInt32Arg1Valid;
+          frame.pd_enumerable = value;
+        }
+      }
     }
     frame.argv = argv;
   }
