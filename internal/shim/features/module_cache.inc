@@ -13,18 +13,8 @@ v8::Value* v8__UnboundModuleScript__GetSourceMappingURL(
     const v8::UnboundModuleScript& unbound_module_script);
 v8::Value* v8__UnboundModuleScript__GetSourceURL(
     const v8::UnboundModuleScript& unbound_module_script);
-v8::ScriptCompiler::CachedData* v8__ScriptCompiler__CachedData__NEW(
-    const uint8_t* data, int length);
 void v8__ScriptCompiler__CachedData__DELETE(
     v8::ScriptCompiler::CachedData* self);
-const v8::ScriptCompiler::CachedData*
-v8__ScriptCompiler__Source__GetCachedData(
-    const v8::ScriptCompiler::Source* source);
-void v8__ScriptCompiler__Source__CONSTRUCT(
-    void* buf, const v8::String& source_string,
-    const v8::ScriptOrigin* origin,
-    v8::ScriptCompiler::CachedData* cached_data);
-void v8__ScriptCompiler__Source__DESTRUCT(void* self);
 }
 
 constexpr uint64_t kUnboundModuleMagic =
@@ -244,31 +234,26 @@ __declspec(dllexport) int64_t gov8_module_cache_compile(
                             v8::Local<v8::Value>(), false, false, true);
     v8::ScriptCompiler::CachedData* cached = nullptr;
     if (consume != 0) {
-      cached = v8__ScriptCompiler__CachedData__NEW(
-          cache, static_cast<int>(cache_len));
+      cached = new v8::ScriptCompiler::CachedData(
+          cache, static_cast<int>(cache_len),
+          v8::ScriptCompiler::CachedData::BufferNotOwned);
       if (cached == nullptr) {
         SetErr("CachedData allocation failed");
         return kErrGeneric;
       }
     }
-    alignas(v8::ScriptCompiler::Source)
-        unsigned char source_storage[sizeof(v8::ScriptCompiler::Source)];
-    v8__ScriptCompiler__Source__CONSTRUCT(
-        source_storage, ModuleCacheDeref(source), &origin, cached);
-    auto* compiler_source =
-        reinterpret_cast<v8::ScriptCompiler::Source*>(source_storage);
+    v8::ScriptCompiler::Source compiler_source(source, origin, cached);
     v8::Local<v8::Module> module;
     const auto options = consume != 0
                              ? v8::ScriptCompiler::kConsumeCodeCache
                              : v8::ScriptCompiler::kNoCompileOptions;
     const bool compiled = v8::ScriptCompiler::CompileModule(
-                              iso, compiler_source, options,
+                              iso, &compiler_source, options,
                               v8::ScriptCompiler::kNoCacheNoReason)
                               .ToLocal(&module);
     const v8::ScriptCompiler::CachedData* consumed =
-        v8__ScriptCompiler__Source__GetCachedData(compiler_source);
+        compiler_source.GetCachedData();
     *out_rejected = consumed != nullptr && consumed->rejected ? 1 : 0;
-    v8__ScriptCompiler__Source__DESTRUCT(source_storage);
     if (!compiled) {
       SetErr("module compile failed");
       return kErrException;
@@ -333,31 +318,26 @@ __declspec(dllexport) void* gov8_module_cache_compile_local(
                             v8::Local<v8::Value>(), false, false, true);
     v8::ScriptCompiler::CachedData* cached = nullptr;
     if (consume != 0) {
-      cached = v8__ScriptCompiler__CachedData__NEW(
-          cache, static_cast<int>(cache_len));
+      cached = new v8::ScriptCompiler::CachedData(
+          cache, static_cast<int>(cache_len),
+          v8::ScriptCompiler::CachedData::BufferNotOwned);
       if (cached == nullptr) {
         SetErr("CachedData allocation failed");
         return nullptr;
       }
     }
-    alignas(v8::ScriptCompiler::Source)
-        unsigned char source_storage[sizeof(v8::ScriptCompiler::Source)];
-    v8__ScriptCompiler__Source__CONSTRUCT(
-        source_storage, ModuleCacheDeref(source), &origin, cached);
-    auto* compiler_source =
-        reinterpret_cast<v8::ScriptCompiler::Source*>(source_storage);
+    v8::ScriptCompiler::Source compiler_source(source, origin, cached);
     v8::Local<v8::Module> module;
     const auto options = consume != 0
                              ? v8::ScriptCompiler::kConsumeCodeCache
                              : v8::ScriptCompiler::kNoCompileOptions;
     const bool compiled = v8::ScriptCompiler::CompileModule(
-                              iso, compiler_source, options,
+                              iso, &compiler_source, options,
                               v8::ScriptCompiler::kNoCacheNoReason)
                               .ToLocal(&module);
     const v8::ScriptCompiler::CachedData* consumed =
-        v8__ScriptCompiler__Source__GetCachedData(compiler_source);
+        compiler_source.GetCachedData();
     *out_rejected = consumed != nullptr && consumed->rejected ? 1 : 0;
-    v8__ScriptCompiler__Source__DESTRUCT(source_storage);
     if (!compiled) {
       SetErr("module compile failed");
       return nullptr;
