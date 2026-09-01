@@ -9,6 +9,7 @@ import (
 	"os"
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"syscall"
 )
 
@@ -106,10 +107,12 @@ type customPlatformConfiguration struct {
 var selectedCustomPlatform *customPlatformConfiguration
 
 type customPlatformEntry struct {
+	id   uint64
 	impl PlatformImpl
 	mu   sync.Mutex
 	next uint64
 	work map[uint64]customPlatformWork
+	done bool
 }
 
 type customPlatformWork interface{ closeFromPlatform() }
@@ -119,6 +122,8 @@ var customPlatformRegistry = struct {
 	next    uint64
 	entries map[uint64]*customPlatformEntry
 }{entries: make(map[uint64]*customPlatformEntry)}
+
+var activeCustomPlatformEntry atomic.Pointer[customPlatformEntry]
 
 // ConfigureCustomPlatform selects a custom task dispatcher for the next
 // Initialize. The implementation is retained until DisposePlatform.
@@ -147,11 +152,14 @@ func ConfigureCustomPlatform(options CustomPlatformOptions, impl PlatformImpl) e
 	customPlatformRegistry.Lock()
 	customPlatformRegistry.next++
 	id := customPlatformRegistry.next
-	customPlatformRegistry.entries[id] = &customPlatformEntry{
+	entry := &customPlatformEntry{
+		id:   id,
 		impl: impl,
 		work: make(map[uint64]customPlatformWork),
 	}
+	customPlatformRegistry.entries[id] = entry
 	customPlatformRegistry.Unlock()
+	activeCustomPlatformEntry.Store(entry)
 	selectedCustomPlatform = &customPlatformConfiguration{
 		idle: options.IdleTaskSupport, unprotected: options.Unprotected,
 		threads: threads, id: id,
@@ -198,16 +206,31 @@ type customPlatformFrame struct {
 var customPlatformDispatcherOnce sync.Once
 var customPlatformDispatcherErr error
 var customPlatformDispatcher = syscall.NewCallback(customPlatformDispatch)
+var customPlatformTaskRunDeleteAddr uintptr
+var customPlatformTaskDeleteAddr uintptr
+var customPlatformIdleTaskRunDeleteAddr uintptr
+var customPlatformIdleTaskDeleteAddr uintptr
+var customPlatformPanicAbortAddr uintptr
 
 func ensureCustomPlatformDispatcher() error {
 	customPlatformDispatcherOnce.Do(func() {
 		customPlatformDispatcherErr = callErr("ConfigureCustomPlatform",
 			proc("gov8_pc_set_dispatcher"), customPlatformDispatcher)
+		if customPlatformDispatcherErr == nil {
+			customPlatformTaskRunDeleteAddr = proc("gov8_pc_task_run_delete").Addr()
+			customPlatformTaskDeleteAddr = proc("gov8_pc_task_delete").Addr()
+			customPlatformIdleTaskRunDeleteAddr = proc("gov8_pc_idle_task_run_delete").Addr()
+			customPlatformIdleTaskDeleteAddr = proc("gov8_pc_idle_task_delete").Addr()
+			customPlatformPanicAbortAddr = proc("gov8_host_panic_abort").Addr()
+		}
 	})
 	return customPlatformDispatcherErr
 }
 
 func lookupCustomPlatformEntry(id uint64) *customPlatformEntry {
+	if entry := activeCustomPlatformEntry.Load(); entry != nil && entry.id == id {
+		return entry
+	}
 	customPlatformRegistry.Lock()
 	entry := customPlatformRegistry.entries[id]
 	customPlatformRegistry.Unlock()
@@ -227,7 +250,7 @@ func customPlatformDispatch(frame *customPlatformFrame) uintptr {
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			fmt.Fprintf(os.Stderr, "gov8: panic in custom platform callback: %v\n", recovered)
-			proc("gov8_host_panic_abort").Call()
+			_, _, _ = syscall.Syscall(customPlatformPanicAbortAddr, 0, 0, 0, 0)
 		}
 	}()
 	isolate := PlatformIsolate(frame.isolate)
@@ -266,13 +289,17 @@ func customPlatformDispatch(frame *customPlatformFrame) uintptr {
 	return 0
 }
 
-func (entry *customPlatformEntry) add(work customPlatformWork) uint64 {
+func (entry *customPlatformEntry) add(work customPlatformWork) (uint64, bool) {
 	entry.mu.Lock()
+	if entry.done {
+		entry.mu.Unlock()
+		return 0, false
+	}
 	entry.next++
 	id := entry.next
 	entry.work[id] = work
 	entry.mu.Unlock()
-	return id
+	return id, true
 }
 
 func (entry *customPlatformEntry) remove(id uint64) {
@@ -282,12 +309,14 @@ func (entry *customPlatformEntry) remove(id uint64) {
 }
 
 func dropCustomPlatformEntry(id uint64, entry *customPlatformEntry) {
+	activeCustomPlatformEntry.CompareAndSwap(entry, nil)
 	customPlatformRegistry.Lock()
 	if customPlatformRegistry.entries[id] == entry {
 		delete(customPlatformRegistry.entries, id)
 	}
 	customPlatformRegistry.Unlock()
 	entry.mu.Lock()
+	entry.done = true
 	work := make([]customPlatformWork, 0, len(entry.work))
 	for _, item := range entry.work {
 		work = append(work, item)
@@ -306,30 +335,40 @@ func dropCustomPlatformEntry(id uint64, entry *customPlatformEntry) {
 // mutually exclusive. Close may run on any thread; Run requires the owning
 // live Isolate and therefore cannot accidentally execute on a worker thread.
 type Task struct {
-	mu             sync.Mutex
-	handle         uintptr
-	isolate        PlatformIsolate
-	entry          *customPlatformEntry
-	workID         uint64
-	finalizerArmed bool
+	mu      sync.Mutex
+	handle  atomic.Uintptr
+	isolate PlatformIsolate
+	entry   *customPlatformEntry
+	workID  uint64
 }
 
 func newPlatformTask(entry *customPlatformEntry, _ uint64, isolate PlatformIsolate, handle uintptr) *Task {
-	task := &Task{handle: handle, isolate: isolate, entry: entry}
-	task.workID = entry.add(task)
+	task := &Task{isolate: isolate, entry: entry}
+	task.handle.Store(handle)
 	return task
 }
 
 // armFinalizer is deliberately delayed until the posting callback returns.
-// Synchronously consumed tasks are the common path and remain live through
-// the callback, so installing and immediately removing a runtime finalizer
-// only adds bookkeeping. A retained task receives the same finalizer before
-// the dispatcher releases its local reference.
+// Synchronously consumed tasks are the common path and need neither retained
+// work-map bookkeeping nor a runtime finalizer. A retained task is registered
+// and armed before the dispatcher releases its local reference. entry.add
+// refuses registration after platform teardown has begun, in which case this
+// method destroys the still-owned native task itself.
 func (task *Task) armFinalizer() {
+	if task.handle.Load() == 0 {
+		return
+	}
 	task.mu.Lock()
-	if task.handle != 0 {
+	if task.handle.Load() != 0 {
+		workID, retained := task.entry.add(task)
+		if !retained {
+			handle := task.handle.Swap(0)
+			task.mu.Unlock()
+			_, _, _ = syscall.Syscall(customPlatformTaskDeleteAddr, 1, handle, 0, 0)
+			return
+		}
+		task.workID = workID
 		runtime.SetFinalizer(task, func(task *Task) { _ = task.Close() })
-		task.finalizerArmed = true
 	}
 	task.mu.Unlock()
 }
@@ -339,19 +378,18 @@ func (task *Task) take() (uintptr, error) {
 		return 0, fmt.Errorf("gov8: nil Task")
 	}
 	task.mu.Lock()
-	if task.handle == 0 {
+	if task.handle.Load() == 0 {
 		task.mu.Unlock()
 		return 0, fmt.Errorf("gov8: Task already consumed")
 	}
-	handle := task.handle
-	task.handle = 0
-	finalizerArmed := task.finalizerArmed
-	task.finalizerArmed = false
+	handle := task.handle.Swap(0)
+	workID := task.workID
+	task.workID = 0
 	task.mu.Unlock()
-	if finalizerArmed {
+	if workID != 0 {
 		runtime.SetFinalizer(task, nil)
+		task.entry.remove(workID)
 	}
-	task.entry.remove(task.workID)
 	return handle, nil
 }
 
@@ -374,7 +412,7 @@ func (task *Task) Run(isolate *Isolate) error {
 	if err != nil {
 		return err
 	}
-	r1, _, _ := syscall.Syscall(proc("gov8_pc_task_run_delete").Addr(), 1, handle, 0, 0)
+	r1, _, _ := syscall.Syscall(customPlatformTaskRunDeleteAddr, 1, handle, 0, 0)
 	if int64(r1) < 0 {
 		return shimError("Task.Run", r1)
 	}
@@ -388,7 +426,7 @@ func (task *Task) Close() error {
 	if err != nil {
 		return err
 	}
-	r1, _, _ := syscall.Syscall(proc("gov8_pc_task_delete").Addr(), 1, handle, 0, 0)
+	r1, _, _ := syscall.Syscall(customPlatformTaskDeleteAddr, 1, handle, 0, 0)
 	if int64(r1) < 0 {
 		return shimError("Task.Close", r1)
 	}
@@ -400,43 +438,51 @@ func (task *Task) closeFromPlatform() {
 		return
 	}
 	task.mu.Lock()
-	if task.handle == 0 {
+	if task.handle.Load() == 0 {
 		task.mu.Unlock()
 		return
 	}
-	handle := task.handle
-	task.handle = 0
-	finalizerArmed := task.finalizerArmed
-	task.finalizerArmed = false
+	handle := task.handle.Swap(0)
+	workID := task.workID
+	task.workID = 0
 	task.mu.Unlock()
-	if finalizerArmed {
+	if workID != 0 {
 		runtime.SetFinalizer(task, nil)
 	}
-	_, _, _ = syscall.Syscall(proc("gov8_pc_task_delete").Addr(), 1, handle, 0, 0)
+	_, _, _ = syscall.Syscall(customPlatformTaskDeleteAddr, 1, handle, 0, 0)
 }
 
 // IdleTask is a transferred V8 idle task with the same one-shot ownership and
 // affinity contract as Task.
 type IdleTask struct {
-	mu             sync.Mutex
-	handle         uintptr
-	isolate        PlatformIsolate
-	entry          *customPlatformEntry
-	workID         uint64
-	finalizerArmed bool
+	mu      sync.Mutex
+	handle  atomic.Uintptr
+	isolate PlatformIsolate
+	entry   *customPlatformEntry
+	workID  uint64
 }
 
 func newPlatformIdleTask(entry *customPlatformEntry, _ uint64, isolate PlatformIsolate, handle uintptr) *IdleTask {
-	task := &IdleTask{handle: handle, isolate: isolate, entry: entry}
-	task.workID = entry.add(task)
+	task := &IdleTask{isolate: isolate, entry: entry}
+	task.handle.Store(handle)
 	return task
 }
 
 func (task *IdleTask) armFinalizer() {
+	if task.handle.Load() == 0 {
+		return
+	}
 	task.mu.Lock()
-	if task.handle != 0 {
+	if task.handle.Load() != 0 {
+		workID, retained := task.entry.add(task)
+		if !retained {
+			handle := task.handle.Swap(0)
+			task.mu.Unlock()
+			_, _, _ = syscall.Syscall(customPlatformIdleTaskDeleteAddr, 1, handle, 0, 0)
+			return
+		}
+		task.workID = workID
 		runtime.SetFinalizer(task, func(task *IdleTask) { _ = task.Close() })
-		task.finalizerArmed = true
 	}
 	task.mu.Unlock()
 }
@@ -446,19 +492,18 @@ func (task *IdleTask) take() (uintptr, error) {
 		return 0, fmt.Errorf("gov8: nil IdleTask")
 	}
 	task.mu.Lock()
-	if task.handle == 0 {
+	if task.handle.Load() == 0 {
 		task.mu.Unlock()
 		return 0, fmt.Errorf("gov8: IdleTask already consumed")
 	}
-	handle := task.handle
-	task.handle = 0
-	finalizerArmed := task.finalizerArmed
-	task.finalizerArmed = false
+	handle := task.handle.Swap(0)
+	workID := task.workID
+	task.workID = 0
 	task.mu.Unlock()
-	if finalizerArmed {
+	if workID != 0 {
 		runtime.SetFinalizer(task, nil)
+		task.entry.remove(workID)
 	}
-	task.entry.remove(task.workID)
 	return handle, nil
 }
 
@@ -480,7 +525,7 @@ func (task *IdleTask) Run(isolate *Isolate, deadlineInSeconds float64) error {
 	if err != nil {
 		return err
 	}
-	r1, _, _ := syscall.Syscall(proc("gov8_pc_idle_task_run_delete").Addr(), 2,
+	r1, _, _ := syscall.Syscall(customPlatformIdleTaskRunDeleteAddr, 2,
 		handle, uintptr(math.Float64bits(deadlineInSeconds)), 0)
 	if int64(r1) < 0 {
 		return shimError("IdleTask.Run", r1)
@@ -494,7 +539,7 @@ func (task *IdleTask) Close() error {
 	if err != nil {
 		return err
 	}
-	r1, _, _ := syscall.Syscall(proc("gov8_pc_idle_task_delete").Addr(), 1, handle, 0, 0)
+	r1, _, _ := syscall.Syscall(customPlatformIdleTaskDeleteAddr, 1, handle, 0, 0)
 	if int64(r1) < 0 {
 		return shimError("IdleTask.Close", r1)
 	}
@@ -506,17 +551,16 @@ func (task *IdleTask) closeFromPlatform() {
 		return
 	}
 	task.mu.Lock()
-	if task.handle == 0 {
+	if task.handle.Load() == 0 {
 		task.mu.Unlock()
 		return
 	}
-	handle := task.handle
-	task.handle = 0
-	finalizerArmed := task.finalizerArmed
-	task.finalizerArmed = false
+	handle := task.handle.Swap(0)
+	workID := task.workID
+	task.workID = 0
 	task.mu.Unlock()
-	if finalizerArmed {
+	if workID != 0 {
 		runtime.SetFinalizer(task, nil)
 	}
-	_, _, _ = syscall.Syscall(proc("gov8_pc_idle_task_delete").Addr(), 1, handle, 0, 0)
+	_, _, _ = syscall.Syscall(customPlatformIdleTaskDeleteAddr, 1, handle, 0, 0)
 }

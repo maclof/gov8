@@ -34,3 +34,25 @@ remaining callback/ownership-boundary gap is still tracked as performance
 work rather than accepted parity. Complete Criterion samples and reports are
 stored in `criterion-platform-custom-2026-09-01/`; machine metadata is in
 `env-2026-09-01-DESKTOP-VJI58KR.txt`.
+
+## Retained-work follow-up
+
+A second pass defers retained-work registration and finalizer installation
+until the posting callback returns. Synchronously consumed tasks therefore
+skip both map operations, while retained tasks keep the same disposal and
+teardown guarantees. The active platform entry and consumed handle use atomic
+fast paths, and the native task exports are resolved once. Conformance,
+lifecycle, panic, race, root, and vet checks passed.
+
+Ten fresh-process three-second A/B pairs against commit `ca9fb09` produced
+baseline samples 460.0, 587.9, 492.1, 453.6, 456.1, 477.8, 456.4, 546.5,
+459.5, and 434.0 ns/op. Post-change samples were 426.6, 435.3, 387.7, 360.4,
+507.1, 392.7, 383.2, 390.7, 417.2, and 404.6 ns/op. The median improved from
+459.75 to 398.65 ns/op (13.3%), with post-change faster in nine of ten pairs;
+allocation remained 48 B/op and one allocation/op.
+
+Against the Rust confidence-interval midpoint above, the public Go path is
+still about 9.1x slower. Diagnostic direct-transition and thread-ID floors
+were approximately 47.6 ns and 51.35 ns respectively, while the native
+callback/task/delete floor remained hundreds of nanoseconds. The remaining
+allocation and callback boundary therefore remain measured performance work.
