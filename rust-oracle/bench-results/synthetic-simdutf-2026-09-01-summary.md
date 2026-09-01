@@ -96,3 +96,36 @@ from 6029 to 4929 ns/op (18.2%). The remaining gaps are about 2.9x and 3.7x
 against the Rust mean, dominated by DLL/V8 creation and the evaluation callback
 transition. Complete current Rust samples are stored in
 `criterion-synthetic-fast-2026-09-01/`.
+
+## Synthetic callback-registry follow-up
+
+Callback IDs are now allocated atomically and published only after native
+module creation succeeds. Native addresses are cached, export names are passed
+without a transient byte copy, and evaluation uses fixed-arity dispatch with
+explicit pointer-escape semantics. Ten 500 ms samples measured:
+
+| Operation | Go ns/op samples | Go B/op; allocs/op | Rust mean 95% CI |
+|---|---:|---:|---:|
+| create | 1646, 1700, 1725, 1726, 1805, 1698, 1807, 1797, 1733, 2602 | 136; 6 | 535.89-615.53 ns |
+| create, instantiate, evaluate | 4544, 4854, 5948, 5468, 8224, 7952, 6876, 5434, 5657, 5286 | 424; 14 | 1.2766-1.4200 us |
+
+The full path removes another 128 bytes and four allocations. Its timing was
+noisier and did not demonstrate a stable latency improvement over the preceding
+run, so synthetic modules remain roughly 3-4x Rust rather than being promoted
+to performance parity.
+
+## simdutf redundant-dispatch follow-up
+
+The five fixed hot exports cache raw procedure addresses. Successful fast calls
+no longer clear an error string that is only observed after a negative status,
+and base64 capacity checks use simdutf's exact scalar formulas locally instead
+of making a second runtime-selected simdutf call. All paths remain allocation
+free and the complete normal and race conformance suites pass.
+
+Ten 500 ms current-DLL samples gave median times of 275 ns for validation,
+1,203 ns for UTF-8 to UTF-16LE, 750 ns for UTF-16LE to UTF-8, 198 ns for base64
+decode, and 123 ns for base64 encode. Alternating old/new DLL runs were highly
+frequency-sensitive and showed no stable additional latency reduction. The
+current ratios therefore remain approximately 1.1-1.2x Rust for transcoding and
+1.6-2.2x for short base64 calls; this change removes redundant native work but
+does not close the Windows DLL-transition floor.

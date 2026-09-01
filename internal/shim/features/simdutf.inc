@@ -69,7 +69,6 @@ using namespace gov8_simdutf_impl;
 // call. The generic exports below remain the complete public substrate.
 __declspec(dllexport) int64_t gov8_simdutf_validate_utf8_fast(
     const char* input, size_t length) {
-  ClearErr();
   if (input == nullptr && length != 0) {
     SetErr("invalid UTF-8 validation argument");
     return kErrBadArg;
@@ -82,7 +81,6 @@ __declspec(dllexport) int64_t gov8_simdutf_validate_utf8_fast(
 __declspec(dllexport) int64_t gov8_simdutf_utf8_to_utf16le_fast(
     const char* input, size_t length, char16_t* output,
     size_t output_length) {
-  ClearErr();
   if ((input == nullptr && length != 0) ||
       (output == nullptr && output_length != 0) || output_length < length) {
     SetErr("invalid UTF-8 to UTF-16LE conversion argument");
@@ -99,7 +97,6 @@ __declspec(dllexport) int64_t gov8_simdutf_utf8_to_utf16le_fast(
 __declspec(dllexport) int64_t gov8_simdutf_utf16le_to_utf8_fast(
     const char16_t* input, size_t length, char* output,
     size_t output_length) {
-  ClearErr();
   if ((input == nullptr && length != 0) ||
       (output == nullptr && output_length != 0) ||
       length > SIZE_MAX / 3 || output_length < length * 3) {
@@ -117,7 +114,6 @@ __declspec(dllexport) int64_t gov8_simdutf_utf16le_to_utf8_fast(
 __declspec(dllexport) int64_t gov8_simdutf_base64_decode_fast(
     const char* input, size_t length, char* output, size_t output_length,
     uint64_t options, uint64_t last_chunk, int32_t* out_error) {
-  ClearErr();
   if ((input == nullptr && length != 0) ||
       (output == nullptr && output_length != 0) || out_error == nullptr ||
       options > 3 || last_chunk > 3) {
@@ -128,8 +124,18 @@ __declspec(dllexport) int64_t gov8_simdutf_base64_decode_fast(
   char empty_output = 0;
   if (input == nullptr) input = &empty_input;
   if (output == nullptr) output = &empty_output;
-  const size_t required =
-      simdutf__maximal_binary_length_from_base64(input, length);
+  // This is simdutf's scalar maximal_binary_length_from_base64 formula.
+  // Keeping the safe capacity check here avoids a second runtime-selected
+  // simdutf dispatch before the actual decode.
+  size_t padding = 0;
+  if (length > 0 && input[length - 1] == '=') {
+    padding++;
+    if (length > 1 && input[length - 2] == '=') padding++;
+  }
+  const size_t actual_length = length - padding;
+  const size_t remainder = actual_length % 4;
+  const size_t required = actual_length / 4 * 3 +
+      (remainder <= 1 ? 0 : remainder - 1);
   if (output_length < required) {
     SetErr("simdutf destination too small");
     return kErrBadArg;
@@ -143,7 +149,6 @@ __declspec(dllexport) int64_t gov8_simdutf_base64_decode_fast(
 __declspec(dllexport) int64_t gov8_simdutf_base64_encode_fast(
     const char* input, size_t length, char* output, size_t output_length,
     uint64_t options) {
-  ClearErr();
   if ((input == nullptr && length != 0) ||
       (output == nullptr && output_length != 0) || options > 3) {
     SetErr("invalid simdutf base64 encode argument");
@@ -153,7 +158,12 @@ __declspec(dllexport) int64_t gov8_simdutf_base64_encode_fast(
   char empty_output = 0;
   if (input == nullptr) input = &empty_input;
   if (output == nullptr) output = &empty_output;
-  const size_t required = simdutf__base64_length_from_binary(length, options);
+  // Values 0 and 3 use padding; 1 and 2 omit it. This is the exact simdutf
+  // base64_length_from_binary formula, kept local to avoid an extra call.
+  const bool use_padding = options == 0 || options == 3;
+  const size_t required = use_padding
+      ? (length + 2) / 3 * 4
+      : length / 3 * 4 + (length % 3 == 0 ? 0 : length % 3 + 1);
   if (output_length < required) {
     SetErr("simdutf destination too small");
     return kErrBadArg;

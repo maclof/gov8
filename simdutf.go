@@ -18,11 +18,11 @@ var (
 	simdutfConvertProc           *syscall.Proc
 	simdutfMeasureProc           *syscall.Proc
 	simdutfBase64Proc            *syscall.Proc
-	simdutfValidateUTF8FastProc  *syscall.Proc
-	simdutfUTF8ToUTF16LEFastProc *syscall.Proc
-	simdutfUTF16LEToUTF8FastProc *syscall.Proc
-	simdutfBase64DecodeFastProc  *syscall.Proc
-	simdutfBase64EncodeFastProc  *syscall.Proc
+	simdutfValidateUTF8FastAddr  uintptr
+	simdutfUTF8ToUTF16LEFastAddr uintptr
+	simdutfUTF16LEToUTF8FastAddr uintptr
+	simdutfBase64DecodeFastAddr  uintptr
+	simdutfBase64EncodeFastAddr  uintptr
 )
 
 func ensureSIMDUTFProcs() {
@@ -31,11 +31,11 @@ func ensureSIMDUTFProcs() {
 		simdutfConvertProc = proc("gov8_simdutf_convert")
 		simdutfMeasureProc = proc("gov8_simdutf_measure")
 		simdutfBase64Proc = proc("gov8_simdutf_base64")
-		simdutfValidateUTF8FastProc = proc("gov8_simdutf_validate_utf8_fast")
-		simdutfUTF8ToUTF16LEFastProc = proc("gov8_simdutf_utf8_to_utf16le_fast")
-		simdutfUTF16LEToUTF8FastProc = proc("gov8_simdutf_utf16le_to_utf8_fast")
-		simdutfBase64DecodeFastProc = proc("gov8_simdutf_base64_decode_fast")
-		simdutfBase64EncodeFastProc = proc("gov8_simdutf_base64_encode_fast")
+		simdutfValidateUTF8FastAddr = proc("gov8_simdutf_validate_utf8_fast").Addr()
+		simdutfUTF8ToUTF16LEFastAddr = proc("gov8_simdutf_utf8_to_utf16le_fast").Addr()
+		simdutfUTF16LEToUTF8FastAddr = proc("gov8_simdutf_utf16le_to_utf8_fast").Addr()
+		simdutfBase64DecodeFastAddr = proc("gov8_simdutf_base64_decode_fast").Addr()
+		simdutfBase64EncodeFastAddr = proc("gov8_simdutf_base64_encode_fast").Addr()
 	})
 }
 
@@ -156,7 +156,7 @@ func simdutfValidate(kind int32, input uintptr, length int, withErrors bool) (bo
 
 func SIMDUTFValidateUTF8(input []byte) (bool, error) {
 	ensureSIMDUTFProcs()
-	r1, _, _ := syscall.Syscall(simdutfValidateUTF8FastProc.Addr(), 2,
+	r1, _, _ := syscall.Syscall(simdutfValidateUTF8FastAddr, 2,
 		uintptr(sliceUnsafePointer(input)), uintptr(len(input)), 0)
 	runtime.KeepAlive(input)
 	if int64(r1) < 0 {
@@ -247,7 +247,7 @@ func SIMDUTFConvertUTF8ToUTF16LE(input []byte, output []uint16) (int, error) {
 		return 0, err
 	}
 	ensureSIMDUTFProcs()
-	r1, _, _ := syscall.Syscall6(simdutfUTF8ToUTF16LEFastProc.Addr(), 4,
+	r1, _, _ := syscall.Syscall6(simdutfUTF8ToUTF16LEFastAddr, 4,
 		uintptr(sliceUnsafePointer(input)), uintptr(len(input)),
 		uintptr(sliceUnsafePointer(output)), uintptr(len(output)), 0, 0)
 	runtime.KeepAlive(input)
@@ -276,7 +276,7 @@ func SIMDUTFConvertUTF16LEToUTF8(input []uint16, output []byte) (int, error) {
 		return 0, err
 	}
 	ensureSIMDUTFProcs()
-	r1, _, _ := syscall.Syscall6(simdutfUTF16LEToUTF8FastProc.Addr(), 4,
+	r1, _, _ := syscall.Syscall6(simdutfUTF16LEToUTF8FastAddr, 4,
 		uintptr(sliceUnsafePointer(input)), uintptr(len(input)),
 		uintptr(sliceUnsafePointer(output)), uintptr(len(output)), 0, 0)
 	runtime.KeepAlive(input)
@@ -418,7 +418,7 @@ func SIMDUTFBase64ToBinary(input, output []byte, options SIMDUTFBase64Options, l
 	}
 	ensureSIMDUTFProcs()
 	var code int32
-	r1, _, _ := syscall.Syscall9(simdutfBase64DecodeFastProc.Addr(), 7,
+	r1, _, _ := syscall.Syscall9(simdutfBase64DecodeFastAddr, 7,
 		uintptr(sliceUnsafePointer(input)), uintptr(len(input)),
 		uintptr(sliceUnsafePointer(output)), uintptr(len(output)),
 		uintptr(options), uintptr(last), uintptr(unsafe.Pointer(&code)), 0, 0)
@@ -453,7 +453,7 @@ func SIMDUTFBinaryToBase64(input, output []byte, options SIMDUTFBase64Options) (
 		return 0, errors.New("gov8: invalid simdutf base64 option")
 	}
 	ensureSIMDUTFProcs()
-	r1, _, _ := syscall.Syscall6(simdutfBase64EncodeFastProc.Addr(), 5,
+	r1, _, _ := syscall.Syscall6(simdutfBase64EncodeFastAddr, 5,
 		uintptr(sliceUnsafePointer(input)), uintptr(len(input)),
 		uintptr(sliceUnsafePointer(output)), uintptr(len(output)), uintptr(options), 0)
 	runtime.KeepAlive(input)
