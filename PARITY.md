@@ -14,7 +14,7 @@ characterized but the Go implementation is not integrated; **missing** means no
 production Go implementation exists. A family is not promoted merely because a
 type or stub exists.
 
-The fixtures under `rust-oracle/tests/fixtures` currently contain 413 normalized
+The fixtures under `rust-oracle/tests/fixtures` currently contain 419 normalized
 checks. Fatal and panic-boundary subprocess tests are additional evidence and are
 not counted in that total.
 
@@ -42,7 +42,7 @@ not counted in that total.
 | Snapshots and startup data | `snapshot.go`, `create_params_snapshot.go`; creation, cloning, validation, rehashability, context/data recovery, safe CreateParams composition, external-reference remapping and ownership | 15-check snapshot/handle, 3-check external-reference and 5-check snapshot-CreateParams fixtures; negative, reuse, concurrent-consumer and cross-thread tests; Go benchmarks | **partial**: safe snapshot consumer parameters and external-reference inputs are exact; embedder-owned allocator/heap inputs remain intentionally unsupported |
 | Source-text and synthetic ES modules | `module.go`, `module_cache.go`, `module_synthetic.go`, `module_advanced_residual.go`; source-text/synthetic compile-link-evaluate, phase-aware source resolution/namespaces, deferred evaluation, stalled-TLA diagnostics, import-meta, dynamic import and ShadowRealm callbacks, unbound scripts and opaque code cache | 7-check source-text, 3-check module-cache, 3-check synthetic-module and 9-check advanced residual fixtures exact in Go; callback panic, cache, fatal, lifecycle and thread/race tests; matched Rust/Go module benchmarks | **partial**: the safe executable pinned declarations are covered; dynamic-import `kDefer` callback delivery remains uncharacterized because this build exposes no stable public syntax/flag that drives it |
 | Wasm compile/stream/cache APIs | `wasm.go`, `wasm_streaming.go`, `wasm_policy_callbacks.go`; synchronous and streaming compile, caching callbacks, isolate allow/deny and async-settlement policies, movable experimental async compilation, compiled-module extraction/cross-isolate restoration, serializer transfer, trap activation, memory buffer access and predicates | 2-check core, 5-check streaming/async, 2-check policy, 4-check serializer residual and controls fixtures exact in Go; negative/panic/lifecycle/thread/race tests; matched sync compile/rehydration, policy callback and end-to-end async benchmarks | **partial**: positive serialized-cache acceptance remains |
-| Inspector and CRDTP | `inspector_transport.go`, `inspector_session_controls.go`; owned 8/16-bit strings, Inspector/context/session lifecycle, CDP dispatch, Channel callbacks, method dispatch queries, object-group release and scheduled-pause control | Function side-effect policy and 5-check session-controls fixtures exact; transport, hardened owner-lifecycle, thread/race and panic tests; Go dispatch benchmarks | **partial**: transport/evaluation and safe session controls are implemented, including opt-in pause-loop callbacks; broader customizable Client callbacks, remaining session APIs, Inspectable and CRDTP remain |
+| Inspector and CRDTP | `inspector_transport.go`, `inspector_session_controls.go`, `inspector_object_wrapping.go`; owned 8/16-bit strings, Inspector/context/session lifecycle, CDP dispatch, Channel callbacks, method dispatch queries, object-group release, scheduled-pause control and owned remote-object wrapping/unwrapping | Function side-effect policy, 5-check session-controls and 6-check object-wrapping fixtures exact; transport, hardened owner-lifecycle, thread/race and panic tests; Go dispatch benchmarks | **partial**: transport/evaluation, safe session controls and remote-object identity/lifetime are implemented; broader customizable Client callbacks, `Inspectable`, remaining session APIs and general CRDTP remain |
 | cppgc and Rust object tracing | none | none | **missing** |
 | Fast API / `CFunction` | `fast_api.go`; immutable `CTypeInfo`/`CFunctionInfo`/`CFunction` metadata, native-owned descriptor retention, `FunctionBuilder.BuildFast` and `NewFastFunctionTemplate` | 4-check descriptor, optimized execution, overload/fallback and empty-boundary fixture exact; metadata, ownership, lifecycle, thread/race tests; descriptor-construction benchmark | **partial**: caller-supplied process-lifetime native addresses are supported; arbitrary Go fast callbacks, executable `FastApiCallbackOptions`, the complete type matrix and matched fast-call benchmarks remain |
 | simdutf validation, transcoding, lengths, counts, detection and base64 | `simdutf.go`; all 43 pinned public functions plus result/options constants | 5-check full-surface fixture; destination-boundary tests; matched Rust/Go throughput benchmarks | **complete** for the pinned public simdutf module; Go converts Rust's unsafe output/precondition contracts into checked errors |
@@ -115,16 +115,23 @@ not counted in that total.
   not exposed as native fast calls. Executable `FastApiCallbackOptions` is
   rejected until its data semantics can match the slow callback, and duplicate
   public argument counts are rejected before the pinned V8 CHECK boundary.
+- Inspector `UnwrapObject` maps the returned native context to an existing
+  registered Go `Context` wrapper and copies its value into the caller's Scope;
+  it never invents a second owner. Object-ID failures preserve Inspector's
+  exact UTF-16 diagnostic in a typed error, while owned remote-object protocol
+  bytes remain usable after the session, Inspector and isolate are closed. Go
+  also rejects a non-innermost destination Scope so the copied local cannot be
+  invalidated when a nested V8 handle scope closes.
 
 ## Verification state
 
-On 2026-09-01, the Rust fixtures contain 413 normalized checks. Go compares 411 checks
+On 2026-09-01, the Rust fixtures contain 419 normalized checks. Go compares 417 checks
 byte-for-byte; the advanced stack line and custom-platform inline-deadlock probe
 pass after the two narrow safety normalizations documented above. The Rust
 oracle suites pass formatting, strict Clippy and full tests; the Go suite passes
 `go test ./... -count=1`, `go vet ./...`, full race checks and benchmark smoke runs.
 `scripts/verify_windows.ps1` explicitly reruns every current conformance package.
 
-The remaining rows are real product scope. In particular, broader Inspector,
+The remaining rows are real product scope. In particular, residual Inspector,
 cppgc and the remaining Fast API surface are
 not silently deferred.

@@ -65,11 +65,22 @@ func (s *Scope) NewEscapableScope() (*EscapableScope, error) {
 	if err != nil {
 		return nil, err
 	}
+	if !s.borrowed && !currentHandleScope(s.iso, s) {
+		// The Go API names the ordinary destination Scope even for a chain
+		// of nested EscapableScopes. V8 opens the new escapable scope under
+		// the current escapable scope and Escape is then repeated outward.
+		current, nested := currentHandleScopeToken(s.iso).(*EscapableScope)
+		if !nested || current.outer != s {
+			return nil, errors.New("gov8: scope is not the current escapable-scope destination")
+		}
+	}
 	h, err := callHandle("EscapableScope.New", proc("gov8_ca_esc_scope_enter"), s.iso.handleAssumingCheck(), sh)
 	if err != nil {
 		return nil, err
 	}
-	return &EscapableScope{iso: s.iso, outer: s, handle: h}, nil
+	escapable := &EscapableScope{iso: s.iso, outer: s, handle: h}
+	pushHandleScope(s.iso, escapable)
+	return escapable, nil
 }
 
 // check validates the escapable scope's own state after its outer scope.
@@ -127,8 +138,14 @@ func (e *EscapableScope) Close() error {
 	if err := requireInitialized(); err != nil {
 		return err
 	}
+	if !currentHandleScope(e.iso, e) {
+		return errors.New("gov8: escapable scope is not the current innermost handle scope")
+	}
 	r1, _, _ := proc("gov8_ca_esc_scope_exit").Call(e.handle)
 	e.closed = true
+	if err := popHandleScope(e.iso, e); err != nil {
+		return err
+	}
 	if int64(r1) < 0 {
 		return shimError("EscapableScope.Close", r1)
 	}

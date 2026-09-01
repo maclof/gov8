@@ -175,7 +175,7 @@ var wasmStreamingDispatcher = syscall.NewCallback(func(frame *wasmStreamingFrame
 	}
 	beginWasmCallback(entry.iso)
 	defer endWasmCallback(entry.iso)
-	borrowed := &Scope{iso: entry.iso, handle: frame.scopeWire}
+	borrowed := &Scope{iso: entry.iso, handle: frame.scopeWire, borrowed: true}
 	callbackScope := &CallbackScope{iso: entry.iso, sc: borrowed, ctxWire: frame.contextWire}
 	stream := &WasmStreaming{iso: entry.iso, handle: frame.streamHandle, state: wasmStreamingOpen}
 	wasmStreamingRegistry.Lock()
@@ -231,7 +231,7 @@ var wasmResolutionDispatcher = syscall.NewCallback(func(frame *wasmResolutionFra
 		wasmStreamingRegistry.Unlock()
 		endWasmCallback(entry.iso)
 	}()
-	borrowed := &Scope{iso: entry.iso, handle: frame.scopeWire}
+	borrowed := &Scope{iso: entry.iso, handle: frame.scopeWire, borrowed: true}
 	callbackScope := &CallbackScope{iso: entry.iso, sc: borrowed, ctxWire: frame.contextWire}
 	resolved := &WasmModuleCompilationResult{CallbackScope: callbackScope}
 	if frame.moduleWire != 0 {

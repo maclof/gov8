@@ -132,7 +132,7 @@ func withWasmPolicyCallback(iso *Isolate, entry *hostCallbackEntry, scopeWire, c
 	}
 	beginWasmCallback(iso)
 	defer endWasmCallback(iso)
-	borrowed := &Scope{iso: iso, handle: scopeWire}
+	borrowed := &Scope{iso: iso, handle: scopeWire, borrowed: true}
 	cs := &CallbackScope{iso: iso, sc: borrowed, ctxWire: contextWire}
 	defer func() {
 		borrowed.closed = true

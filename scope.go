@@ -4,6 +4,7 @@ package gov8
 
 import (
 	"fmt"
+	"sync"
 	"unsafe"
 )
 
@@ -16,7 +17,57 @@ type Scope struct {
 	iso                       *Isolate
 	handle                    uintptr
 	closed                    bool
+	borrowed                  bool
 	javascriptExecutionGuards []uintptr
+}
+
+// handleScopeStacks mirrors the user-visible HandleScope nesting that V8
+// requires. It includes ordinary and escapable scopes. Borrowed callback
+// scopes are already created as the active native scope and opt out through
+// Scope.borrowed.
+var handleScopeStacks = struct {
+	sync.Mutex
+	byIsolate map[*Isolate][]any
+}{byIsolate: make(map[*Isolate][]any)}
+
+func pushHandleScope(iso *Isolate, scope any) {
+	handleScopeStacks.Lock()
+	handleScopeStacks.byIsolate[iso] = append(handleScopeStacks.byIsolate[iso], scope)
+	handleScopeStacks.Unlock()
+}
+
+func currentHandleScope(iso *Isolate, scope any) bool {
+	handleScopeStacks.Lock()
+	stack := handleScopeStacks.byIsolate[iso]
+	current := len(stack) != 0 && stack[len(stack)-1] == scope
+	handleScopeStacks.Unlock()
+	return current
+}
+
+func currentHandleScopeToken(iso *Isolate) any {
+	handleScopeStacks.Lock()
+	defer handleScopeStacks.Unlock()
+	stack := handleScopeStacks.byIsolate[iso]
+	if len(stack) == 0 {
+		return nil
+	}
+	return stack[len(stack)-1]
+}
+
+func popHandleScope(iso *Isolate, scope any) error {
+	handleScopeStacks.Lock()
+	defer handleScopeStacks.Unlock()
+	stack := handleScopeStacks.byIsolate[iso]
+	if len(stack) == 0 || stack[len(stack)-1] != scope {
+		return fmt.Errorf("gov8: handle scope is not the current innermost scope")
+	}
+	stack = stack[:len(stack)-1]
+	if len(stack) == 0 {
+		delete(handleScopeStacks.byIsolate, iso)
+	} else {
+		handleScopeStacks.byIsolate[iso] = stack
+	}
+	return nil
 }
 
 // NewScope opens a new HandleScope on the isolate.
@@ -29,7 +80,9 @@ func (i *Isolate) NewScope() (*Scope, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Scope{iso: i, handle: sh}, nil
+	scope := &Scope{iso: i, handle: sh}
+	pushHandleScope(i, scope)
+	return scope, nil
 }
 
 // check validates the scope's own state and its isolate's thread affinity.
@@ -65,6 +118,16 @@ func (s *Scope) checkedHandleAssumingIsolate() (uintptr, error) {
 	return s.handle, nil
 }
 
+// requireCurrent rejects a live but non-innermost user scope before an API
+// allocates locals and attributes them to that scope. Borrowed callback scopes
+// are constructed around the native current scope and are trusted here.
+func (s *Scope) requireCurrent() error {
+	if s.borrowed || currentHandleScope(s.iso, s) {
+		return nil
+	}
+	return fmt.Errorf("gov8: scope is not the current innermost handle scope")
+}
+
 // Close closes the HandleScope. All Values created through this scope must
 // no longer be used afterwards.
 func (s *Scope) Close() error {
@@ -77,11 +140,17 @@ func (s *Scope) Close() error {
 	if len(s.javascriptExecutionGuards) != 0 {
 		return fmt.Errorf("gov8: scope has active JavaScript execution guards")
 	}
+	if err := s.requireCurrent(); err != nil {
+		return err
+	}
 	if err := requireInitialized(); err != nil {
 		return err
 	}
 	r1, _, _ := proc("gov8_scope_exit").Call(s.handle)
 	s.closed = true
+	if err := popHandleScope(s.iso, s); err != nil {
+		return err
+	}
 	if int64(r1) < 0 {
 		return shimError("Scope.Close", r1)
 	}

@@ -461,7 +461,10 @@ func TestGlobalUseAfterClose(t *testing.T) {
 		t.Error("double Close must fail")
 	}
 	// The isolate stays usable.
-	if _, err := iso.NewScope(); err != nil {
+	nested, err := iso.NewScope()
+	if err != nil {
 		t.Errorf("isolate unusable after global misuse: %v", err)
+	} else if err := nested.Close(); err != nil {
+		t.Errorf("close usability-probe scope: %v", err)
 	}
 }

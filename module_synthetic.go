@@ -119,7 +119,7 @@ var syntheticEvaluationDispatcher = syscall.NewCallback(
 			fatalHostMisuse("synthetic module callback lifecycle: %v", err)
 			return 0
 		}
-		borrowedScope := &Scope{iso: entry.module.iso, handle: scopeWire}
+		borrowedScope := &Scope{iso: entry.module.iso, handle: scopeWire, borrowed: true}
 		callbackScope := &CallbackScope{
 			iso: entry.module.iso, sc: borrowedScope, ctxWire: contextWire,
 		}

@@ -109,7 +109,7 @@ var moduleSourceDispatcher = syscall.NewCallback(func(id, contextWire, scopeWire
 		return 0
 	}
 	defer func() { moduleAdvancedRegistry.Lock(); entry.active--; moduleAdvancedRegistry.Unlock() }()
-	borrowed := &Scope{iso: entry.iso, handle: scopeWire}
+	borrowed := &Scope{iso: entry.iso, handle: scopeWire, borrowed: true}
 	cs := &CallbackScope{iso: entry.iso, sc: borrowed, ctxWire: contextWire}
 	defer func() { borrowed.closed = true }()
 	specifier, err := cs.ToString(cs.wrap(specifierWire))
@@ -176,7 +176,7 @@ var importMetaDispatcher = syscall.NewCallback(func(id, contextWire, scopeWire, 
 		return 0
 	}
 	defer func() { moduleAdvancedRegistry.Lock(); entry.active--; moduleAdvancedRegistry.Unlock() }()
-	borrowed := &Scope{iso: entry.iso, handle: scopeWire}
+	borrowed := &Scope{iso: entry.iso, handle: scopeWire, borrowed: true}
 	cs := &CallbackScope{iso: entry.iso, sc: borrowed, ctxWire: contextWire}
 	defer func() { borrowed.closed = true }()
 	module := moduleForLocal(entry.iso, moduleWire)
@@ -213,7 +213,7 @@ var dynamicImportDispatcher = syscall.NewCallback(func(id, contextWire, scopeWir
 		fatalHostMisuse("invalid dynamic-import phase %d", phase)
 		return 0
 	}
-	borrowed := &Scope{iso: entry.iso, handle: scopeWire}
+	borrowed := &Scope{iso: entry.iso, handle: scopeWire, borrowed: true}
 	cs := &CallbackScope{iso: entry.iso, sc: borrowed, ctxWire: contextWire}
 	defer func() { borrowed.closed = true }()
 	promise, err := entry.dynamic(DynamicImportRequest{
@@ -252,7 +252,7 @@ var shadowRealmDispatcher = syscall.NewCallback(func(id, contextWire, scopeWire,
 		return 0
 	}
 	defer func() { moduleAdvancedRegistry.Lock(); entry.active--; moduleAdvancedRegistry.Unlock() }()
-	borrowed := &Scope{iso: entry.iso, handle: scopeWire}
+	borrowed := &Scope{iso: entry.iso, handle: scopeWire, borrowed: true}
 	cs := &CallbackScope{iso: entry.iso, sc: borrowed, ctxWire: contextWire}
 	defer func() { borrowed.closed = true }()
 	ctx, err := entry.shadow(cs)

@@ -559,7 +559,7 @@ func goCHDispatch(frame *chFrame) uintptr {
 		// The trampoline handed us its own scope: values created through it
 		// stay valid until the trampoline returns (the returned wire is the
 		// result).
-		scope := &Scope{iso: entry.iso, handle: uintptr(frame.scope)}
+		scope := &Scope{iso: entry.iso, handle: uintptr(frame.scope), borrowed: true}
 		result, ok := entry.prepareStackTrace(scope,
 			Value{iso: entry.iso, sc: scope, h: frame.b},
 			Value{iso: entry.iso, sc: scope, h: frame.c})
@@ -579,7 +579,7 @@ func goCHDispatch(frame *chFrame) uintptr {
 		entry.useCounter(uint32(frame.a))
 		return 0
 	case chKindCodegen:
-		scope := &Scope{iso: entry.iso, handle: uintptr(frame.scope)}
+		scope := &Scope{iso: entry.iso, handle: uintptr(frame.scope), borrowed: true}
 		allowed, modified := entry.codegen(
 			Value{iso: entry.iso, sc: scope, h: frame.b}, frame.c != 0)
 		// Verdict protocol with the trampoline: 0 = block, 1 = allow
