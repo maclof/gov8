@@ -100,6 +100,11 @@ func BenchmarkPromiseResolverNewResolve(b *testing.B) {
 		b.Fatalf("NewScope: %v", err)
 	}
 	defer func() { _ = scope.Close() }()
+	contextScope, err := ctx.Enter()
+	if err != nil {
+		b.Fatalf("Context.Enter: %v", err)
+	}
+	defer func() { _ = contextScope.Close() }()
 
 	benchRunAssertedResolverRoundtrip(b, ctx, scope)
 
@@ -131,6 +136,11 @@ func BenchmarkPromiseResolveThenCheckpoint(b *testing.B) {
 		b.Fatalf("NewScope: %v", err)
 	}
 	defer func() { _ = scope.Close() }()
+	contextScope, err := ctx.Enter()
+	if err != nil {
+		b.Fatalf("Context.Enter: %v", err)
+	}
+	defer func() { _ = contextScope.Close() }()
 	handler, err := iso.NewFunction(scope, ctx, benchPromiseHandler, nil)
 	if err != nil {
 		b.Fatalf("NewFunction: %v", err)

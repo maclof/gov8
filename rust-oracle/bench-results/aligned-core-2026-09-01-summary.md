@@ -412,3 +412,39 @@ fixed-arity call removes both the escaping output storage and the variadic
 ABI-42 resolver median is about 7.40x; the unchanged control is about 4.52x its
 410.7 ns midpoint. No standalone NumberValue benchmark currently exists, so no
 unmatched cross-language ratio is reported.
+
+## ABI-42 Promise ContextScope harness alignment
+
+The pinned Rust harness keeps one `v8::ContextScope` entered outside its timed
+iterations. The Go harness now mirrors that ambient state with the public
+`Context.Enter` guard before handler creation and the untimed validation probe;
+the guard remains active through every iteration and closes before the outer
+HandleScope and Context. This matters most at the isolate-level microtask
+checkpoint, which otherwise has no ambient Go context. Go's context-taking
+Promise shims still open their required per-call nested context scopes, so their
+public API implementation cost remains measured rather than normalized away.
+
+Both frozen executables came from clean `5bee5a8`; the aligned executable's
+only tracked source difference was `promise_bench_test.go`. Both used ABI-42
+DLL SHA-256
+`92200BFEE71492F878E5D7EE52CCF3643CF7ECEB5E39E96D73DA3AA0ED2714D6`.
+Result-checking smoke runs completed both workloads before timing. Eight
+order-balanced, fixed-300,000-iteration pairs produced:
+
+| Workload | Old harness samples (ns/op) | Aligned samples (ns/op) | Median change | Aligned pair wins | B/op; allocs/op |
+|---|---:|---:|---:|---:|---:|
+| promise/resolver_new_resolve | 961.7, 902.6, 883.0, 985.9, 956.6, 909.5, 982.0, 926.3 | 1118, 917.8, 911.7, 908.9, 899.4, 928.5, 962.0, 919.3 | 941.45 to 918.55 (-2.4%, neutral) | 4/8 | 48; 1 |
+| promise/resolve_then_checkpoint | 1768, 1836, 1878, 1799, 2247, 1756, 1871, 1775 | 1786, 1775, 1779, 1859, 1788, 1777, 1770, 1767 | 1817.5 to 1778 (-2.2%, neutral) | 5/8 | 176; 5 |
+
+Six longer order-balanced, fixed-1,000,000-iteration pairs confirmed that the
+untimed alignment is timing-neutral and allocation-neutral:
+
+| Workload | Old harness samples (ns/op) | Aligned samples (ns/op) | Median change | Aligned pair wins | Rust midpoint ratio |
+|---|---:|---:|---:|---:|---:|
+| promise/resolver_new_resolve | 935.4, 930.7, 911.6, 960.6, 926.3, 975.2 | 967.9, 900.4, 1023, 941.9, 935.9, 925.8 | 933.05 to 938.9 (+0.6%, neutral) | 3/6 | 7.51x |
+| promise/resolve_then_checkpoint | 1946, 1812, 1803, 1828, 1883, 1849 | 1961, 1809, 1860, 1793, 1802, 1844 | 1838.5 to 1826.5 (-0.7%, neutral) | 4/6 | 4.45x |
+
+The ratios use the pinned Rust confidence-interval midpoints of 125.03 ns and
+410.7 ns. The unchanged success, settlement, result and derived-state probes
+show that entering the ambient context changes neither benchmark result
+semantics nor the measured operation boundaries.
