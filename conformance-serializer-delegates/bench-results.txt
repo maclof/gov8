@@ -1,0 +1,27 @@
+goos: windows
+goarch: amd64
+pkg: gov8
+cpu: AMD Ryzen 9 PRO 7940HS w/ Radeon 780M Graphics
+BenchmarkSerDelWritePrimitivesObject-16      	  171834	      3830 ns/op	     736 B/op	      19 allocs/op
+BenchmarkSerDelWritePrimitivesObject-16      	  140175	      3720 ns/op	     736 B/op	      19 allocs/op
+BenchmarkSerDelWritePrimitivesObject-16      	  135622	      3908 ns/op	     736 B/op	      19 allocs/op
+BenchmarkSerDelReadPrimitivesObject-16       	  300036	      1936 ns/op	     312 B/op	       9 allocs/op
+BenchmarkSerDelReadPrimitivesObject-16       	  301899	      1910 ns/op	     312 B/op	       9 allocs/op
+BenchmarkSerDelReadPrimitivesObject-16       	  277935	      2254 ns/op	     312 B/op	       9 allocs/op
+BenchmarkSerDelHostObjectWrite-16            	  128220	      3930 ns/op	     760 B/op	      21 allocs/op
+BenchmarkSerDelHostObjectWrite-16            	  140911	      3730 ns/op	     760 B/op	      21 allocs/op
+BenchmarkSerDelHostObjectWrite-16            	  168663	      4019 ns/op	     760 B/op	      21 allocs/op
+BenchmarkSerDelHostObjectRead-16             	  163190	      3401 ns/op	     528 B/op	      16 allocs/op
+BenchmarkSerDelHostObjectRead-16             	  189142	      2744 ns/op	        15.86 read-anomalies/M-iter	     528 B/op	      16 allocs/op
+BenchmarkSerDelHostObjectRead-16             	  182804	      3023 ns/op	     528 B/op	      16 allocs/op
+BenchmarkSerDelSABIDWrite-16                 	  192674	      2735 ns/op	     672 B/op	      17 allocs/op
+BenchmarkSerDelSABIDWrite-16                 	  147678	      3436 ns/op	     672 B/op	      17 allocs/op
+BenchmarkSerDelSABIDWrite-16                 	  180380	      3237 ns/op	     672 B/op	      17 allocs/op
+BenchmarkSerDelTransferTwoBuffersWrite-16    	    1534	    364213 ns/op	    1296 B/op	      40 allocs/op
+BenchmarkSerDelTransferTwoBuffersWrite-16    	    1844	    382785 ns/op	    1296 B/op	      40 allocs/op
+BenchmarkSerDelTransferTwoBuffersWrite-16    	    1488	    374244 ns/op	    1296 B/op	      40 allocs/op
+BenchmarkSerDelReleaseGrowth256KiB-16        	   17143	     41679 ns/op	  270944 B/op	      17 allocs/op
+BenchmarkSerDelReleaseGrowth256KiB-16        	   16040	     50314 ns/op	  270944 B/op	      17 allocs/op
+BenchmarkSerDelReleaseGrowth256KiB-16        	   13916	     43211 ns/op	  270944 B/op	      17 allocs/op
+PASS
+ok  	gov8	16.553s

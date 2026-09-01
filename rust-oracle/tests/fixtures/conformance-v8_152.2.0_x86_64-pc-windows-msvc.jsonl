@@ -1,0 +1,35 @@
+{"check":"platform/version_constants","ok":true,"value":{"major":15,"minor":2,"build":124,"patch":1}}
+{"check":"platform/version_string","ok":true,"value":{"version_string":"15.2.124.1-rusty","get_version":"15.2.124.1-rusty"}}
+{"check":"platform/current_platform_present","ok":true,"value":true}
+{"check":"isolate/context_script_roundtrip","ok":true,"value":{"result_string":"42","is_number":true,"number_value":42}}
+{"check":"isolate/sequential_isolates","ok":true,"value":["iso-1","iso-2","iso-3"]}
+{"check":"isolate/global_object_native_access","ok":true,"value":{"read_back_int":7,"set_result":true,"script_read":"42"}}
+{"check":"isolate/context_reports_default_microtask_queue","ok":true,"value":{"default_policy":"Auto","context_has_microtask_queue":true}}
+{"check":"values/undefined","ok":true,"value":{"is_undefined":true,"is_null_or_undefined":true,"to_string":"undefined"}}
+{"check":"values/null","ok":true,"value":{"is_null":true,"is_null_or_undefined":true,"to_string":"null"}}
+{"check":"values/booleans","ok":true,"value":{"true_is_boolean":true,"true_value":true,"true_to_string":"true","false_is_boolean":true,"false_value":false,"false_to_string":"false"}}
+{"check":"values/integers","ok":true,"value":{"negative":{"value":-42,"is_int32":true,"is_number":true,"to_string":"-42"},"unsigned_max":{"value":4294967295,"is_uint32":true,"is_int32":false,"to_string":"4294967295"}}}
+{"check":"values/number_f64","ok":true,"value":[{"value":2.5,"is_number":true,"to_string":"2.5"},{"value":-1234.5,"is_number":true,"to_string":"-1234.5"},{"value":0.5,"is_number":true,"to_string":"0.5"}]}
+{"check":"values/number_special","ok":true,"value":{"nan":{"is_nan":true,"to_string":"NaN"},"infinity":{"is_infinite":true,"to_string":"Infinity"},"neg_infinity":{"is_infinite":true,"to_string":"-Infinity"}}}
+{"check":"values/string_roundtrip","ok":true,"value":{"ascii":{"length_utf16":12,"utf8_length":12,"roundtrip":true},"unicode":{"length_utf16":13,"utf8_length":16,"roundtrip":true},"empty":{"length_utf16":0,"roundtrip":true}}}
+{"check":"values/value_to_string_conversions","ok":true,"value":{"number_1234567_125":{"expected":"1234567.125","actual":"1234567.125"},"integer_negative":{"expected":"-987654","actual":"-987654"},"boolean_false":{"expected":"false","actual":"false"},"bigint_2p53":{"expected":"9007199254740992","actual":"9007199254740992"},"string_abc":{"expected":"abc","actual":"abc"},"undefined":{"expected":"undefined","actual":"undefined"},"null":{"expected":"null","actual":"null"}}}
+{"check":"values/bigint_roundtrip","ok":true,"value":{"from_i64":{"value":-1234567890123456789,"lossless":true,"to_string":"-1234567890123456789"},"from_u64_max":{"i64_value":-1,"lossless":false,"to_string":"18446744073709551615"}}}
+{"check":"values/script_number_formatting","ok":true,"value":"0.1|0.3333333333333333|1e+21|1e-7|0|9007199254740992|100|0.5"}
+{"check":"script/arithmetic","ok":true,"value":{"value":"42","succeeded":true}}
+{"check":"script/string_concat","ok":true,"value":{"value":"gov8 1","succeeded":true}}
+{"check":"script/value_types","ok":true,"value":{"object":{"is_object":true,"json":"{\"b\":2,\"a\":1}"},"array":{"is_array":true,"is_object":true,"json":"[1,2,3]"},"function":{"is_function":true,"is_object":true}}}
+{"check":"script/script_ids_distinct_and_increasing","ok":true,"value":{"same_source_same_id":true,"different_source_different_id":true,"increasing":true}}
+{"check":"script/empty_source","ok":true,"value":{"compiles":true,"result_is_undefined":true}}
+{"check":"exceptions/syntax_error_compile_fails","ok":true,"value":{"compile_ok":false,"run_ok":false,"has_caught":true,"can_continue":true,"message":"Uncaught SyntaxError: Unexpected end of input","exception_text":"SyntaxError: Unexpected end of input","exception_is_string":false}}
+{"check":"exceptions/syntax_error_message_position","ok":true,"value":{"compile_ok":false,"start_position":19,"line_number":2,"start_column":6,"message":"Uncaught SyntaxError: Unexpected token 'const'"}}
+{"check":"exceptions/runtime_reference_error","ok":true,"value":{"compile_ok":true,"run_ok":false,"has_caught":true,"can_continue":true,"message":"Uncaught ReferenceError: missing_thing is not defined","exception_text":"ReferenceError: missing_thing is not defined","exception_is_string":false}}
+{"check":"exceptions/runtime_type_error","ok":true,"value":{"compile_ok":true,"run_ok":false,"has_caught":true,"can_continue":true,"message":"Uncaught TypeError: Cannot read properties of null (reading 'f')","exception_text":"TypeError: Cannot read properties of null (reading 'f')","exception_is_string":false}}
+{"check":"exceptions/throw_string","ok":true,"value":{"compile_ok":true,"run_ok":false,"has_caught":true,"can_continue":true,"message":"Uncaught boom","exception_text":"boom","exception_is_string":true}}
+{"check":"exceptions/throw_error_object","ok":true,"value":{"compile_ok":true,"run_ok":false,"has_caught":true,"can_continue":true,"message":"Uncaught Error: oops","exception_text":"Error: oops","exception_is_string":false}}
+{"check":"exceptions/trycatch_reset_allows_continue","ok":true,"value":{"caught_before_reset":true,"caught_after_reset":false,"exception_after_reset":"","next_script_value":"42"}}
+{"check":"microtasks/explicit_policy_ordering","ok":true,"value":{"after_run":"","after_checkpoint":"p1,p2,p3,p4,p2b,p4b","after_second_checkpoint":"p1,p2,p3,p4,p2b,p4b"}}
+{"check":"microtasks/auto_policy_ordering","ok":true,"value":{"default_policy":"Auto","after_run":"p1,p2,p3,p4,p2b,p4b","after_checkpoint":"p1,p2,p3,p4,p2b,p4b"}}
+{"check":"microtasks/native_microtask_queue","ok":true,"value":{"queue_attached":true,"after_run":"","after_checkpoint":"n1,n2","after_native_enqueue":"n1,n2,native"}}
+{"check":"platform/dispose_returns_true","ok":true,"value":true}
+{"check":"platform/dispose_platform_no_panic","ok":true,"value":true}
+{"summary":{"total":34,"passed":34,"failed":0}}

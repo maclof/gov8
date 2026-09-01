@@ -1,0 +1,134 @@
+//go:build windows && amd64
+
+// Shared harness for the conformance-core-advanced checks: the check
+// outcome type, the runtime triple, and the eval helpers. Mirrors the local
+// helpers of rust-oracle/src/bin/conformance-core-advanced.rs one for one.
+package main
+
+import (
+	gov8 "gov8"
+)
+
+// obs packages one check's expectation/observation pair, mirroring
+// rust-oracle/src/report.rs CheckOutcome.
+type obs struct {
+	id   string
+	want jsonValue
+	got  jsonValue
+}
+
+// wantGot mirrors report::expect_eq: the check passes when the canonical
+// encodings are byte-identical.
+func wantGot(id string, want, got jsonValue) obs {
+	return obs{id: id, want: want, got: got}
+}
+
+// passed reports whether the canonical encodings match.
+func (o obs) passed() bool {
+	return jsonString(o.want) == jsonString(o.got)
+}
+
+// line renders the normalized JSON-lines encoding of the outcome, exactly
+// like rust-oracle/src/report.rs CheckOutcome::to_line.
+func (o obs) line() string {
+	if o.passed() {
+		return "{\"check\":\"" + o.id + "\",\"ok\":true,\"value\":" + jsonString(o.got) + "}"
+	}
+	return "{\"check\":\"" + o.id + "\",\"ok\":false,\"expected\":" +
+		jsonString(o.want) + ",\"actual\":" + jsonString(o.got) + "}"
+}
+
+// runtime is one isolate+context+scope triple (the oracle's per-check
+// `v8::scope!` + ContextScope).
+type runtime struct {
+	iso   *gov8.Isolate
+	ctx   *gov8.Context
+	scope *gov8.Scope
+}
+
+func newRuntime(t tester) *runtime {
+	t.Helper()
+	iso, err := gov8.NewIsolate()
+	if err != nil {
+		t.Fatalf("NewIsolate: %v", err)
+	}
+	ctx, err := iso.NewContext()
+	if err != nil {
+		t.Fatalf("NewContext: %v", err)
+	}
+	scope, err := iso.NewScope()
+	if err != nil {
+		t.Fatalf("NewScope: %v", err)
+	}
+	return &runtime{iso: iso, ctx: ctx, scope: scope}
+}
+
+// close releases the runtime in dependency order.
+func (r *runtime) close(t tester) {
+	t.Helper()
+	for _, c := range []interface{ Close() error }{r.scope, r.ctx, r.iso} {
+		if err := c.Close(); err != nil {
+			t.Errorf("Close: %v", err)
+		}
+	}
+}
+
+// tc opens a fresh TryCatch on the runtime's isolate.
+func (r *runtime) tc(t tester) *gov8.TryCatch {
+	t.Helper()
+	tc, err := r.iso.NewTryCatch()
+	if err != nil {
+		t.Fatalf("NewTryCatch: %v", err)
+	}
+	return tc
+}
+
+// eval compiles and runs source in the runtime, returning the completion
+// value (ok=false on compile or runtime failure).
+func (r *runtime) eval(t tester, tc *gov8.TryCatch, source string) (gov8.Value, bool) {
+	t.Helper()
+	script, cerr := r.ctx.Compile(r.scope, source, tc)
+	if cerr != nil {
+		return gov8.Value{}, false
+	}
+	defer func() { _ = script.Close() }()
+	v, rerr := script.Run(r.scope, tc)
+	if rerr != nil {
+		return gov8.Value{}, false
+	}
+	return v, true
+}
+
+// evalInt is the oracle's eval + integer_value (None on failure).
+func (r *runtime) evalInt(t tester, tc *gov8.TryCatch, source string) (int64, bool) {
+	t.Helper()
+	v, ok := r.eval(t, tc, source)
+	if !ok {
+		return 0, false
+	}
+	n, _, err := v.IntegerValue(r.ctx)
+	if err != nil {
+		return 0, false
+	}
+	return n, true
+}
+
+// valueText is the oracle's value_text: ECMAScript ToString of a value
+// ("" on conversion failure).
+func valueText(t tester, r *runtime, v gov8.Value) string {
+	t.Helper()
+	txt, err := v.ToString(r.ctx)
+	if err != nil {
+		return ""
+	}
+	return txt
+}
+
+// tester is the subset of *testing.T used by the checks.
+type tester interface {
+	Helper()
+	Fatalf(format string, args ...interface{})
+	Fatal(args ...interface{})
+	Errorf(format string, args ...interface{})
+	Error(args ...interface{})
+}

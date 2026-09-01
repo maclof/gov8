@@ -1,0 +1,16 @@
+{"check":"snapshot/create_blob_policies","ok":true,"value":[{"len_gt_zero":true,"is_valid":true},{"len_gt_zero":true,"is_valid":true}]}
+{"check":"snapshot/startup_data_predicates","ok":true,"value":{"blob_len_gt_zero":true,"blob_is_valid":true}}
+{"check":"snapshot/default_context_create_params_roundtrip","ok":true,"value":{"a_is_7":"true","f_call":"14","f_is_function":true}}
+{"check":"snapshot/chained_roundtrip","ok":true,"value":{"second_blob_valid":true,"a":"7","b":"8"}}
+{"check":"snapshot/add_context_from_snapshot","ok":true,"value":{"index0":0,"index1":1,"marker0":"c0","marker1":"c1","oob_is_none":true,"readd_index":0}}
+{"check":"snapshot/isolate_data_once","ok":true,"value":{"int_index":0,"int_value":41,"second_read_kind":"NoData","str_index":1,"str_value":"iso-data","oob_kind":"NoData"}}
+{"check":"snapshot/context_data_once_and_badtype","ok":true,"value":{"int_value":5,"second_read_kind":"NoData","str_value":"ctx-data","bad_request_kind":"BadType","after_bad_request_kind":"NoData"}}
+{"check":"handle/global_into_raw_roundtrip","ok":true,"value":{"roundtrip_equal":true,"distinct_unequal":true}}
+{"check":"handle/global_eq_cross_isolate","ok":true,"value":{"cross_isolate_equal":false,"own_local_equal":true}}
+{"check":"handle/global_drop_after_isolate_dispose","ok":true,"value":true}
+{"check":"handle/weak_finalizer_fires_after_forced_gc","ok":true,"value":{"alive_before_gc":true,"collected_after_gc":true,"resurrect_is_none":true,"finalizer_fired":true}}
+{"check":"handle/weak_guaranteed_finalizer_runs_by_teardown","ok":true,"value":true}
+{"check":"handle/weak_drop_cancels_finalizer","ok":true,"value":true}
+{"check":"handle/weak_equality_and_clone","ok":true,"value":{"weak_equals_clone":true,"weak_equals_global":true,"to_local_some":true,"collected_empty":true,"collected_to_local_none":true,"collected_clone_empty":true,"empty_equals_empty":true}}
+{"check":"terminate/request_and_cancel_during_js","ok":true,"value":{"flag_before_request":"false","flag_after_request":"false","flag_after_abort":false,"ran_ok":false,"has_caught":true,"can_continue":false,"has_terminated":true,"cancel_ok":true,"idle_again":false,"reused_result":"42"}}
+{"summary":{"total":15,"passed":15,"failed":0}}

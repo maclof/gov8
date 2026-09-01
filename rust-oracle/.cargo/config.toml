@@ -1,0 +1,12 @@
+# Supply-chain pinning for the prebuilt V8 static library consumed by the
+# `v8` crate build script. The value is the SHA-256 of the exact `.gz` release
+# asset bytes (before decompression):
+#
+#   https://github.com/denoland/rusty_v8/releases/download/v152.2.0/
+#     rusty_v8_release_x86_64-pc-windows-msvc.lib.gz   (39,957,087 bytes)
+#   sha256: 0b17ca072bae37dd4ff00e6014d2b413becb031c9342ee11cb8226a5881f62b2
+#
+# build.rs verifies this hash on download and on cache reuse, so a build from
+# this checkout either links the pinned artifact or fails loudly.
+[env]
+RUSTY_V8_ARCHIVE_SHA256 = "0b17ca072bae37dd4ff00e6014d2b413becb031c9342ee11cb8226a5881f62b2"

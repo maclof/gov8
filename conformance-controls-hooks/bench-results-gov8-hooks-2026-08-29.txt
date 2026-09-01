@@ -1,0 +1,68 @@
+# gov8 controls/hooks benchmark raw output
+# Date: 2026-08-29
+# OS: Windows, CPU: AMD Ryzen 9 PRO 7940HS, 16 hardware threads (-16 GOMAXPROCS suffix)
+# Toolchain: go 1.26.2 (windows/amd64)
+# Engine: pinned rusty_v8 release static lib (crate v8 =152.2.0, V8 15.2.124.1-rusty)
+# Build: shim gov8_shim.dll /O2 /MT (release), go test default (release-mode benchmarks)
+# V8 flags: none beyond the module defaults; platform: new_default_platform(0, false)
+# Workloads: 1:1 with the specs pinned in rust-oracle/src/bin/conformance-controls-hooks.rs
+#   (promise_hook, message_listener, use_counter, entropy_source, codegen_callback,
+#    prepare_stack_trace, near_heap_limit_registration, memory_pressure_notification)
+# Comparison policy: each overhead benchmark has a paired No-hook variant; compare
+#   deltas per workload, distributions over the 3 counts below, never single runs.
+# Notes: MessageListener lines are interleaved with the engine's default
+#   uncaught-exception printing (V8 prints to stdout when it reports the message);
+#   separate clean runs gave ~3.9-4.0 us/op without hook vs ~4.2-4.9 us/op with hook.
+BenchmarkHookPromiseHookOverheadWithoutHook-16         	  773424	      2068 ns/op
+BenchmarkHookPromiseHookOverheadWithoutHook-16         	  525159	      3049 ns/op
+BenchmarkHookPromiseHookOverheadWithoutHook-16         	  474902	      2910 ns/op
+BenchmarkHookPromiseHookOverhead-16                    	  154020	      7315 ns/op
+BenchmarkHookPromiseHookOverhead-16                    	  176887	      7573 ns/op
+BenchmarkHookPromiseHookOverhead-16                    	  149971	      7193 ns/op
+<unknown   43449	     25350 ns/op
+<unkno   49278	     25374 ns/op
+<unknown>:0: U   55713	     24576 ns/op
+<unknown>:0: Uncaught Er   49563	     24055 ns/op
+<unknown>:0: U   48984	     24573 ns/op
+   48870	     25212 ns/op
+BenchmarkHookUseCounterOverheadWithoutHook-16          	  498547	      2152 ns/op
+BenchmarkHookUseCounterOverheadWithoutHook-16          	  640734	      2017 ns/op
+BenchmarkHookUseCounterOverheadWithoutHook-16          	  657944	      2141 ns/op
+BenchmarkHookUseCounterOverhead-16                     	  495687	      2499 ns/op
+BenchmarkHookUseCounterOverhead-16                     	  512176	      2236 ns/op
+BenchmarkHookUseCounterOverhead-16                     	  537058	      2340 ns/op
+BenchmarkHookEntropySourceOverheadDefaultEntropy-16    	    1052	   1196096 ns/op
+BenchmarkHookEntropySourceOverheadDefaultEntropy-16    	    1041	   1222386 ns/op
+BenchmarkHookEntropySourceOverheadDefaultEntropy-16    	    1051	   1164540 ns/op
+BenchmarkHookEntropySourceOverheadFixed-16             	    1015	   1192384 ns/op
+BenchmarkHookEntropySourceOverheadFixed-16             	    1080	   1227436 ns/op
+BenchmarkHookEntropySourceOverheadFixed-16             	    1126	   1209651 ns/op
+BenchmarkHookCodegenCallbackOverheadWithoutHook-16     	  828339	      2061 ns/op
+BenchmarkHookCodegenCallbackOverheadWithoutHook-16     	  915778	      2130 ns/op
+BenchmarkHookCodegenCallbackOverheadWithoutHook-16     	  825468	      1961 ns/op
+BenchmarkHookCodegenCallbackOverhead-16                	  618986	      2660 ns/op
+BenchmarkHookCodegenCallbackOverhead-16                	  432946	      2580 ns/op
+BenchmarkHookCodegenCallbackOverhead-16                	  503514	      2668 ns/op
+BenchmarkHookPrepareStackTraceOverheadJS-16            	  249298	      6251 ns/op
+BenchmarkHookPrepareStackTraceOverheadJS-16            	  228753	      5959 ns/op
+BenchmarkHookPrepareStackTraceOverheadJS-16            	  183510	      6277 ns/op
+BenchmarkHookPrepareStackTraceOverhead-16              	  174380	      6404 ns/op
+BenchmarkHookPrepareStackTraceOverhead-16              	  230436	      6673 ns/op
+BenchmarkHookPrepareStackTraceOverhead-16              	  210060	      6715 ns/op
+BenchmarkHookNearHeapLimitRegistrationWithout-16       	     990	   1131100 ns/op
+BenchmarkHookNearHeapLimitRegistrationWithout-16       	    1035	   1035811 ns/op
+BenchmarkHookNearHeapLimitRegistrationWithout-16       	    1072	   1139947 ns/op
+BenchmarkHookNearHeapLimitRegistration-16              	    1089	   1059153 ns/op
+BenchmarkHookNearHeapLimitRegistration-16              	    1038	   1162557 ns/op
+BenchmarkHookNearHeapLimitRegistration-16              	    1044	   1064568 ns/op
+BenchmarkHookMemoryPressureNotificationBaseline-16     	 9436936	       136.7 ns/op
+BenchmarkHookMemoryPressureNotificationBaseline-16     	 8879397	       129.6 ns/op
+BenchmarkHookMemoryPressureNotificationBaseline-16     	 9271177	       133.2 ns/op
+BenchmarkHookMemoryPressureNotification-16             	 4909212	       276.3 ns/op
+BenchmarkHookMemoryPressureNotification-16             	 5494293	       260.7 ns/op
+BenchmarkHookMemoryPressureNotification-16             	 5165708	       251.6 ns/op
+PASS
+ok  	gov8	71.461s
+# Appendix: message-listener clean run (separate invocation, official DLL)
+# BenchmarkHookMessageListenerOverheadWithoutHook  ~3985 ns/op (1x1s)
+# BenchmarkHookMessageListenerOverhead             ~4227-4932 ns/op (3x1s)

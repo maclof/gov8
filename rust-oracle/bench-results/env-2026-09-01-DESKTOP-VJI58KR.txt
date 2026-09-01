@@ -1,0 +1,31 @@
+=== gov8 rust-oracle benchmark environment ===
+captured_at_utc : 2026-09-01T04:43:14.0527470Z
+
+--- OS ---
+caption         : Microsoft Windows 11 Pro
+version         : 10.0.26200
+build           : 26200
+os_architecture : 64-bit
+last_boot       : 09/01/2026 04:20:42
+
+--- CPU ---
+name            : AMD Ryzen 9 PRO 7940HS w/ Radeon 780M Graphics
+cores           : 8
+logical         : 16
+max_clock_mhz   : 4001
+
+--- RAM ---
+total_gb        : 62.65
+free_gb         : 46.44
+
+--- Toolchain ---
+go              : go version go1.26.2 windows/amd64
+rustc           : rustc 1.98.0 (88d9e12ae 2026-08-18)
+cargo           : cargo 1.98.0 (797e8a9bc 2026-08-05)
+rust_target     : x86_64-pc-windows-msvc
+
+--- Pinned oracle versions ---
+v8_crate_pin    : v8 = "=152.2.0"
+v8_engine       : 15.2.124.1-rusty
+criterion_pin   : criterion = "=0.8.2"
+v8_archive_sha256 : 0b17ca072bae37dd4ff00e6014d2b413becb031c9342ee11cb8226a5881f62b2

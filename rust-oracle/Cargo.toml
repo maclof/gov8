@@ -1,0 +1,88 @@
+[package]
+name = "gov8-rust-oracle"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Executable behavioral oracle and benchmark reference for the pinned Rust v8 crate on x86_64-pc-windows-msvc"
+
+[lib]
+name = "oracle"
+path = "src/lib.rs"
+
+[[bin]]
+name = "conformance"
+path = "src/bin/conformance.rs"
+
+[[bin]]
+name = "conformance-host"
+path = "src/bin/conformance-host.rs"
+
+# Dedicated characterization executable for the Rust panic boundary of
+# native callbacks. A panic unwinds out of the crate's extern "C" callback
+# trampoline and aborts the process; the behavior is asserted out-of-process
+# by tests/callback_panic_boundary.rs, never inside the main fixture.
+[[bin]]
+name = "panic-boundary"
+path = "src/bin/panic-boundary.rs"
+
+# Promise callbacks have two distinct extern-C boundaries: the native
+# reaction handler trampoline and SetPromiseRejectCallback. Keep their panic
+# characterization out-of-process because either panic aborts the process.
+[[bin]]
+name = "promise-panic-boundary"
+path = "src/bin/promise-panic-boundary.rs"
+
+# Sole supported target: the only platform for which the pinned `v8` crate
+# ships a prebuilt static V8 library, and the platform every fixture and
+# benchmark was recorded on. Declaring the dependency for this target only
+# means an unsupported-target build fails before the V8 artifact build is
+# even attempted; src/lib.rs then emits the single authoritative
+# compile_error! naming the supported target. Keep the cfg in sync with
+# src/lib.rs.
+# Exact behavioral-reference pin. Do not loosen to a range; see README.md.
+[target.'cfg(all(target_os = "windows", target_arch = "x86_64", target_env = "msvc"))'.dependencies]
+v8 = "=152.2.0"
+
+[dev-dependencies]
+criterion = "=0.8.2"
+
+[[bench]]
+name = "startup"
+path = "benches/startup.rs"
+harness = false
+
+[[bench]]
+name = "script"
+path = "benches/script.rs"
+harness = false
+
+[[bench]]
+name = "callback"
+path = "benches/callback.rs"
+harness = false
+
+[[bench]]
+name = "promise"
+path = "benches/promise.rs"
+harness = false
+
+[[bench]]
+name = "module"
+path = "benches/module.rs"
+harness = false
+
+[[bench]]
+name = "function"
+path = "benches/function.rs"
+harness = false
+
+[[bench]]
+name = "module_cache"
+path = "benches/module_cache.rs"
+harness = false
+
+[profile.dev.package.v8]
+# The V8 engine itself is always the prebuilt release static library on
+# Windows; optimizing the thin Rust binding layer only speeds up test and
+# benchmark iteration and does not change observable behavior.
+opt-level = 1

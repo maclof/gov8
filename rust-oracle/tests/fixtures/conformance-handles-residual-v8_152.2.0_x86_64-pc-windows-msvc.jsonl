@@ -1,0 +1,9 @@
+{"check":"handles-residual/eternal/empty_set_clear_reuse","ok":true,"value":{"initial_empty":true,"initial_get_none":true,"after_set_empty":false,"first_identity":true,"after_clear_empty":true,"after_clear_get_none":true,"second_text":"second","final_empty":true}}
+{"check":"handles-residual/eternal/object_across_scopes_gc","ok":true,"value":{"marker":"alive","repeated_get_identity":true,"empty_after_clear":true}}
+{"check":"handles-residual/eternal/cross_context_realm","ok":true,"value":{"identity_preserved":true,"instance_of_second_context_object":false}}
+{"check":"handles-residual/eternal/cleared_after_isolate_lifecycle","ok":true,"value":{"empty_after_isolate":true,"clear_after_isolate_safe":true}}
+{"check":"handles-residual/traced/empty_reset_reuse","ok":true,"value":{"initial_get_none":true,"first_value":11,"after_reset_none":true,"second_value":"reused","final_get_none":true}}
+{"check":"handles-residual/traced/object_identity_mutation","ok":true,"value":{"identity":true,"mutation_visible":"42","reset_get_none":true}}
+{"check":"handles-residual/traced/cross_context_realm","ok":true,"value":{"identity_preserved":true,"instance_of_second_context_object":false}}
+{"check":"handles-residual/traced/externally_rooted_gc","ok":true,"value":{"available_after_gc":true,"same_as_eternal_root":true,"marker":"yes","reset_before_unroot":true}}
+{"summary":{"total":8,"passed":8,"failed":0}}

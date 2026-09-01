@@ -1,0 +1,32 @@
+warning: linker stdout: LINK : warning LNK4098: defaultlib 'libcmt.lib' conflicts with use of other libs; use /NODEFAULTLIB:library
+  |
+  = note: `#[warn(linker_messages)]` on by default
+
+warning: `gov8-rust-oracle` (bench "promise") generated 1 warning
+warning: `gov8-rust-oracle` (bin "panic-boundary") generated 1 warning (1 duplicate)
+warning: `gov8-rust-oracle` (bin "conformance-buffers") generated 1 warning (1 duplicate)
+warning: `gov8-rust-oracle` (bin "conformance-host") generated 1 warning (1 duplicate)
+warning: `gov8-rust-oracle` (bin "conformance-snapshots") generated 1 warning (1 duplicate)
+warning: `gov8-rust-oracle` (bin "conformance") generated 1 warning (1 duplicate)
+    Finished `bench` profile [optimized] target(s) in 0.70s
+     Running benches\promise.rs (target\release\deps\promise-6a26594ed587549a.exe)
+Gnuplot not found, using plotters backend
+# oracle bench env: os=windows arch=x86_64 logical_cpus=16 build_profile=release v8_version_string=15.2.124.1-rusty v8_get_version=15.2.124.1-rusty
+Benchmarking promise/resolver_new_resolve
+Benchmarking promise/resolver_new_resolve: Warming up for 1.0000 s
+Benchmarking promise/resolver_new_resolve: Collecting 50 samples in estimated 3.0002 s (9.6M iterations)
+Benchmarking promise/resolver_new_resolve: Analyzing
+promise/resolver_new_resolve
+                        time:   [364.60 ns 390.87 ns 416.41 ns]
+Found 1 outliers among 50 measurements (2.00%)
+  1 (2.00%) high mild
+
+# oracle bench env: os=windows arch=x86_64 logical_cpus=16 build_profile=release v8_version_string=15.2.124.1-rusty v8_get_version=15.2.124.1-rusty
+Benchmarking promise/resolve_then_checkpoint
+Benchmarking promise/resolve_then_checkpoint: Warming up for 1.0000 s
+Benchmarking promise/resolve_then_checkpoint: Collecting 50 samples in estimated 3.0009 s (3.1M iterations)
+Benchmarking promise/resolve_then_checkpoint: Analyzing
+promise/resolve_then_checkpoint
+                        time:   [880.62 ns 915.27 ns 957.63 ns]
+Found 3 outliers among 50 measurements (6.00%)
+  3 (6.00%) high mild

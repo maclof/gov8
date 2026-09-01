@@ -1,0 +1,40 @@
+warning: linker stdout: LINK : warning LNK4098: defaultlib 'libcmt.lib' conflicts with use of other libs; use /NODEFAULTLIB:library
+  |
+  = note: `#[warn(linker_messages)]` on by default
+
+warning: `gov8-rust-oracle` (bin "panic-boundary") generated 1 warning
+warning: `gov8-rust-oracle` (bin "conformance-snapshots") generated 1 warning (1 duplicate)
+warning: `gov8-rust-oracle` (bench "callback") generated 1 warning (1 duplicate)
+warning: `gov8-rust-oracle` (bin "conformance-buffers") generated 1 warning (1 duplicate)
+warning: `gov8-rust-oracle` (bin "conformance") generated 1 warning (1 duplicate)
+warning: `gov8-rust-oracle` (bin "conformance-host") generated 1 warning (1 duplicate)
+    Finished `bench` profile [optimized] target(s) in 0.74s
+     Running benches\callback.rs (target\release\deps\callback-989baf60c89cd584.exe)
+Gnuplot not found, using plotters backend
+# oracle bench env: os=windows arch=x86_64 logical_cpus=16 build_profile=release v8_version_string=15.2.124.1-rusty v8_get_version=15.2.124.1-rusty
+Benchmarking callback/native_call_from_js
+Benchmarking callback/native_call_from_js: Warming up for 1.0000 s
+Benchmarking callback/native_call_from_js: Collecting 50 samples in estimated 3.0002 s (8.6M iterations)
+Benchmarking callback/native_call_from_js: Analyzing
+callback/native_call_from_js
+                        time:   [343.40 ns 360.00 ns 376.09 ns]
+
+# oracle bench env: os=windows arch=x86_64 logical_cpus=16 build_profile=release v8_version_string=15.2.124.1-rusty v8_get_version=15.2.124.1-rusty
+Benchmarking callback/native_call_from_rust
+Benchmarking callback/native_call_from_rust: Warming up for 1.0000 s
+Benchmarking callback/native_call_from_rust: Collecting 50 samples in estimated 3.0000 s (9.8M iterations)
+Benchmarking callback/native_call_from_rust: Analyzing
+callback/native_call_from_rust
+                        time:   [280.03 ns 298.05 ns 317.92 ns]
+Found 4 outliers among 50 measurements (8.00%)
+  4 (8.00%) high mild
+
+# oracle bench env: os=windows arch=x86_64 logical_cpus=16 build_profile=release v8_version_string=15.2.124.1-rusty v8_get_version=15.2.124.1-rusty
+Benchmarking callback/function_new_call
+Benchmarking callback/function_new_call: Warming up for 1.0000 s
+Benchmarking callback/function_new_call: Collecting 50 samples in estimated 3.0020 s (1.3M iterations)
+Benchmarking callback/function_new_call: Analyzing
+callback/function_new_call
+                        time:   [2.0525 µs 2.1857 µs 2.3381 µs]
+Found 2 outliers among 50 measurements (4.00%)
+  2 (4.00%) high mild

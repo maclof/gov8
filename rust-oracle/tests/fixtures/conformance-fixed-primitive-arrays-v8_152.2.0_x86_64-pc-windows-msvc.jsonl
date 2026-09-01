@@ -1,0 +1,7 @@
+{"check":"fixed-primitive-arrays/primitive_empty_and_defaults","ok":true,"value":{"empty_length":0,"default_length":3,"default_kinds":["undefined","undefined","undefined"]}}
+{"check":"fixed-primitive-arrays/primitive_supported_kinds","ok":true,"value":{"length":8,"values":[{"kind":"undefined","text":"undefined"},{"kind":"null","text":"null"},{"kind":"boolean","text":"true"},{"kind":"string","text":"hello"},{"kind":"symbol","text":"token"},{"kind":"number","text":"2.5"},{"kind":"number","text":"-7"},{"kind":"bigint","text":"9007199254740993"}],"symbol_identity":true}}
+{"check":"fixed-primitive-arrays/primitive_overwrite_and_context_independence","ok":true,"value":{"length":2,"first_slot":"from-first-context","overwritten_slot":"2"}}
+{"check":"fixed-primitive-arrays/primitive_length_conversion","ok":true,"value":{"requested_zero":4294967296,"observed_zero":0,"requested_one":4294967297,"observed_one":1,"wrapped_slot_default":"undefined"}}
+{"check":"fixed-primitive-arrays/fixed_empty_and_safe_bounds","ok":true,"value":{"is_fixed_array":true,"length":0,"get_zero_none":true,"get_usize_max_none":true}}
+{"check":"fixed-primitive-arrays/fixed_data_kinds","ok":true,"value":{"request_count":1,"request_is_module_request":true,"request_is_primitive":false,"attributes_is_fixed_array":true,"attribute_length":3,"attribute_kinds":["string","string","number"],"attribute_values":["kind","fixture","39"],"request_at_count_none":true,"attribute_at_count_none":true}}
+{"summary":{"total":6,"passed":6,"failed":0}}

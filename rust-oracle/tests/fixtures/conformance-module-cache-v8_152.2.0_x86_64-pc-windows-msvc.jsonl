@@ -1,0 +1,4 @@
+{"check":"module-cache/unbound_metadata_and_repeated_cache","ok":true,"value":{"source_url":"virtual.mjs","source_mapping_url":"virtual.map","cache_non_empty":true,"repeated_same_length":true,"repeated_same_bytes":true}}
+{"check":"module-cache/cross_isolate_roundtrip","ok":true,"value":{"producer_dropped":true,"cache_rejected":false,"linked":true,"evaluated":true,"answer":42}}
+{"check":"module-cache/changed_origin","ok":true,"value":{"cache_rejected":false,"source_url":"virtual.mjs"}}
+{"summary":{"total":3,"passed":3,"failed":0}}

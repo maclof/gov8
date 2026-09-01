@@ -1,0 +1,55 @@
+=== gov8 rust-oracle benchmark environment ===
+captured_at_utc : 2026-08-28T08:12:25.9698123Z
+
+--- OS ---
+caption         : Microsoft Windows 11 Pro
+version         : 10.0.26200
+build           : 26200
+os_architecture : 64-bit
+last_boot       : 08/25/2026 08:04:25
+
+--- CPU ---
+name            : AMD Ryzen 9 PRO 7940HS w/ Radeon 780M Graphics
+cores           : 8
+logical         : 16
+max_clock_mhz   : 4001
+
+--- RAM ---
+total_gb        : 62.65
+free_gb         : 10.79
+
+--- Toolchain ---
+rustc           : rustc 1.98.0 (88d9e12ae 2026-08-18)
+cargo           : cargo 1.98.0 (797e8a9bc 2026-08-05)
+rustup_show     :
+  Default host: x86_64-pc-windows-msvc
+  rustup home:  C:\Users\Administrator\.rustup
+
+  installed toolchains
+  --------------------
+  stable-x86_64-pc-windows-msvc (default)
+  1.98.0-x86_64-pc-windows-msvc (active)
+
+  active toolchain
+  ----------------
+  name: 1.98.0-x86_64-pc-windows-msvc
+  active because: overridden by 'C:\Users\Administrator\IdeaProjects\gov8\rust-oracle\rust-toolchain.toml'
+  installed targets:
+    x86_64-pc-windows-msvc
+
+--- Pinned oracle versions ---
+v8_crate_pin    : v8 = "=152.2.0"
+criterion_pin   : criterion = "=0.8.2"
+cargo_config    :
+  # Supply-chain pinning for the prebuilt V8 static library consumed by the
+  # `v8` crate build script. The value is the SHA-256 of the exact `.gz` release
+  # asset bytes (before decompression):
+  #
+  #   https://github.com/denoland/rusty_v8/releases/download/v152.2.0/
+  #     rusty_v8_release_x86_64-pc-windows-msvc.lib.gz   (39,957,087 bytes)
+  #   sha256: 0b17ca072bae37dd4ff00e6014d2b413becb031c9342ee11cb8226a5881f62b2
+  #
+  # build.rs verifies this hash on download and on cache reuse, so a build from
+  # this checkout either links the pinned artifact or fails loudly.
+  [env]
+  RUSTY_V8_ARCHIVE_SHA256 = "0b17ca072bae37dd4ff00e6014d2b413becb031c9342ee11cb8226a5881f62b2"
