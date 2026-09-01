@@ -12,26 +12,27 @@ and constants, fields, enum variants and trait members are included.
 
 | Classification | Declarations | Percent |
 |---|---:|---:|
-| Matched Go equivalent or documented semantic shape | 1,676 | 90.2% |
-| Partial behavior or evidence | 21 | 1.1% |
-| Missing executable surface | 7 | 0.4% |
+| Matched Go equivalent or documented semantic shape | 1,694 | 91.2% |
+| Partial language-shape difference with safe behavioral equivalent | 10 | 0.5% |
+| Missing executable surface | 0 | 0.0% |
 | Unsafe or intentionally unsupported Rust ownership shape | 154 | 8.3% |
 | Ambiguous pending exact executable evidence | 0 | 0.0% |
 | Total | 1,858 | 100% |
 
-The confirmed executable remainder is 28 declarations. There is no remaining
-ambiguous bucket. The 154 intentionally unsupported declarations are not
-implementation backlog unless the project
-chooses a comparably safe Go abstraction.
+The confirmed executable declaration remainder is zero. There is no remaining
+ambiguous bucket. The ten partial declarations have safe behavioral Go
+equivalents but not literal Rust borrowed/generic API shapes. The 154
+intentionally unsupported declarations are not implementation backlog unless
+the project chooses a comparably safe Go abstraction.
 
 ## Source-family inventory
 
 | Rust source family | Public declarations | Current mapping |
 |---|---:|---|
 | `V8.rs` | 16 | Lifecycle, flags, version and process hooks matched; raw platform-handle shape hidden |
-| `platform.rs` | 21 | Platforms and task pumping matched; shutdown-notification shape and dispatch overhead remain |
+| `platform.rs` | 21 | Platforms, transferred task dispatch, pumping and matched custom-dispatch benchmark covered |
 | `isolate.rs` | 212 | Safe surface broadly matched; raw pointers, explicit enter/exit and ownership machinery hidden |
-| `isolate_create_params.rs` | 22 | Safe fields plus allocator/cppgc transfer matched; raw stack input remains |
+| `isolate_create_params.rs` | 22 | Safe fields and snapshot/allocator/cppgc composition matched; raw stack-pointer input intentionally hidden |
 | `locker.rs` | 5 | Matched |
 | `scope.rs` | 86 | Safe scopes/TryCatch/guards matched; Rust pinning and unsafe lifetime machinery hidden |
 | `handle.rs` | 38 | Managed handles matched; raw `Local`/`SealedLocal` and unchecked casts hidden |
@@ -43,11 +44,11 @@ chooses a comparably safe Go abstraction.
 | `array_buffer.rs` | 14 | Buffer behavior and safe allocator ownership matched; raw generic vtable fields remain intentionally hidden |
 | `function.rs` and `template.rs` | 140 | Normal callbacks/templates matched; Fast API tracked separately |
 | Script/compiler/module families | 80 | Safe surface matched, including dynamic-import `kDefer` delivery |
-| Promise and snapshot families | 19 | Safe behavior matched; allocator and custom-heap/snapshot composition gaps live under CreateParams |
+| Promise and snapshot families | 19 | Safe behavior matched, including allocator and custom-heap snapshot composition |
 | Serializer/deserializer | 40 | Matched |
 | `wasm.rs` | 28 | Safe executable surface matched, including positive serialized-cache behavior |
 | `inspector.rs` and `crdtp.rs` | 146 | Safe owned/closed surface matched; raw boxed/vtable representations hidden |
-| `cppgc.rs` | 60 | Persistent handles, safe member operations and custom heaps matched; generic tracing/type shapes and cells remain |
+| `cppgc.rs` | 60 | Safe executable behavior matched, including copied generic cells, tracing/name callbacks, owner-mediated members, persistent handles and custom heaps; ten literal borrowed/generic shapes remain partial |
 | `fast_api.rs` | 75 | Descriptor, constructor and flag execution matched; callback-local borrowed ABI shapes are intentionally unsupported |
 | `simdutf.rs`, `icu.rs` and `json.rs` | 83 | Matched |
 | `external_references.rs` | 16 | Matched for the supported native-address shape |
@@ -57,13 +58,26 @@ Some related low-count files are grouped above. These rustdoc-family figures
 precede manual macro/type-alias reconciliation; the classified 1,858-item
 denominator above is authoritative.
 
-## Confirmed residual clusters
+## Confirmed residual language-shape differences
 
-1. Generic cppgc `Member`/`WeakMember` type shapes, `GcCell`,
-   `GarbageCollected`, `Visitor`, `Traced` and allocation.
-The Fast API residual oracle resolved the former ambiguous and partial buckets.
-Six callback-local native/borrowed-pointer items are explicitly classified as
-unsafe or intentionally unsupported.
+No executable declaration remains missing. The ten partial declarations are:
+
+1. `cppgc::Visitor` and `Visitor::trace`: Rust exposes a callback-borrowed GC
+   visitor; Go keeps visitation native and exposes declarative traced edges.
+2. `cppgc::Traced` and `Traced::trace`: Rust's freely implementable generic
+   trait maps to native tracing of the Go facade's configured members.
+3. `cppgc::InternalFieldIndex`: Rust exposes the raw alias; Go uses the fixed
+   native API-wrapper field contract.
+4. `cppgc::UnsafePtr<T>`, `UnsafePtr::new` and `UnsafePtr::as_ref`: Go never
+   exposes an unrooted raw cppgc pointer or unchecked borrowed reference.
+5. Generic `cppgc::Member<T>` and `cppgc::WeakMember<T>` types: Go provides
+   owner-mediated strong and weak member operations instead of freely
+   composable fields.
+
+These are literal API-shape differences, not unimplemented safe behavior. The
+Fast API residual oracle resolved its former ambiguous and partial buckets; six
+callback-local native/borrowed-pointer Fast API items are classified as unsafe
+or intentionally unsupported.
 
 ## Reproduction
 

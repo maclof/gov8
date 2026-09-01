@@ -162,15 +162,18 @@ inspected-object history, Inspector idle/async-task lifecycle, owned Inspector
 stack traces, exception reporting, Inspector client callbacks, CRDTP core
 values, serialization and synchronous dispatch, ArrayBuffer allocator
 ownership, cppgc object wrapping with traced targets, strong/weak cppgc
-persistent handles, and custom cppgc heap ownership and process lifecycle. The
-Rust fixtures contain 517 normalized checks: 508 compare byte-for-byte with Go
-and two have narrowly documented safety normalizations; seven generic cppgc
-checks await Go conformance coverage.
+persistent handles, custom cppgc heap ownership and process lifecycle, generic
+copied cells and owner-mediated member graphs, and snapshot composition with
+callback-backed ArrayBuffer allocators and custom cppgc heaps. The Rust fixtures
+contain 519 normalized checks: 517 compare byte-for-byte with Go and two have
+narrowly documented safety normalizations; none is oracle-only.
 Separate fatal and panic-boundary subprocess tests cover unsafe lifecycle and
 callback edges.
 
-This is still not a feature-complete rusty_v8 binding. Major remaining families
-include residual unsafe CreateParams combinations and the generic cppgc object
-model. The
-authoritative gaps and intentional API-shape differences are tracked in
+All audited safe executable pinned behavior is covered, but this is not a claim
+of literal Rust API-shape parity. Ten callback-borrowed or generic cppgc
+declarations use intentional safe Go equivalents, and 154 unsafe ownership
+shapes remain unexposed. Nor is this a global performance-parity claim: several
+matched workloads still have measured Go overhead and remain optimization
+targets. The authoritative distinctions are tracked in
 `PARITY.md`; `API_AUDIT.md` provides the 1,858-declaration denominator.
