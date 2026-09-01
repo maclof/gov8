@@ -3,6 +3,7 @@
 package gov8_test
 
 import (
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -512,14 +513,101 @@ func TestPromiseArgumentErrors(t *testing.T) {
 	if _, err := promise.Then(rt.ctx, str); err == nil || !strings.Contains(err.Error(), "not a function") {
 		t.Fatalf("Then with string handler: err=%v, want not-a-function error", err)
 	}
-	if _, err := promise.Then(rt.ctx, gov8.Value{}); err == nil {
-		t.Fatal("Then with zero value handler: want error")
+	if _, err := promise.Then(rt.ctx, gov8.Value{}); err == nil || !strings.Contains(err.Error(), "zero value handle") {
+		t.Fatalf("Then with zero value handler: err=%v, want zero-value error", err)
 	}
+
+	localHandler := promiseJSFunction(t, rt.ctx, rt.scope)
+	foreignHandler := promiseJSFunction(t, foreign.ctx, foreign.scope)
+	wantForeignIsolateError(t, "Promise.Then foreign handler", func() error {
+		_, err := promise.Then(rt.ctx, foreignHandler)
+		return err
+	})
+	wantForeignIsolateError(t, "Promise.Then2 foreign fulfilled handler", func() error {
+		_, err := promise.Then2(rt.ctx, foreignHandler, localHandler)
+		return err
+	})
+	wantForeignIsolateError(t, "Promise.Then2 foreign rejected handler", func() error {
+		_, err := promise.Then2(rt.ctx, localHandler, foreignHandler)
+		return err
+	})
+	wantForeignIsolateError(t, "Promise.Catch foreign handler", func() error {
+		_, _, err := promise.Catch(rt.ctx, foreignHandler)
+		return err
+	})
+	if handled, err := promise.HasHandler(); err != nil || handled {
+		t.Fatalf("foreign handlers changed promise = (%v, %v), want (false, nil)", handled, err)
+	}
+
 	if _, _, err := promise.Catch(foreign.ctx, str); err == nil {
 		t.Fatal("Catch with foreign context: want error")
 	}
 	if _, err := promise.Result(foreign.scope); err == nil {
 		t.Fatal("Result with foreign scope: want error")
+	}
+}
+
+func promiseJSFunction(t *testing.T, ctx *gov8.Context, scope *gov8.Scope) gov8.Value {
+	t.Helper()
+	script, err := ctx.Compile(scope, "(function () {})", nil)
+	if err != nil {
+		t.Fatalf("Compile function: %v", err)
+	}
+	defer func() {
+		if err := script.Close(); err != nil {
+			t.Errorf("function Script.Close: %v", err)
+		}
+	}()
+	value, err := script.Run(scope, nil)
+	if err != nil {
+		t.Fatalf("Run function: %v", err)
+	}
+	return value
+}
+
+func TestPromiseHandlerValidationLifecycleAndAffinity(t *testing.T) {
+	rt := newPromiseRT(t)
+	defer rt.close(t)
+
+	foreign := newPromiseRT(t)
+	defer foreign.close(t)
+
+	resolver, err := rt.scope.NewPromiseResolver(rt.ctx)
+	if err != nil {
+		t.Fatalf("NewPromiseResolver: %v", err)
+	}
+	promise, err := resolver.GetPromise(rt.scope)
+	if err != nil {
+		t.Fatalf("GetPromise: %v", err)
+	}
+
+	closedScope, err := foreign.iso.NewScope()
+	if err != nil {
+		t.Fatalf("foreign NewScope: %v", err)
+	}
+	closedForeignHandler := promiseJSFunction(t, foreign.ctx, closedScope)
+	if err := closedScope.Close(); err != nil {
+		t.Fatalf("foreign Scope.Close: %v", err)
+	}
+	if _, err := promise.Then(rt.ctx, closedForeignHandler); err == nil || !strings.Contains(err.Error(), "scope used after Close") {
+		t.Fatalf("closed foreign handler = %v, want scope-close error before ownership", err)
+	}
+
+	liveForeignHandler := promiseJSFunction(t, foreign.ctx, foreign.scope)
+	threadResult := make(chan error, 1)
+	go func() {
+		runtime.LockOSThread()
+		defer runtime.UnlockOSThread()
+		_, err := promise.Then(rt.ctx, liveForeignHandler)
+		threadResult <- err
+	}()
+	if err := <-threadResult; err == nil || (!strings.Contains(err.Error(), "affinity") && !strings.Contains(err.Error(), "wrong thread")) {
+		t.Fatalf("wrong-thread foreign handler = %v, want thread error before ownership", err)
+	}
+
+	localHandler := promiseJSFunction(t, rt.ctx, rt.scope)
+	if _, err := promise.Then(rt.ctx, localHandler); err != nil {
+		t.Fatalf("same-isolate function handler after rejected misuse: %v", err)
 	}
 }
 

@@ -304,19 +304,15 @@ func (p Promise) StrictEquals(other Value) (bool, error) {
 // slot as v8::Function.
 func checkFunctionAssumingIsolate(v Value, iso *Isolate) error {
 	if v.iso != iso {
-		// Preserve the pre-existing validation and error ordering for foreign
-		// values. Same-isolate handlers take the optimized path below.
+		// Validate the foreign value first so zero, stale-scope, isolate-lifecycle,
+		// and wrong-thread errors retain their established precedence over the
+		// ownership error. Never ask the engine for its type: a local handle is
+		// meaningful only to its owning isolate, and the promise shim has no
+		// ownership metadata with which to reject a foreign wire safely.
 		if err := v.check(); err != nil {
 			return err
 		}
-		isFn, err := v.IsFunction()
-		if err != nil {
-			return err
-		}
-		if !isFn {
-			return errors.New("gov8: promise handler is not a function")
-		}
-		return nil
+		return foreignIsolate("handler")
 	}
 	if v.h == 0 {
 		return fmt.Errorf("gov8: zero value handle")
