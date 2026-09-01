@@ -1,0 +1,6 @@
+{"check":"cppgc-member/handles/empty_new_set_get","ok":true,"value":{"empty_strong_none":true,"empty_weak_none":true,"set_strong_id":2,"set_weak_id":2,"set_repeated_identity":true,"new_strong_id":11,"new_weak_id":11,"new_repeated_identity":true}}
+{"check":"cppgc-member/strong/reassign_clear_reuse","ok":true,"value":{"child_survives_member_only":true,"drops_while_strong":0,"reassign_not_synchronous":true,"old_child_and_weak_cleared":true,"new_strong_id":3,"clear_not_synchronous":true,"cleared_child_collected":true,"reused_strong_id":4,"reused_weak_id":4,"reused_identity":true,"reused_observer_id":4}}
+{"check":"cppgc-member/weak/clearing_and_reuse","ok":true,"value":{"weak_only_cleared":true,"weak_only_drop_seen":true,"reused_alive_while_strong":true,"reused_identity":true,"reused_cleared_after_release":true}}
+{"check":"cppgc-member/cycle/unreachable_strong_cycle","ok":true,"value":{"first_cleared":true,"second_cleared":true,"first_dropped":true,"second_dropped":true}}
+{"check":"cppgc-member/lifecycle/owner_isolate_teardown","ok":true,"value":{"pre_teardown_ids":[1,2,3,4,10,11,20,21,22,30,31],"teardown_handles_cleared":true,"teardown_added_owner_and_child":true,"all_ids_once":true,"handle_drop_does_not_redestroy":true,"total_drops":13}}
+{"summary":{"total":5,"passed":5,"failed":0}}
