@@ -16,9 +16,10 @@ import (
 // concurrently, run each one's operations on its own goroutine (see the
 // concurrency tests).
 //
-// All resources derived from an isolate (scopes, contexts, values, scripts,
-// try-catches, microtask queues) must be closed before Isolate.Close, and
-// Close must be called on the owning thread.
+// Resources derived from an isolate (scopes, contexts, values, scripts,
+// try-catches, microtask queues) must normally be closed before Isolate.Close.
+// Outstanding cppgc persistent handles are drained during native teardown and
+// their later Close is a no-op. Isolate.Close must run on the owning thread.
 type Isolate struct {
 	mu                         sync.Mutex // guards lifecycle/configuration flags; calls are thread-serialized by affinity
 	handle                     uintptr
@@ -104,6 +105,10 @@ func (i *Isolate) Close() error {
 	}
 	disposedHandle := i.handle
 	r1, _, _ := proc("gov8_isolate_dispose").Call(disposedHandle)
+	// V8 has now torn down the default cppgc heap and cleared its persistent
+	// nodes. Destroy any still-live native wrapper handles on the same owner
+	// thread before publishing the isolate as closed.
+	cppgcPersistentCleanupErr := afterCppGCPersistentIsolateDispose(i, disposedHandle)
 	var fastAPICleanupErr error
 	if fastAPIIsolateTracked(i) {
 		// V8 retains the raw CFunction overload array and nested type metadata
@@ -130,6 +135,9 @@ func (i *Isolate) Close() error {
 	}
 	if fastAPICleanupErr != nil {
 		return fastAPICleanupErr
+	}
+	if cppgcPersistentCleanupErr != nil {
+		return cppgcPersistentCleanupErr
 	}
 	return nil
 }
