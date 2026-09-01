@@ -175,7 +175,11 @@ strict Clippy and full tests; the Go suite passes
 All audited safe executable behavior is covered. This does not claim literal
 Rust API-shape parity: ten borrowed or generic cppgc declarations retain safe,
 intentional Go shapes, and 154 unsafe ownership declarations remain unexposed.
-It also does not claim performance parity. Archived matched runs still show
-material Go overhead in synthetic modules, compiled-Wasm restoration,
-module-cache consumption, CRDTP dispatch, custom-platform dispatch and simdutf
-base64. These remain measured optimization work, not behavioral gaps.
+It also does not claim performance parity. Eight archived matched benchmark
+areas still show material Go overhead: synthetic modules (about 2.9-3.7x),
+compiled-Wasm restoration (5.1x), module-cache consumption (about 3x), CRDTP
+dispatch (1.92x), custom-platform dispatch (9.1x), simdutf base64 (1.6-2.2x),
+lazy data-property materialization (4.40x), and asynchronous Wasm compilation
+(2.16x). These remain measured optimization work, not behavioral gaps; broader
+performance claims also require matched Go comparisons for every Rust-only
+baseline workload.
