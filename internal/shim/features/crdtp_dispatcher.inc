@@ -39,7 +39,8 @@ constexpr uint64_t kChannelMagic = 0x674f56384348414eULL;
 constexpr uint64_t kUberMagic = 0x674f563855424552ULL;
 
 using GoDomainDispatch = uintptr_t (*)(uint64_t, const uint8_t*, size_t,
-                                       const v8_crdtp::Dispatchable*);
+                                       const v8_crdtp::Dispatchable*, uintptr_t,
+                                       uintptr_t);
 using GoDrop = void (*)(uint64_t);
 using GoFallthrough = void (*)(uint64_t, int32_t, const uint8_t*, size_t,
                                const uint8_t*, size_t, const uint8_t*,
@@ -135,8 +136,14 @@ bool crdtp__DomainDispatcher__BASE__Dispatch(
   if (callback == nullptr || dispatcher == nullptr) {
     std::abort();
   }
+  const bool has_call_id = crdtp__Dispatchable__hasCallId(&dispatchable);
   return callback(static_cast<uint64_t>(reinterpret_cast<uintptr_t>(dispatcher)),
-                  command_data, command_len, &dispatchable) != 0;
+                  command_data, command_len, &dispatchable,
+                  static_cast<uintptr_t>(has_call_id ? 1 : 0),
+                  static_cast<uintptr_t>(static_cast<uint32_t>(
+                      has_call_id ? crdtp__Dispatchable__callId(&dispatchable)
+                                  : 0))) !=
+         0;
 }
 
 void crdtp__DomainDispatcher__BASE__Drop(void* dispatcher) {

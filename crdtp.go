@@ -8,13 +8,31 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"syscall"
 	"unsafe"
 )
 
 var (
 	errCRDTPClosed   = errors.New("gov8: CRDTP value is closed")
 	errCRDTPConsumed = errors.New("gov8: CRDTP value was consumed")
+
+	crdtpBytesProcsOnce       sync.Once
+	crdtpBytesCopyProc        *syscall.Proc
+	crdtpBytesCopyDeleteProc  *syscall.Proc
+	crdtpSerializableViewProc *syscall.Proc
+	crdtpJSONToCBORSizedProc  *syscall.Proc
+	crdtpCBORToJSONSizedProc  *syscall.Proc
 )
+
+func ensureCRDTPBytesProcs() {
+	crdtpBytesProcsOnce.Do(func() {
+		crdtpBytesCopyProc = proc("gov8_crdtp_bytes_copy")
+		crdtpBytesCopyDeleteProc = proc("gov8_crdtp_bytes_copy_delete")
+		crdtpSerializableViewProc = proc("gov8_crdtp_serializable_view")
+		crdtpJSONToCBORSizedProc = proc("gov8_crdtp_json_to_cbor_sized")
+		crdtpCBORToJSONSizedProc = proc("gov8_crdtp_cbor_to_json_sized")
+	})
+}
 
 // CRDTPJSONToCBOR converts UTF-8 JSON to the canonical CBOR representation
 // used by the Chrome DevTools protocol. ok is false for malformed input.
@@ -33,20 +51,27 @@ func crdtpConvert(op, export string, input []byte) ([]byte, bool, error) {
 	if err := loadShim(); err != nil {
 		return nil, false, err
 	}
-	var out uintptr
-	status, _, _ := proc(export).Call(
-		slicePointer(input), uintptr(len(input)), uintptr(unsafe.Pointer(&out)))
+	ensureCRDTPBytesProcs()
+	convertProc := crdtpJSONToCBORSizedProc
+	if export == "gov8_crdtp_cbor_to_json" {
+		convertProc = crdtpCBORToJSONSizedProc
+	}
+	var output [2]uintptr
+	status, _, _ := convertProc.Call(
+		slicePointer(input), uintptr(len(input)), uintptr(unsafe.Pointer(&output[0])),
+		uintptr(unsafe.Pointer(&output[1])))
 	runtime.KeepAlive(input)
+	runtime.KeepAlive(&output)
 	if int64(status) < 0 {
 		return nil, false, shimError(op, status)
 	}
 	if status == 0 {
 		return nil, false, nil
 	}
-	if status != 1 || out == 0 {
+	if status != 1 || output[0] == 0 {
 		return nil, false, fmt.Errorf("gov8: %s returned invalid status %d", op, status)
 	}
-	bytes, err := takeCRDTPBytes(out)
+	bytes, err := takeCRDTPBytesSized(output[0], output[1])
 	return bytes, err == nil, err
 }
 
@@ -54,13 +79,17 @@ func takeCRDTPBytes(handle uintptr) (result []byte, err error) {
 	if handle == 0 {
 		return nil, errors.New("gov8: null CRDTP byte buffer")
 	}
+	ensureCRDTPBytesProcs()
+	owned := handle
 	defer func() {
-		closeErr := callErr("CRDTPBytes.Close", proc("gov8_crdtp_bytes_delete"), handle)
-		if closeErr != nil {
-			err = errors.Join(err, closeErr)
+		if owned != 0 {
+			closeErr := callErr("CRDTPBytes.Close", proc("gov8_crdtp_bytes_delete"), owned)
+			if closeErr != nil {
+				err = errors.Join(err, closeErr)
+			}
 		}
 	}()
-	length, _, _ := proc("gov8_crdtp_bytes_copy").Call(handle, 0, 0)
+	length, _, _ := crdtpBytesCopyProc.Call(handle, 0, 0)
 	if int64(length) < 0 {
 		return nil, shimError("CRDTPBytes.Len", length)
 	}
@@ -68,8 +97,30 @@ func takeCRDTPBytes(handle uintptr) (result []byte, err error) {
 	if length > maxInt {
 		return nil, errors.New("gov8: CRDTP byte length exceeds max int")
 	}
+	owned = 0 // takeCRDTPBytesSized assumes ownership, including error cleanup.
+	return takeCRDTPBytesSized(handle, length)
+}
+
+func takeCRDTPBytesSized(handle, length uintptr) (result []byte, err error) {
+	if handle == 0 {
+		return nil, errors.New("gov8: null CRDTP byte buffer")
+	}
+	ensureCRDTPBytesProcs()
+	owned := handle
+	defer func() {
+		if owned != 0 {
+			closeErr := callErr("CRDTPBytes.Close", proc("gov8_crdtp_bytes_delete"), owned)
+			if closeErr != nil {
+				err = errors.Join(err, closeErr)
+			}
+		}
+	}()
+	maxInt := uintptr(^uint(0) >> 1)
+	if length > maxInt {
+		return nil, errors.New("gov8: CRDTP byte length exceeds max int")
+	}
 	result = make([]byte, int(length))
-	status, _, _ := proc("gov8_crdtp_bytes_copy").Call(
+	status, _, _ := crdtpBytesCopyDeleteProc.Call(
 		handle, slicePointer(result), uintptr(len(result)))
 	runtime.KeepAlive(result)
 	if int64(status) < 0 {
@@ -78,6 +129,7 @@ func takeCRDTPBytes(handle uintptr) (result []byte, err error) {
 	if status != length {
 		return nil, errors.New("gov8: CRDTP byte length changed while copying")
 	}
+	owned = 0
 	return result, nil
 }
 
@@ -406,14 +458,31 @@ func (s *CRDTPSerializable) Bytes() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	var out uintptr
-	status, _, _ := proc("gov8_crdtp_serializable_bytes").Call(
-		handle, uintptr(unsafe.Pointer(&out)))
-	runtime.KeepAlive(&out)
+	ensureCRDTPBytesProcs()
+	var view [2]uintptr
+	status, _, _ := crdtpSerializableViewProc.Call(
+		handle, uintptr(unsafe.Pointer(&view[0])), uintptr(unsafe.Pointer(&view[1])))
+	runtime.KeepAlive(&view)
 	if int64(status) < 0 {
 		return nil, shimError("CRDTPSerializable.Bytes", status)
 	}
-	return takeCRDTPBytes(out)
+	if status != 0 {
+		return nil, fmt.Errorf("gov8: CRDTP Serializable returned invalid status %d", status)
+	}
+	maxInt := uintptr(^uint(0) >> 1)
+	if view[1] > maxInt {
+		return nil, errors.New("gov8: CRDTP Serializable length exceeds max int")
+	}
+	if view[0] == 0 {
+		return nil, errors.New("gov8: CRDTP Serializable returned a null byte view")
+	}
+	result := make([]byte, int(view[1]))
+	if view[1] != 0 {
+		copy(result, unsafe.Slice((*byte)(abiWordToPtr(view[0])), int(view[1])))
+	}
+	runtime.KeepAlive(result)
+	runtime.KeepAlive(s)
+	return result, nil
 }
 
 func (s *CRDTPSerializable) Close() error {

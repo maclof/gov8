@@ -50,23 +50,23 @@ type CRDTPCallbackDropper interface{ CRDTPCallbackDropped() }
 
 type crdtpChannelEntry struct {
 	handler     CRDTPFrontendChannel
-	active      int
+	active      atomic.Int32
 	dispatchers int
 }
 
 type crdtpDomainEntry struct {
 	handler CRDTPDomainDispatcher
 	owner   *CRDTPUberDispatcher
-	active  int
+	active  atomic.Int32
 }
 
 type crdtpFallthroughEntry struct {
 	handler CRDTPFallthroughCallback
-	active  int
+	active  atomic.Int32
 }
 
 var crdtpCallbacks = struct {
-	sync.Mutex
+	sync.RWMutex
 	next     uint64
 	channels map[uint64]*crdtpChannelEntry
 	domains  map[uint64]*crdtpDomainEntry
@@ -83,8 +83,10 @@ func crdtpNextIDLocked() (uint64, error) {
 }
 
 var (
-	crdtpDispatchersOnce sync.Once
-	crdtpDispatchersErr  error
+	crdtpDispatchersOnce        sync.Once
+	crdtpDispatchersErr         error
+	crdtpUberDispatchProc       *syscall.Proc
+	crdtpDomainSendResponseProc *syscall.Proc
 )
 
 func crdtpCallbackPanic(kind string, recovered any) {
@@ -106,7 +108,7 @@ func crdtpCopyCallbackBytes(data, length uintptr) []byte {
 }
 
 var crdtpDomainDispatcherCallback = syscall.NewCallback(func(
-	idWord, commandData, commandLen, requestRaw uintptr,
+	idWord, commandData, commandLen, requestRaw, hasCallIDWord, callIDWord uintptr,
 ) (result uintptr) {
 	defer func() {
 		if recovered := recover(); recovered != nil {
@@ -114,26 +116,32 @@ var crdtpDomainDispatcherCallback = syscall.NewCallback(func(
 		}
 	}()
 	id := uint64(idWord)
-	crdtpCallbacks.Lock()
+	crdtpCallbacks.RLock()
 	entry := crdtpCallbacks.domains[id]
 	if entry != nil {
-		entry.active++
+		entry.active.Add(1)
 	}
-	crdtpCallbacks.Unlock()
+	crdtpCallbacks.RUnlock()
 	if entry == nil || entry.handler == nil || requestRaw == 0 {
 		fatalHostMisuse("unknown CRDTP domain callback %d", id)
 		panic("unreachable after unknown CRDTP domain callback")
 	}
-	defer func() {
-		crdtpCallbacks.Lock()
-		entry.active--
-		crdtpCallbacks.Unlock()
-	}()
-	frame := &crdtpDomainFrame{id: id, request: requestRaw, tid: currentThreadID()}
-	frame.active.Store(true)
-	defer func() { frame.active.Store(false) }()
+	defer entry.active.Add(-1)
+	if hasCallIDWord != 0 && hasCallIDWord != 1 {
+		fatalHostMisuse("invalid CRDTP callback call-ID presence %d", hasCallIDWord)
+		panic("unreachable after invalid CRDTP callback call-ID presence")
+	}
+	invocation := &crdtpDomainInvocation{}
+	invocation.frame = crdtpDomainFrame{
+		id: id, request: requestRaw, tid: currentThreadID(),
+		hasCallID: hasCallIDWord == 1, callID: int32(callIDWord),
+	}
+	invocation.request.frame = &invocation.frame
+	invocation.responder.frame = &invocation.frame
+	invocation.frame.active.Store(true)
+	defer func() { invocation.frame.active.Store(false) }()
 	if entry.handler.Dispatch(crdtpCopyCallbackBytes(commandData, commandLen),
-		&CRDTPDispatchRequest{frame: frame}, &CRDTPDomainResponder{frame: frame}) {
+		&invocation.request, &invocation.responder) {
 		return 1
 	}
 	return 0
@@ -169,21 +177,17 @@ var crdtpFallthroughCallback = syscall.NewCallback(func(
 		}
 	}()
 	id := uint64(idWord)
-	crdtpCallbacks.Lock()
+	crdtpCallbacks.RLock()
 	entry := crdtpCallbacks.fall[id]
 	if entry != nil {
-		entry.active++
+		entry.active.Add(1)
 	}
-	crdtpCallbacks.Unlock()
+	crdtpCallbacks.RUnlock()
 	if entry == nil || entry.handler == nil {
 		fatalHostMisuse("unknown CRDTP fallthrough callback %d", id)
 		panic("unreachable after unknown CRDTP fallthrough callback")
 	}
-	defer func() {
-		crdtpCallbacks.Lock()
-		entry.active--
-		crdtpCallbacks.Unlock()
-	}()
+	defer entry.active.Add(-1)
 	entry.handler.FallThrough(int32(callIDWord),
 		crdtpCopyCallbackBytes(methodData, methodLen),
 		crdtpCopyCallbackBytes(messageData, messageLen),
@@ -221,21 +225,17 @@ var crdtpChannelCallback = syscall.NewCallback(func(
 		}
 	}()
 	id := uint64(idWord)
-	crdtpCallbacks.Lock()
+	crdtpCallbacks.RLock()
 	entry := crdtpCallbacks.channels[id]
 	if entry != nil {
-		entry.active++
+		entry.active.Add(1)
 	}
-	crdtpCallbacks.Unlock()
+	crdtpCallbacks.RUnlock()
 	if entry == nil || entry.handler == nil {
 		fatalHostMisuse("unknown CRDTP channel callback %d", id)
 		panic("unreachable after unknown CRDTP channel callback")
 	}
-	defer func() {
-		crdtpCallbacks.Lock()
-		entry.active--
-		crdtpCallbacks.Unlock()
-	}()
+	defer entry.active.Add(-1)
 	switch kindWord {
 	case 0:
 		if messageRaw == 0 {
@@ -289,6 +289,10 @@ func ensureCRDTPDispatchers() error {
 			proc("gov8_crdtp_dispatcher_set_callbacks"), crdtpDomainDispatcherCallback,
 			crdtpDomainDropCallback, crdtpFallthroughCallback,
 			crdtpFallthroughDropCallback, crdtpChannelCallback, crdtpChannelDropCallback)
+		if crdtpDispatchersErr == nil {
+			crdtpUberDispatchProc = proc("gov8_crdtp_uber_dispatch")
+			crdtpDomainSendResponseProc = proc("gov8_crdtp_domain_send_response")
+		}
 	})
 	return crdtpDispatchersErr
 }
@@ -346,7 +350,7 @@ func (c *CRDTPFrontendChannelHandle) Close() error {
 		c.mu.Unlock()
 		return errors.New("gov8: CRDTP channel registry entry is missing")
 	}
-	if entry.dispatchers != 0 || entry.active != 0 {
+	if entry.dispatchers != 0 || entry.active.Load() != 0 {
 		crdtpCallbacks.Unlock()
 		c.mu.Unlock()
 		return errors.New("gov8: CRDTP channel is still attached or active")
@@ -494,7 +498,11 @@ func (d *CRDTPUberDispatcher) Dispatch(message *CRDTPDispatchable) error {
 		message.active = false
 		message.mu.Unlock()
 	}()
-	return callErr("CRDTPUberDispatcher.Dispatch", proc("gov8_crdtp_uber_dispatch"), handle, messageHandle)
+	status, _, _ := crdtpUberDispatchProc.Call(handle, messageHandle)
+	if int64(status) < 0 {
+		return shimError("CRDTPUberDispatcher.Dispatch", status)
+	}
+	return nil
 }
 
 func (d *CRDTPUberDispatcher) Close() error {
@@ -525,10 +533,18 @@ func (d *CRDTPUberDispatcher) Close() error {
 }
 
 type crdtpDomainFrame struct {
-	id      uint64
-	request uintptr
-	tid     uint32
-	active  atomic.Bool
+	id        uint64
+	request   uintptr
+	tid       uint32
+	hasCallID bool
+	callID    int32
+	active    atomic.Bool
+}
+
+type crdtpDomainInvocation struct {
+	frame     crdtpDomainFrame
+	request   CRDTPDispatchRequest
+	responder CRDTPDomainResponder
 }
 
 func (f *crdtpDomainFrame) check() error {
@@ -550,18 +566,7 @@ func (r *CRDTPDispatchRequest) CallID() (int32, bool, error) {
 	if err := r.frame.check(); err != nil {
 		return 0, false, err
 	}
-	var has, id int32
-	status, _, _ := proc("gov8_crdtp_request_call_id").Call(
-		r.frame.request, uintptr(unsafe.Pointer(&has)), uintptr(unsafe.Pointer(&id)))
-	runtime.KeepAlive(&has)
-	runtime.KeepAlive(&id)
-	if int64(status) < 0 {
-		return 0, false, shimError("CRDTPDispatchRequest.CallID", status)
-	}
-	if has != 0 && has != 1 {
-		return 0, false, fmt.Errorf("gov8: invalid CRDTP has-call-ID value %d", has)
-	}
-	return id, has == 1, nil
+	return r.frame.callID, r.frame.hasCallID, nil
 }
 
 func (r *CRDTPDispatchRequest) Method() ([]byte, error)         { return r.bytes(0) }
@@ -622,15 +627,15 @@ func (r *CRDTPDomainResponder) SendResponse(callID int32, response *CRDTPDispatc
 		result.handle = 0
 		result.mu.Unlock()
 	}
-	var responseConsumed, resultConsumed int32
-	status, _, _ := proc("gov8_crdtp_domain_send_response").Call(uintptr(r.frame.id),
+	var consumed [2]int32
+	status, _, _ := crdtpDomainSendResponseProc.Call(uintptr(r.frame.id),
 		uintptr(callID), responseHandle, resultHandle,
-		uintptr(unsafe.Pointer(&responseConsumed)), uintptr(unsafe.Pointer(&resultConsumed)))
+		uintptr(unsafe.Pointer(&consumed[0])), uintptr(unsafe.Pointer(&consumed[1])))
 	if int64(status) < 0 {
 		return shimError("CRDTPDomainResponder.SendResponse", status)
 	}
-	if responseConsumed != 1 || (result != nil && resultConsumed != 1) ||
-		(result == nil && resultConsumed != 0) {
+	if consumed[0] != 1 || (result != nil && consumed[1] != 1) ||
+		(result == nil && consumed[1] != 0) {
 		return errors.New("gov8: invalid CRDTP send-response ownership result")
 	}
 	return nil

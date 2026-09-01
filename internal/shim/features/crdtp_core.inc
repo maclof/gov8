@@ -124,8 +124,12 @@ struct ResponseWrap {
 struct SerializableWrap {
   uint64_t magic = kSerializableMagic;
   v8_crdtp::Serializable* value = nullptr;
+  std::vector<uint8_t>* serialized = nullptr;
 
   ~SerializableWrap() {
+    if (serialized != nullptr) {
+      crdtp__vec_u8__DELETE(serialized);
+    }
     if (value != nullptr) {
       crdtp__Serializable__DELETE(value);
     }
@@ -189,6 +193,45 @@ SerializableWrap* WrapSerializable(v8_crdtp::Serializable* value) {
   return wrap.release();
 }
 
+int64_t ConvertSized(bool json_to_cbor, const uint8_t* data, size_t len,
+                     void** out, int64_t* out_len) {
+  if (out == nullptr || out_len == nullptr ||
+      (data == nullptr && len != 0)) {
+    return kErrBadArg;
+  }
+  *out = nullptr;
+  *out_len = 0;
+  try {
+    auto bytes = std::unique_ptr<std::vector<uint8_t>,
+                                 decltype(&crdtp__vec_u8__DELETE)>(
+        crdtp__vec_u8__new(), crdtp__vec_u8__DELETE);
+    if (!bytes) {
+      SetErr("CRDTP byte allocation failed");
+      return kErrCpp;
+    }
+    const uint8_t* input =
+        len == 0 ? &gov8_crdtp_core_impl::kEmptyByte : data;
+    const bool ok = json_to_cbor
+                        ? crdtp__json__ConvertJSONToCBOR(input, len,
+                                                        bytes.get())
+                        : crdtp__json__ConvertCBORToJSON(input, len,
+                                                        bytes.get());
+    if (!ok) {
+      return 0;
+    }
+    if (bytes->size() > static_cast<size_t>(INT64_MAX)) {
+      SetErr("CRDTP converted bytes exceed int64");
+      return kErrBadArg;
+    }
+    *out_len = static_cast<int64_t>(bytes->size());
+    *out = gov8_crdtp_core_impl::WrapBytes(bytes.release());
+    return *out != nullptr ? 1 : kErrCpp;
+  } catch (...) {
+    SetErr("C++ exception");
+    return kErrCpp;
+  }
+}
+
 }  // namespace gov8_crdtp_core_impl
 
 extern "C" {
@@ -222,6 +265,37 @@ __declspec(dllexport) int64_t gov8_crdtp_bytes_copy(void* raw, uint8_t* out,
   return static_cast<int64_t>(len);
 }
 
+// Copies and consumes a BytesWrap in one boundary crossing. On failure the
+// wrapper remains owned by the caller so its ordinary delete path is safe.
+__declspec(dllexport) int64_t gov8_crdtp_bytes_copy_delete(void* raw,
+                                                           uint8_t* out,
+                                                           int64_t cap) {
+  ClearErr();
+  auto* wrap = gov8_crdtp_core_impl::AsBytes(raw);
+  if (wrap == nullptr || wrap->value == nullptr) {
+    SetErr("invalid CRDTP byte buffer");
+    return kErrMagic;
+  }
+  if (cap < 0) {
+    return kErrBadArg;
+  }
+  const size_t len = wrap->value->size();
+  if (len > static_cast<size_t>(INT64_MAX)) {
+    SetErr("CRDTP byte buffer exceeds int64");
+    return kErrBadArg;
+  }
+  if (static_cast<uint64_t>(cap) < len || (out == nullptr && len != 0)) {
+    SetErr("CRDTP destination is too small");
+    return kErrNoMemory;
+  }
+  if (len != 0) {
+    std::memcpy(out, wrap->value->data(), len);
+  }
+  wrap->magic = 0;
+  delete wrap;
+  return static_cast<int64_t>(len);
+}
+
 __declspec(dllexport) int64_t gov8_crdtp_bytes_delete(void* raw) {
   ClearErr();
   auto* wrap = gov8_crdtp_core_impl::AsBytes(raw);
@@ -237,57 +311,27 @@ __declspec(dllexport) int64_t gov8_crdtp_bytes_delete(void* raw) {
 __declspec(dllexport) int64_t gov8_crdtp_json_to_cbor(
     const uint8_t* data, size_t len, void** out) {
   ClearErr();
-  if (out == nullptr || (data == nullptr && len != 0)) {
-    return kErrBadArg;
-  }
-  *out = nullptr;
-  try {
-    auto bytes = std::unique_ptr<std::vector<uint8_t>,
-                                 decltype(&crdtp__vec_u8__DELETE)>(
-        crdtp__vec_u8__new(), crdtp__vec_u8__DELETE);
-    if (!bytes) {
-      SetErr("CRDTP byte allocation failed");
-      return kErrCpp;
-    }
-    const uint8_t* input =
-        len == 0 ? &gov8_crdtp_core_impl::kEmptyByte : data;
-    if (!crdtp__json__ConvertJSONToCBOR(input, len, bytes.get())) {
-      return 0;
-    }
-    *out = gov8_crdtp_core_impl::WrapBytes(bytes.release());
-    return *out != nullptr ? 1 : kErrCpp;
-  } catch (...) {
-    SetErr("C++ exception");
-    return kErrCpp;
-  }
+  int64_t ignored = 0;
+  return gov8_crdtp_core_impl::ConvertSized(true, data, len, out, &ignored);
 }
 
 __declspec(dllexport) int64_t gov8_crdtp_cbor_to_json(
     const uint8_t* data, size_t len, void** out) {
   ClearErr();
-  if (out == nullptr || (data == nullptr && len != 0)) {
-    return kErrBadArg;
-  }
-  *out = nullptr;
-  try {
-    auto bytes = std::unique_ptr<std::vector<uint8_t>,
-                                 decltype(&crdtp__vec_u8__DELETE)>(
-        crdtp__vec_u8__new(), crdtp__vec_u8__DELETE);
-    if (!bytes) {
-      SetErr("CRDTP byte allocation failed");
-      return kErrCpp;
-    }
-    const uint8_t* input =
-        len == 0 ? &gov8_crdtp_core_impl::kEmptyByte : data;
-    if (!crdtp__json__ConvertCBORToJSON(input, len, bytes.get())) {
-      return 0;
-    }
-    *out = gov8_crdtp_core_impl::WrapBytes(bytes.release());
-    return *out != nullptr ? 1 : kErrCpp;
-  } catch (...) {
-    SetErr("C++ exception");
-    return kErrCpp;
-  }
+  int64_t ignored = 0;
+  return gov8_crdtp_core_impl::ConvertSized(false, data, len, out, &ignored);
+}
+
+__declspec(dllexport) int64_t gov8_crdtp_json_to_cbor_sized(
+    const uint8_t* data, size_t len, void** out, int64_t* out_len) {
+  ClearErr();
+  return gov8_crdtp_core_impl::ConvertSized(true, data, len, out, out_len);
+}
+
+__declspec(dllexport) int64_t gov8_crdtp_cbor_to_json_sized(
+    const uint8_t* data, size_t len, void** out, int64_t* out_len) {
+  ClearErr();
+  return gov8_crdtp_core_impl::ConvertSized(false, data, len, out, out_len);
 }
 
 __declspec(dllexport) int64_t gov8_crdtp_dispatchable_new(
@@ -551,6 +595,40 @@ __declspec(dllexport) int64_t gov8_crdtp_serializable_bytes(void* raw,
     crdtp__Serializable__AppendSerialized(wrap->value, bytes.get());
     *out = gov8_crdtp_core_impl::WrapBytes(bytes.release());
     return *out != nullptr ? kOk : kErrCpp;
+  } catch (...) {
+    SetErr("C++ exception");
+    return kErrCpp;
+  }
+}
+
+// Materializes a Serializable into storage owned by its wrapper. The returned
+// view stays valid until the wrapper is deleted; Go copies it synchronously
+// while holding the Serializable's mutex and never retains the native pointer.
+__declspec(dllexport) int64_t gov8_crdtp_serializable_view(
+    void* raw, const uint8_t** out, size_t* out_len) {
+  ClearErr();
+  auto* wrap = gov8_crdtp_core_impl::AsSerializable(raw);
+  if (wrap == nullptr || wrap->value == nullptr || out == nullptr ||
+      out_len == nullptr) {
+    return kErrBadArg;
+  }
+  *out = nullptr;
+  *out_len = 0;
+  try {
+    if (wrap->serialized == nullptr) {
+      auto bytes = std::unique_ptr<std::vector<uint8_t>,
+                                   decltype(&crdtp__vec_u8__DELETE)>(
+          crdtp__vec_u8__new(), crdtp__vec_u8__DELETE);
+      if (!bytes) {
+        SetErr("CRDTP Serializable byte allocation failed");
+        return kErrCpp;
+      }
+      crdtp__Serializable__AppendSerialized(wrap->value, bytes.get());
+      wrap->serialized = bytes.release();
+    }
+    *out = gov8_crdtp_core_impl::StableData(*wrap->serialized);
+    *out_len = wrap->serialized->size();
+    return kOk;
   } catch (...) {
     SetErr("C++ exception");
     return kErrCpp;
