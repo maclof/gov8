@@ -1,0 +1,6 @@
+{"check":"template-name-keys/object/string_symbol_attributes","ok":true,"value":{"first_string":11,"second_string":11,"first_symbol":22,"second_symbol":22,"empty_string":33,"anonymous_symbol":44,"symbol_attributes":{"bits":7,"read_only":true,"dont_enum":true,"dont_delete":true},"read_only_write_result":true,"symbol_after_write":22,"dont_delete_result":false,"symbol_after_delete":22}}
+{"check":"template-name-keys/function/string_symbol","ok":true,"value":{"call_result":7,"string_value":51,"symbol_value":52,"symbol_attributes":{"bits":2,"read_only":false,"dont_enum":true,"dont_delete":false},"same_function_in_context":true}}
+{"check":"template-name-keys/symbol/distinct_same_description","ok":true,"value":{"same_description_symbols_distinct":true,"distinct_a_value":5,"distinct_b_value":6}}
+{"check":"template-name-keys/intrinsic/symbol","ok":true,"value":{"is_current_context_array_prototype":true,"attributes":{"bits":3,"read_only":true,"dont_enum":true,"dont_delete":false}}}
+{"check":"template-name-keys/lifecycle/retained_and_late_mutation","ok":true,"value":{"retained_summary":"retained-after-scope|71","first_has_late":false,"second_has_late":false,"second_late_is_undefined":true}}
+{"summary":{"total":5,"passed":5,"failed":0}}
