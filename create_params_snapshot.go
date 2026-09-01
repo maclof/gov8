@@ -133,8 +133,9 @@ func (p *SnapshotCreateParams) Consumed() bool {
 
 // NewIsolateWithSnapshotParams creates an entered, thread-affine isolate from
 // the snapshot while applying every safe CreateParams field supported by
-// NewIsolateWithParams: resource constraints, Atomics.wait, the default
-// ArrayBuffer allocator flag, external references, and counter lookup.
+// NewIsolateWithParams: resource constraints, Atomics.wait, shared
+// ArrayBuffer allocators, custom cppgc heaps, external references, and counter
+// lookup.
 func NewIsolateWithSnapshotParams(params *SnapshotCreateParams) (*Isolate, error) {
 	if err := requireInitialized(); err != nil {
 		return nil, err
@@ -189,12 +190,6 @@ func NewIsolateWithSnapshotParams(params *SnapshotCreateParams) (*Isolate, error
 	if configuration.stackLimit != 0 {
 		return nil, errors.New("gov8: CreateParams stack limit cannot safely reference a Go stack")
 	}
-	if configuration.cppGCHeap != nil {
-		return nil, errors.New("gov8: custom cppgc heaps are not supported with snapshot CreateParams")
-	}
-	if configuration.arrayBufferAllocator != nil {
-		return nil, errors.New("gov8: custom ArrayBuffer allocators are not supported with snapshot CreateParams")
-	}
 	if len(snapshotBytes) > math.MaxInt32 {
 		return nil, errors.New("gov8: startup blob exceeds V8's int32 size limit")
 	}
@@ -203,6 +198,20 @@ func NewIsolateWithSnapshotParams(params *SnapshotCreateParams) (*Isolate, error
 	}
 	if !snapshot.externalReferencesKnown && !configuration.externalReferencesSet {
 		return nil, errors.New("gov8: snapshot external-reference requirements are unknown; configure an explicit table (which may be empty)")
+	}
+	var allocatorReference uintptr
+	allocatorReferenceTransferred := false
+	if configuration.arrayBufferAllocator != nil {
+		var allocatorErr error
+		allocatorReference, allocatorErr = configuration.arrayBufferAllocator.cloneHandle()
+		if allocatorErr != nil {
+			return nil, allocatorErr
+		}
+		defer func() {
+			if !allocatorReferenceTransferred {
+				_ = callErr("ArrayBufferAllocator.snapshot.clone.Close", proc("gov8_aba_dispose"), allocatorReference)
+			}
+		}()
 	}
 
 	counterHandle, err := registerIsolateCounter(configuration.counterLookup)
@@ -222,6 +231,22 @@ func NewIsolateWithSnapshotParams(params *SnapshotCreateParams) (*Isolate, error
 	if configuration.externalReferencesSet {
 		referencesSet = 1
 	}
+	var cppHeap *CppGCHeap
+	if configuration.cppGCHeap != nil {
+		cppHeap = configuration.cppGCHeap
+		cppHeap.mu.Lock()
+		if err := cppHeap.checkLocked(); err != nil {
+			cppHeap.mu.Unlock()
+			dropIsolateCounter(counterHandle)
+			return nil, err
+		}
+		if !cppHeap.claimed || cppHeap.detachedEnabled || cppHeap.terminated {
+			cppHeap.mu.Unlock()
+			dropIsolateCounter(counterHandle)
+			return nil, errors.New("gov8: cppgc heap is not transferable")
+		}
+		defer cppHeap.mu.Unlock()
+	}
 
 	runtime.LockOSThread()
 	tid := currentThreadID()
@@ -231,15 +256,35 @@ func NewIsolateWithSnapshotParams(params *SnapshotCreateParams) (*Isolate, error
 		return nil, err
 	}
 	var isolateHandle uintptr
+	var cppHeapHandle uintptr
+	if cppHeap != nil {
+		cppHeapHandle = cppHeap.handle
+	}
+	var cppHeapConsumed int32
+	var cppHeapIdentity uintptr
 	r1, _, _ := proc("gov8_cps_isolate_new").Call(
 		uintptr(unsafe.Pointer(&snapshotBytes[0])), uintptr(len(snapshotBytes)),
 		uintptr(configuration.maxOldGeneration), uintptr(configuration.maxYoungGeneration),
 		uintptr(configuration.codeRange), uintptr(configuration.initialOldGeneration),
 		uintptr(configuration.initialYoungGeneration), allowAtomics, referencesSet,
 		referencePointer, uintptr(len(referenceWords)), counterHandle,
+		cppHeapHandle, uintptr(unsafe.Pointer(&cppHeapConsumed)),
+		uintptr(unsafe.Pointer(&cppHeapIdentity)), allocatorReference,
 		uintptr(unsafe.Pointer(&holder)), uintptr(unsafe.Pointer(&isolateHandle)))
 	runtime.KeepAlive(snapshotBytes)
 	runtime.KeepAlive(referenceWords)
+	if cppHeapConsumed == 1 && cppHeap != nil {
+		cppHeap.handle = 0
+		cppHeap.identity = cppHeapIdentity
+		cppHeap.transferred = true
+		cppgcHeapLifecycle.Lock()
+		delete(cppgcHeapLifecycle.heaps, cppHeap)
+		cppgcHeapLifecycle.Unlock()
+		// NewCppGCHeap and this constructor each contributed one nested
+		// LockOSThread. Discharge the transferred heap's lock; the remaining
+		// lock keeps the returned isolate pinned until Isolate.Close.
+		runtime.UnlockOSThread()
+	}
 	if int64(r1) < 0 {
 		abandonIsolateCreate()
 		dropIsolateCounter(counterHandle)
@@ -253,11 +298,14 @@ func NewIsolateWithSnapshotParams(params *SnapshotCreateParams) (*Isolate, error
 		return nil, errors.New("gov8: snapshot isolate constructor returned incomplete ownership")
 	}
 	consumer = &Isolate{
-		handle:                     isolateHandle,
-		tid:                        tid,
-		advancedCounterHandle:      counterHandle,
-		advancedExternalReferences: configuration.externalReferencesSet,
+		handle:                        isolateHandle,
+		tid:                           tid,
+		advancedCounterHandle:         counterHandle,
+		advancedExternalReferences:    configuration.externalReferencesSet,
+		customCppGCHeap:               cppHeapConsumed == 1,
+		arrayBufferAllocatorReference: allocatorReference,
 	}
+	allocatorReferenceTransferred = true
 	finishIsolateCreate(consumer)
 	return consumer, nil
 }

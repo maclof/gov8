@@ -15,8 +15,12 @@ __declspec(dllexport) int64_t gov8_cps_isolate_new(
     uint64_t initial_young, int32_t allow_atomics_wait,
     int32_t use_external_references, const intptr_t* external_references,
     size_t external_reference_count, void* counter_host_context,
+    void* cpp_heap_wire, int32_t* cpp_heap_consumed,
+    void** cpp_heap_identity, void* array_buffer_allocator_wire,
     void** out_blob, v8::Isolate** out_isolate) {
   ClearErr();
+  if (cpp_heap_consumed != nullptr) *cpp_heap_consumed = 0;
+  if (cpp_heap_identity != nullptr) *cpp_heap_identity = nullptr;
   if (out_blob != nullptr) *out_blob = nullptr;
   if (out_isolate != nullptr) *out_isolate = nullptr;
   if (g_platform == nullptr || blob_data == nullptr || blob_len <= 0 ||
@@ -26,7 +30,8 @@ __declspec(dllexport) int64_t gov8_cps_isolate_new(
       (use_external_references == 0 &&
        (external_references != nullptr || external_reference_count != 0)) ||
       (use_external_references != 0 && external_references == nullptr &&
-       external_reference_count != 0)) {
+       external_reference_count != 0) || cpp_heap_consumed == nullptr ||
+      cpp_heap_identity == nullptr) {
     SetErr("invalid snapshot CreateParams argument");
     return kErrBadArg;
   }
@@ -42,6 +47,13 @@ __declspec(dllexport) int64_t gov8_cps_isolate_new(
     holder = gov8_snap_impl::HoldBlob(blob_data, blob_len);
     v8::Isolate::CreateParams params;
     gov8_snap_impl::FillCreateParams(&params, holder);
+    if (array_buffer_allocator_wire != nullptr &&
+        !gov8_array_buffer_allocator_impl::FillCreateParams(
+            array_buffer_allocator_wire, &params)) {
+      gov8_snap_impl::FreeBlobHolder(holder);
+      SetErr("invalid ArrayBuffer allocator");
+      return kErrBadArg;
+    }
     params.constraints.set_max_old_generation_size_in_bytes(
         static_cast<size_t>(max_old));
     params.constraints.set_max_young_generation_size_in_bytes(
@@ -72,6 +84,24 @@ __declspec(dllexport) int64_t gov8_cps_isolate_new(
       counter_state->host_context = counter_host_context;
       params.counter_lookup_callback = gov8_ia_impl::CounterLookup;
       gov8_ia_impl::pending_counter_state = counter_state.get();
+    }
+
+    // Take the heap only after every avoidable allocation/validation above.
+    // Once consumed, the outputs stay set even if Isolate::New fails so Go can
+    // settle the original heap wrapper and its nested OS-thread lock exactly.
+    if (cpp_heap_wire != nullptr) {
+      v8::CppHeap* cpp_heap = nullptr;
+      void* identity = nullptr;
+      if (!gov8_cppgc_heap_impl::TakeForParams(cpp_heap_wire, &cpp_heap,
+                                                &identity)) {
+        gov8_ia_impl::pending_counter_state = nullptr;
+        gov8_snap_impl::FreeBlobHolder(holder);
+        SetErr("custom cppgc heap is not transferable");
+        return kErrState;
+      }
+      params.cpp_heap = cpp_heap;
+      *cpp_heap_identity = identity;
+      *cpp_heap_consumed = 1;
     }
 
     isolate = v8::Isolate::New(params);
