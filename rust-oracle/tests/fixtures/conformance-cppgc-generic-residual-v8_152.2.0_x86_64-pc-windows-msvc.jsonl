@@ -1,0 +1,8 @@
+{"check":"cppgc-generic-residual/gc-cell/new_get_set_drop","ok":true,"value":{"initial":10,"after_set":20,"replaced_value_dropped_synchronously":true,"drops_after_set":[10]}}
+{"check":"cppgc-generic-residual/gc-cell/get-mut_with","ok":true,"value":{"get_mut_value":21,"with_value":30,"final_value":30,"same_cell_storage":true}}
+{"check":"cppgc-generic-residual/gc-cell/lifecycle","ok":true,"value":{"drops_after_owner_collection":[10,30],"current_value_dropped_once":true,"repeat_gc_does_not_redestroy":true}}
+{"check":"cppgc-generic-residual/member/replacement_barrier","ok":true,"value":{"initially_none":true,"first_survives_traced_some":true,"replacement_not_synchronous":true,"old_child_cleared_after_gc":true,"replacement_survives_write_barrier":true,"drops_after_replace":[1]}}
+{"check":"cppgc-generic-residual/option-member/some_none_trace","ok":true,"value":{"none_visible_immediately":true,"none_assignment_not_synchronous":true,"former_some_cleared":true,"drops_after_none_gc":[1,2],"both_children_dropped_once":true}}
+{"check":"cppgc-generic-residual/name/heap_snapshot","ok":true,"value":{"snapshot_contains_custom_name":true,"get_name_called":true,"get_name_call_count_positive":true,"named_alive_during_snapshot":true,"named_dropped_after_root_release":true}}
+{"check":"cppgc-generic-residual/layout/zero_align16_destruction","ok":true,"value":{"zero_size":0,"zero_alignment":1,"aligned_size":16,"aligned_alignment":16,"aligned_address":true,"aligned_marker":7,"no_drop_while_rooted":true,"both_dropped_once":true,"repeat_gc_does_not_redestroy":true}}
+{"summary":{"total":7,"passed":7,"failed":0}}
