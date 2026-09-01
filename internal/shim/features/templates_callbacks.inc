@@ -54,7 +54,7 @@
 
 #include <cstdlib>
 #include <mutex>
-#include <set>
+#include <unordered_set>
 
 namespace {
 
@@ -108,7 +108,11 @@ struct GoCallbackContext {
 };
 
 std::mutex g_host_mu;
-std::set<GoCallbackContext*> g_live_contexts;
+// Membership is the only ordering-independent operation on this collection:
+// registration inserts, callback entry probes, and deterministic teardown
+// erases. Keep the mutex so a successful probe still excludes reclamation,
+// but avoid logarithmic tree walks as FunctionNewCall grows the live registry.
+std::unordered_set<GoCallbackContext*> g_live_contexts;
 // Direct-return IntegerValue uses a per-thread result slot because the full
 // int64 domain leaves no in-band value for conversion failure. The export
 // stores only after any nested JavaScript/Go re-entry has completed and returns
