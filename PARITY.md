@@ -14,7 +14,7 @@ characterized but the Go implementation is not integrated; **missing** means no
 production Go implementation exists. A family is not promoted merely because a
 type or stub exists.
 
-The fixtures under `rust-oracle/tests/fixtures` currently contain 316 normalized
+The fixtures under `rust-oracle/tests/fixtures` currently contain 328 normalized
 checks. Fatal and panic-boundary subprocess tests are additional evidence and are
 not counted in that total.
 
@@ -30,8 +30,8 @@ not counted in that total.
 | String and BigInt APIs | `strings_bigint.go` | 16-check fixture, negative/lifetime tests, Go benchmarks | **partial**: implemented surface is strongly covered; final upstream declaration audit remains |
 | Date, RegExp, JSON, Array, Map, Set, Proxy, Symbol and Private | `runtime_values.go`, `fixed_primitive_arrays.go` | 27-check runtime fixture plus 6-check fixed/primitive-array fixture; negative/lifecycle tests; Go benchmarks | **partial**: characterized `FixedArray`/`PrimitiveArray` behavior is complete; residual `Data` predicates/helpers remain |
 | Object operations and predicates | `object_ops.go` | 22-check fixture; negative tests; Go benchmarks | **partial**: prototype/property constructors, own-name variants, preview entries, API-wrapper and accessor variants remain |
-| Classic scripts, origins, unbound scripts and code cache | `script.go`, `core_advanced.go` | base and core-advanced fixtures; negative tests; Rust/Go script benchmarks | **partial**: residual compiler options, streaming compilation and cache-rejection variants remain |
-| TryCatch, exceptions, Message and StackTrace | `trycatch.go`, `message.go`, advanced exception bindings and five native constructors | base checks, 10-check advanced fixture and 7-check constructor fixture; lifecycle/race/fatal tests | **partial**: constructor/CreateMessage coverage is complete for the pinned public API; the advanced stack check uses the documented fatal-handle safety normalization and residual message APIs require audit |
+| Classic scripts, origins, unbound scripts and code cache | `script.go`, `core_advanced.go` | base and core-advanced fixtures; negative tests; Rust/Go script benchmarks | **partial**: direct compilation accepts arbitrary `Value` resource names; arbitrary-value origins for unbound/cached compilation, residual compiler options, streaming compilation and cache-rejection variants remain |
+| TryCatch, exceptions, Message and StackTrace | `trycatch.go`, `message.go`, advanced exception bindings, raw local getters and five native constructors | base checks, 10-check advanced, 7-check constructor and 4-check message-local fixtures; lifecycle/race/fatal tests | **partial**: constructor/CreateMessage, raw Message/StackFrame handles and TryCatch mutation are exact; the advanced stack check uses the documented fatal-handle safety normalization and residual exception/listener APIs require audit |
 | Microtask policy and queues | `microtask.go`, context-local hooks, queue-at-creation, running/depth observation and controls hooks | base, controls-hooks and context-scopes fixtures | **partial**: the pinned crate exposes no MicrotasksScope constructor; remaining embedder queue hooks require audit |
 | Native functions, callbacks and accessors | `callback.go`, `template.go`, `function_advanced.go` | host and 6-check Function fixtures, cache/fatal subprocess tests; Rust/Go callback and Function benchmarks | **partial**: five Function observations match; Inspector-dependent `throwOnSideEffect` remains oracle-only and Fast API is missing |
 | Object/function templates and interceptors | `template.go`, `template_advanced.go` | host and 14-check template-advanced fixtures; negative tests; Go benchmarks | **partial**: final upstream option/configuration audit remains |
@@ -40,12 +40,13 @@ not counted in that total.
 | Typed arrays and DataView | `typed_arrays.go` | 14-check typed-array fixture; per-kind boundary/fatal tests; Go benchmarks | **complete** for all 12 pinned typed-array kinds and characterized geometry/data behavior |
 | Value serializer/deserializer and delegates | `serializer.go`, `serializer_delegates.go` | buffer and 25-check delegate fixtures; delegate panic boundaries; Go benchmarks | **partial**: legacy-wire-format control and actual Wasm-module return support remain |
 | Snapshots and startup data | `snapshot.go` | 15-check snapshot/handle fixture; negative and cross-thread tests; Go benchmarks | **partial**: `StartupData::can_be_rehashed` and remaining creator options are missing |
-| Source-text ES modules | `module.go`, `module_cache.go`, source-text compile/link/evaluate, unbound scripts and opaque code cache | 7-check module and 3-check module-cache fixtures; cache/resolver panic/lifecycle/thread tests; matched Rust/Go module benchmarks | **partial**: synthetic modules, dynamic/source/deferred imports, import-meta callbacks and stalled-TLA diagnostics remain |
+| Source-text and synthetic ES modules | `module.go`, `module_cache.go`, `module_synthetic.go`; source-text compile/link/evaluate, synthetic exports/callbacks, unbound scripts and opaque code cache | 7-check source-text, 3-check module-cache and 3-check synthetic-module fixtures; cache/resolver/evaluation-callback panic, fatal, lifecycle and thread tests; matched Rust/Go module benchmarks | **partial**: dynamic/source/deferred imports, import-meta callbacks and stalled-TLA diagnostics remain |
 | Wasm compile/stream/cache APIs | none; serializer exposes only a reduced no-module path | Wasm appears only as JS-observed exception/serialization behavior | **missing** |
 | Inspector and CRDTP | none | none | **missing** |
 | cppgc and Rust object tracing | none | none | **missing** |
 | Fast API / `CFunction` | none | none | **missing** |
-| ICU controls and simdutf | none | none | **missing** |
+| simdutf validation, transcoding, lengths, counts, detection and base64 | `simdutf.go`; all 43 pinned public functions plus result/options constants | 5-check full-surface fixture; destination-boundary tests; matched Rust/Go throughput benchmarks | **complete** for the pinned public simdutf module; Go converts Rust's unsafe output/precondition contracts into checked errors |
+| ICU controls | none | none | **missing** |
 | External-reference API | none | none | **missing** |
 | Non-Windows-amd64 targets | none | unsupported-target guards | **out of scope** by the pinned-artifact project decision |
 
@@ -59,6 +60,12 @@ not counted in that total.
   isolate, scope, thread and close requirements.
 - Go pins an isolate-owning goroutine to its OS thread and validates affinity on
   every public engine operation.
+- Synthetic modules reject duplicate export names and invalid UTF-8 names before
+  V8, normalize a zero callback result to `undefined`, and reject reentrant
+  `Module.Close`; the corresponding Rust paths CHECK-fail, fatal, or abort.
+- Go simdutf conversion and base64 methods validate output capacity and the
+  `convert_valid_*` input preconditions before calling the native functions;
+  violating those Rust `unsafe` contracts is undefined behavior.
 - Rust `StackTrace::get_frame(frame_count)` returns `Some` in the pinned build,
   but dereferencing that one-past-end handle access-violates (`0xC0000005`, 8/8
   subprocess probes). Go `StackTrace.Frame` checks `i >= FrameCount` before the
@@ -68,7 +75,7 @@ not counted in that total.
 
 ## Verification state
 
-On 2026-09-01, the Rust fixtures contain 316 checks. Go compares 314 checks
+On 2026-09-01, the Rust fixtures contain 328 checks. Go compares 326 checks
 byte-for-byte; the advanced stack line passes after the single fatal-handle
 safety normalization documented above; and the Function side-effect policy is
 implemented as metadata but its `throwOnSideEffect` observation remains
@@ -78,4 +85,4 @@ strict Clippy and full tests; the Go suite passes `go test ./... -count=1`,
 `scripts/verify_windows.ps1` explicitly reruns every current conformance package.
 
 The remaining rows are real product scope. In particular, Wasm, Inspector,
-cppgc, Fast API, custom platforms, ICU and simdutf are not silently deferred.
+cppgc, Fast API, custom platforms and ICU are not silently deferred.

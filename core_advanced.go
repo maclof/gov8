@@ -563,8 +563,17 @@ func (i *Isolate) SetData(slot int, data uintptr) error {
 // classic script).
 type Origin struct {
 	// ResourceName is the script's file name. Required (the engine keys
-	// exception positions and stack frames off it).
+	// exception positions and stack frames off it). It is retained as the
+	// convenient string form used by existing callers.
 	ResourceName string
+	// ResourceNameValue supplies the resource name as an existing scope-local
+	// JavaScript Value, matching ScriptOrigin's arbitrary Local<Value> input.
+	// A non-zero Value takes precedence over ResourceName and preserves its
+	// exact type and identity. It must be live and belong to this Context's
+	// isolate when CompileWithOrigin is called. CompileUnbound and
+	// CompileCached reject this form before FFI because the pinned code-cache
+	// path fatals for object-valued resource names.
+	ResourceNameValue Value
 	// LineOffset/ColumnOffset shift reported line/column numbers.
 	LineOffset   int32
 	ColumnOffset int32
@@ -626,6 +635,19 @@ func bytesArg(b []byte) (p uintptr) {
 	return p
 }
 
+func (c *Context) originResourceValue(o *Origin) (uintptr, error) {
+	if o == nil || o.ResourceNameValue.h == 0 {
+		return 0, nil
+	}
+	if err := o.ResourceNameValue.check(); err != nil {
+		return 0, fmt.Errorf("gov8: origin resource name: %w", err)
+	}
+	if o.ResourceNameValue.iso != c.iso {
+		return 0, foreignIsolate("origin resource name")
+	}
+	return o.ResourceNameValue.h, nil
+}
+
 // CompileWithOrigin compiles source with a script origin. TryCatch routing
 // matches Context.Compile.
 func (c *Context) CompileWithOrigin(s *Scope, source string, origin *Origin, tc *TryCatch) (*Script, error) {
@@ -652,19 +674,31 @@ func (c *Context) CompileWithOrigin(s *Scope, source string, origin *Origin, tc 
 	}
 	src := []byte(source)
 	name, smap, keep := originArgs(origin)
+	resourceValue, err := c.originResourceValue(origin)
+	if err != nil {
+		return nil, err
+	}
 	var tcv uintptr
 	if tc != nil {
 		tcv = tc.handle
 	}
 	var out uintptr
-	r1, _, _ := proc("gov8_ca_script_compile_origin").Call(
-		c.iso.handleAssumingCheck(), c.handle, sh, tcv,
-		bytesArg(src), uintptr(len(src)),
-		bytesArg(name), uintptr(len(name)),
-		uintptr(int32(origin.LineOffset)), uintptr(int32(origin.ColumnOffset)),
-		uintptr(int32(origin.ScriptID)),
-		bytesArg(smap), uintptr(len(smap)),
-		uintptr(origin.flags()), uintptr(unsafe.Pointer(&out)))
+	var r1 uintptr
+	if resourceValue != 0 {
+		r1, _, _ = proc("gov8_ca_script_compile_origin_value").Call(
+			c.iso.handleAssumingCheck(), c.handle, sh, tcv,
+			bytesArg(src), uintptr(len(src)), bytesArg(name), uintptr(len(name)),
+			resourceValue, uintptr(int32(origin.LineOffset)), uintptr(int32(origin.ColumnOffset)),
+			uintptr(int32(origin.ScriptID)), bytesArg(smap), uintptr(len(smap)),
+			uintptr(origin.flags()), uintptr(unsafe.Pointer(&out)))
+	} else {
+		r1, _, _ = proc("gov8_ca_script_compile_origin").Call(
+			c.iso.handleAssumingCheck(), c.handle, sh, tcv,
+			bytesArg(src), uintptr(len(src)), bytesArg(name), uintptr(len(name)),
+			uintptr(int32(origin.LineOffset)), uintptr(int32(origin.ColumnOffset)),
+			uintptr(int32(origin.ScriptID)), bytesArg(smap), uintptr(len(smap)),
+			uintptr(origin.flags()), uintptr(unsafe.Pointer(&out)))
+	}
 	runtime.KeepAlive(keep)
 	runtime.KeepAlive(src)
 	if int64(r1) < 0 {
@@ -821,12 +855,15 @@ const (
 	OptEagerCompile CompileOptions = 2
 )
 
-// CompileUnbound compiles an unbound script with an origin and options
+// CompileUnbound compiles an unbound script with a string-valued origin and options
 // (ScriptCompiler::compile_unbound_script). TryCatch routing matches
 // Context.Compile.
 func (c *Context) CompileUnbound(s *Scope, source string, origin *Origin, opts CompileOptions, tc *TryCatch) (*UnboundScript, error) {
 	if opts == OptConsumeCodeCache {
 		return nil, fmt.Errorf("gov8: use CompileCached to consume a code cache")
+	}
+	if origin != nil && origin.ResourceNameValue.h != 0 {
+		return nil, fmt.Errorf("gov8: CompileUnbound does not support Value resource names")
 	}
 	if err := c.check(); err != nil {
 		return nil, err
@@ -855,11 +892,9 @@ func (c *Context) CompileUnbound(s *Scope, source string, origin *Origin, opts C
 	var out uintptr
 	r1, _, _ := proc("gov8_ca_compile_unbound").Call(
 		c.iso.handleAssumingCheck(), c.handle, sh, tcv,
-		bytesArg(src), uintptr(len(src)),
-		bytesArg(name), uintptr(len(name)),
+		bytesArg(src), uintptr(len(src)), bytesArg(name), uintptr(len(name)),
 		uintptr(int32(origin.LineOffset)), uintptr(int32(origin.ColumnOffset)),
-		uintptr(int32(origin.ScriptID)),
-		bytesArg(smap), uintptr(len(smap)),
+		uintptr(int32(origin.ScriptID)), bytesArg(smap), uintptr(len(smap)),
 		uintptr(origin.flags()), uintptr(opts), uintptr(unsafe.Pointer(&out)))
 	runtime.KeepAlive(keep)
 	runtime.KeepAlive(src)
@@ -899,7 +934,12 @@ func (i *Isolate) CheckCodeCache(cache []byte) (int, error) {
 // prevalidated with CheckCodeCache first: an incompatible cache is rejected
 // with an error instead of reaching the deserializer. rejected reports the
 // engine's own post-compile rejected flag (false for a healthy cache).
+// Value-valued resource names are rejected before FFI; only the direct
+// CompileWithOrigin path is characterized as safe for arbitrary Values.
 func (c *Context) CompileCached(s *Scope, source string, origin *Origin, cache []byte, tc *TryCatch) (script *Script, rejected bool, err error) {
+	if origin != nil && origin.ResourceNameValue.h != 0 {
+		return nil, false, fmt.Errorf("gov8: CompileCached does not support Value resource names")
+	}
 	if err := c.check(); err != nil {
 		return nil, false, err
 	}
@@ -936,11 +976,9 @@ func (c *Context) CompileCached(s *Scope, source string, origin *Origin, cache [
 	var rej int32
 	r1, _, _ := proc("gov8_ca_script_compile_cached").Call(
 		c.iso.handleAssumingCheck(), c.handle, sh, tcv,
-		bytesArg(src), uintptr(len(src)),
-		bytesArg(name), uintptr(len(name)),
+		bytesArg(src), uintptr(len(src)), bytesArg(name), uintptr(len(name)),
 		uintptr(int32(origin.LineOffset)), uintptr(int32(origin.ColumnOffset)),
-		uintptr(int32(origin.ScriptID)),
-		bytesArg(smap), uintptr(len(smap)),
+		uintptr(int32(origin.ScriptID)), bytesArg(smap), uintptr(len(smap)),
 		uintptr(origin.flags()), uintptr(OptConsumeCodeCache),
 		bytesArg(cache), uintptr(len(cache)),
 		uintptr(unsafe.Pointer(&out)), uintptr(unsafe.Pointer(&rej)))

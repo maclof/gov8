@@ -81,13 +81,16 @@ type ModuleCompileOptions struct {
 	ColumnOffset int32
 }
 
-// Module is a persistent SourceTextModule rooted in its isolate. It remains
-// usable across handle scopes, but is bound to the context used to compile it.
+// Module is a persistent source-text or synthetic module rooted in its isolate.
+// It remains usable across handle scopes, but is bound to its creation context.
+// Close must be called before closing that context or isolate.
 type Module struct {
-	iso    *Isolate
-	ctx    *Context
-	handle uintptr
-	closed bool
+	iso                 *Isolate
+	ctx                 *Context
+	handle              uintptr
+	closed              bool
+	syntheticCallbackID uint64
+	syntheticActive     bool
 }
 
 var (
@@ -183,16 +186,27 @@ func (m *Module) Close() error {
 	if m.closed {
 		return errors.New("gov8: module already closed")
 	}
+	if m.syntheticActive {
+		return errors.New("gov8: cannot close a synthetic module from its active evaluation callback")
+	}
 	r1, _, _ := proc("gov8_module_dispose").Call(m.handle)
 	if int64(r1) < 0 {
 		return shimError("Module.Close", r1)
+	}
+	var syntheticCleanupErr error
+	if m.syntheticCallbackID != 0 {
+		syntheticCleanupErr = callErr("SyntheticModule.Close",
+			proc("gov8_synthetic_unregister"), m.iso.handleAssumingCheck(),
+			uintptr(m.syntheticCallbackID))
+		dropSyntheticModuleCallback(m.syntheticCallbackID)
+		m.syntheticCallbackID = 0
 	}
 	moduleRegMu.Lock()
 	delete(moduleByHandle, m.handle)
 	moduleRegMu.Unlock()
 	m.closed = true
 	m.handle = 0
-	return nil
+	return syntheticCleanupErr
 }
 
 // Status returns the current module state.
@@ -527,33 +541,47 @@ func (m *Module) Instantiate(s *Scope, resolver ModuleResolver, tc *TryCatch) (b
 	return ok == 1, nil
 }
 
-// Evaluate evaluates a linked graph and returns its evaluation promise. A
-// JavaScript runtime exception rejects the promise and sets ModuleErrored.
+// Evaluate evaluates a linked SourceTextModule graph and returns its promise.
+// SyntheticModule has a general Value completion and uses EvaluateValue.
 func (m *Module) Evaluate(s *Scope, tc *TryCatch) (Promise, error) {
 	if err := m.check(); err != nil {
 		return Promise{}, err
 	}
+	if m.syntheticCallbackID != 0 {
+		return Promise{}, errors.New("gov8: synthetic module evaluation returns a general Value; use EvaluateValue")
+	}
+	value, err := m.evaluateValue(s, tc)
+	if err != nil {
+		return Promise{}, err
+	}
+	return Promise{value}, nil
+}
+
+func (m *Module) evaluateValue(s *Scope, tc *TryCatch) (Value, error) {
+	if err := m.check(); err != nil {
+		return Value{}, err
+	}
 	if s == nil || s.iso != m.iso {
-		return Promise{}, foreignIsolate("scope")
+		return Value{}, foreignIsolate("scope")
 	}
 	sh, err := s.checkedHandleAssumingIsolate()
 	if err != nil {
-		return Promise{}, err
+		return Value{}, err
 	}
 	status, err := m.Status()
 	if err != nil {
-		return Promise{}, err
+		return Value{}, err
 	}
 	if status < ModuleInstantiated {
-		return Promise{}, fmt.Errorf("gov8: Evaluate requires an instantiated module, got %s", status)
+		return Value{}, fmt.Errorf("gov8: Evaluate requires an instantiated module, got %s", status)
 	}
 	var tcHandle uintptr
 	if tc != nil {
 		if tc.iso != m.iso {
-			return Promise{}, foreignIsolate("trycatch")
+			return Value{}, foreignIsolate("trycatch")
 		}
 		if err := tc.check(); err != nil {
-			return Promise{}, err
+			return Value{}, err
 		}
 		tcHandle = tc.handle
 	}
@@ -561,9 +589,24 @@ func (m *Module) Evaluate(s *Scope, tc *TryCatch) (Promise, error) {
 	r1, _, _ := proc("gov8_module_evaluate").Call(m.iso.handleAssumingCheck(), m.ctx.handle,
 		sh, m.handle, tcHandle, uintptr(unsafe.Pointer(&out)))
 	if int64(r1) < 0 {
-		return Promise{}, shimError("Module.Evaluate", r1)
+		return Value{}, shimError("Module.Evaluate", r1)
 	}
-	return Promise{Value{iso: m.iso, sc: s, h: out}}, nil
+	return Value{iso: m.iso, sc: s, h: out}, nil
+}
+
+// EvaluateValue evaluates either module kind and returns V8's raw completion
+// value. SourceTextModule callers normally use Evaluate. SyntheticModule
+// callbacks may return any Value; after the first evaluation, repeated
+// evaluation returns V8's fulfilled top-level Promise without invoking the
+// callback again.
+func (m *Module) EvaluateValue(s *Scope, tc *TryCatch) (Value, error) {
+	if err := m.check(); err != nil {
+		return Value{}, err
+	}
+	if m.syntheticCallbackID != 0 {
+		return m.evaluateSyntheticValue(s, tc)
+	}
+	return m.evaluateValue(s, tc)
 }
 
 // Namespace returns the module namespace once the graph has been instantiated.

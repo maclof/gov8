@@ -81,6 +81,16 @@ name = "module_cache"
 path = "benches/module_cache.rs"
 harness = false
 
+[[bench]]
+name = "modules_synthetic"
+path = "benches/modules_synthetic.rs"
+harness = false
+
+[[bench]]
+name = "simdutf"
+path = "benches/simdutf.rs"
+harness = false
+
 [profile.dev.package.v8]
 # The V8 engine itself is always the prebuilt release static library on
 # Windows; optimizing the thin Rust binding layer only speeds up test and

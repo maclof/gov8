@@ -419,7 +419,7 @@ extern "C" {
 
 __declspec(dllexport) int64_t gov8_abi_version(void) {
   ClearErr();
-  return 2;
+  return 3;
 }
 
 // --- platform / process lifecycle -------------------------------------------
@@ -1359,10 +1359,28 @@ __declspec(dllexport) int64_t gov8_script_run(v8::Isolate* iso, void* ctxw,
   ClearErr();
   CtxWrap* w = AsCtx(ctxw);
   ScriptWrap* s = AsScript(scriptw);
-  if (w == nullptr || s == nullptr || AsScope(scope) == nullptr ||
-      out_result == nullptr || !OwnedBy(iso, w->iso) ||
-      !OwnedBy(iso, s->iso)) {
-    SetErr("invalid argument");
+  if (w == nullptr) {
+    SetErr("invalid context handle");
+    return kErrBadArg;
+  }
+  if (s == nullptr) {
+    SetErr("invalid script handle");
+    return kErrBadArg;
+  }
+  if (AsScope(scope) == nullptr) {
+    SetErr("invalid scope handle");
+    return kErrBadArg;
+  }
+  if (out_result == nullptr) {
+    SetErr("null result output");
+    return kErrBadArg;
+  }
+  if (!OwnedBy(iso, w->iso)) {
+    SetErr("context belongs to another isolate");
+    return kErrBadArg;
+  }
+  if (!OwnedBy(iso, s->iso)) {
+    SetErr("script belongs to another isolate");
     return kErrBadArg;
   }
   try {
@@ -1659,7 +1677,9 @@ __declspec(dllexport) int64_t gov8_last_error(char* buf, int64_t cap) {
 #include "features/templates_callbacks.inc"
 #include "features/promises.inc"
 #include "features/modules.inc"
+#include "features/modules_synthetic.inc"
 #include "features/module_cache.inc"
+#include "features/simdutf.inc"
 #include "features/buffers_serialization.inc"
 #include "features/snapshots_handles.inc"
 #include "features/runtime_values.inc"

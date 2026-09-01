@@ -92,6 +92,9 @@ func newRuntime(t *testing.T) *runtime {
 
 func (r *runtime) close(t *testing.T) {
 	t.Helper()
+	if err := gov8.ReleaseIsolateHostState(r.iso); err != nil {
+		t.Error(err)
+	}
 	if err := r.scope.Close(); err != nil {
 		t.Error(err)
 	}
@@ -244,8 +247,14 @@ func TestAdvancedFunctionConformanceFixture(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer func() { _ = script.Close() }()
-		value, _ := script.Run(r.scope, nil)
-		function, _, _ := gov8.AsFunction(value, r.ctx)
+		value, err := script.Run(r.scope, nil)
+		if err != nil {
+			t.Fatalf("origin script Run: %v", err)
+		}
+		function, ok, err := gov8.AsFunction(value, r.ctx)
+		if err != nil || !ok {
+			t.Fatalf("origin AsFunction = %v, %v", ok, err)
+		}
 		line, _, _ := function.ScriptLineNumber()
 		column, _, _ := function.ScriptColumnNumber()
 		functionID, _ := function.ScriptID()
@@ -254,10 +263,19 @@ func TestAdvancedFunctionConformanceFixture(t *testing.T) {
 		resource, _ := origin.ResourceName.ToString(r.ctx)
 		sourceMap, _ := origin.SourceMapURL.ToString(r.ctx)
 
-		sourceURLScript, _ := r.ctx.Compile(r.scope, "(function sourceUrlFunction(){})\n//# sourceURL=virtual-source.js", nil)
+		sourceURLScript, err := r.ctx.Compile(r.scope, "(function sourceUrlFunction(){})\n//# sourceURL=virtual-source.js", nil)
+		if err != nil {
+			t.Fatalf("sourceURL Compile: %v", err)
+		}
 		defer func() { _ = sourceURLScript.Close() }()
-		sourceURLValue, _ := sourceURLScript.Run(r.scope, nil)
-		sourceURLFunction, _, _ := gov8.AsFunction(sourceURLValue, r.ctx)
+		sourceURLValue, err := sourceURLScript.Run(r.scope, nil)
+		if err != nil {
+			t.Fatalf("sourceURL Run: %v", err)
+		}
+		sourceURLFunction, ok, err := gov8.AsFunction(sourceURLValue, r.ctx)
+		if err != nil || !ok {
+			t.Fatalf("sourceURL AsFunction = %v, %v", ok, err)
+		}
 		sourceURLOrigin, _ := sourceURLFunction.ScriptOrigin()
 		sourceURLResource, _ := sourceURLOrigin.ResourceName.ToString(r.ctx)
 		sourceURLID, _ := sourceURLScript.ID()

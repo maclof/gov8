@@ -179,6 +179,26 @@ func (m *Message) Text(c *Context) (string, error) {
 	})
 }
 
+// TextValue returns Message::Get as its scope-local JavaScript String. Unlike
+// Text it performs no UTF-8 conversion. The returned Value is local to the
+// Message's Scope and remains usable after the originating TryCatch closes.
+func (m *Message) TextValue() (Value, error) {
+	if err := m.check(); err != nil {
+		return Value{}, err
+	}
+	var out uintptr
+	r1, _, _ := proc("gov8_ca_message_get_value").Call(
+		m.iso.handleAssumingCheck(), m.sc.handle, m.h,
+		uintptr(unsafe.Pointer(&out)))
+	if int64(r1) < 0 {
+		return Value{}, shimError("Message.TextValue", r1)
+	}
+	if out == 0 {
+		return Value{}, fmt.Errorf("gov8: Message.TextValue returned no value")
+	}
+	return Value{iso: m.iso, sc: m.sc, h: out}, nil
+}
+
 // LineNumber returns the 1-based line of the error; ok=false when absent.
 func (m *Message) LineNumber(c *Context) (line int32, ok bool, err error) {
 	if err := m.check(); err != nil {
@@ -226,6 +246,31 @@ func (m *Message) SourceLine(c *Context) (string, bool, error) {
 	return text, present == 1, nil
 }
 
+// SourceLineValue returns the source line as its scope-local JavaScript
+// String. ok=false represents Option::None; an empty String returns ok=true.
+func (m *Message) SourceLineValue(c *Context) (Value, bool, error) {
+	if err := m.check(); err != nil {
+		return Value{}, false, err
+	}
+	if err := c.checkAssumingIsolate(); err != nil {
+		return Value{}, false, err
+	}
+	if c.iso != m.iso {
+		return Value{}, false, foreignIsolate("context")
+	}
+	var out uintptr
+	r1, _, _ := proc("gov8_ca_message_source_line_value").Call(
+		m.iso.handleAssumingCheck(), c.handle, m.sc.handle, m.h,
+		uintptr(unsafe.Pointer(&out)))
+	if int64(r1) < 0 {
+		return Value{}, false, shimError("Message.SourceLineValue", r1)
+	}
+	if out == 0 {
+		return Value{}, false, nil
+	}
+	return Value{iso: m.iso, sc: m.sc, h: out}, true, nil
+}
+
 // ResourceName returns the script resource name ("" when absent).
 func (m *Message) ResourceName(c *Context) (string, error) {
 	if err := m.check(); err != nil {
@@ -243,6 +288,26 @@ func (m *Message) ResourceName(c *Context) (string, error) {
 			uintptr(unsafe.Pointer(buf)), uintptr(cap), uintptr(unsafe.Pointer(outLen)))
 		return r
 	})
+}
+
+// ResourceNameValue returns the script resource name as V8's original
+// scope-local Value. No string coercion is performed; ok=false represents an
+// absent handle, while an explicit undefined resource returns ok=true.
+func (m *Message) ResourceNameValue() (Value, bool, error) {
+	if err := m.check(); err != nil {
+		return Value{}, false, err
+	}
+	var out uintptr
+	r1, _, _ := proc("gov8_ca_message_resource_name_value").Call(
+		m.iso.handleAssumingCheck(), m.sc.handle, m.h,
+		uintptr(unsafe.Pointer(&out)))
+	if int64(r1) < 0 {
+		return Value{}, false, shimError("Message.ResourceNameValue", r1)
+	}
+	if out == 0 {
+		return Value{}, false, nil
+	}
+	return Value{iso: m.iso, sc: m.sc, h: out}, true, nil
 }
 
 func (m *Message) simpleInt(op string) (int64, error) {
@@ -383,21 +448,35 @@ func (s *Scope) CurrentStackTrace(frameLimit int) (*StackTrace, bool, error) {
 // CurrentScriptNameOrSourceURL returns the script name (or source URL) of
 // the topmost JS frame; ok=false when there is none.
 func (s *Scope) CurrentScriptNameOrSourceURL() (string, bool, error) {
+	v, ok, err := s.currentScriptNameOrSourceURLValue("CurrentScriptNameOrSourceURL")
+	if err != nil || !ok {
+		return "", ok, err
+	}
+	txt, err := v.StringValue()
+	return txt, true, err
+}
+
+// CurrentScriptNameOrSourceURLValue returns the topmost script name or
+// sourceURL as a scope-local JavaScript String without copying it to Go.
+func (s *Scope) CurrentScriptNameOrSourceURLValue() (Value, bool, error) {
+	return s.currentScriptNameOrSourceURLValue("CurrentScriptNameOrSourceURLValue")
+}
+
+func (s *Scope) currentScriptNameOrSourceURLValue(op string) (Value, bool, error) {
 	sh, err := s.checkedHandle()
 	if err != nil {
-		return "", false, err
+		return Value{}, false, err
 	}
 	var out uintptr
 	r1, _, _ := proc("gov8_ca_stack_trace_current_script_name").Call(
 		s.iso.handleAssumingCheck(), sh, uintptr(unsafe.Pointer(&out)))
 	if int64(r1) < 0 {
-		return "", false, shimError("CurrentScriptNameOrSourceURL", r1)
+		return Value{}, false, shimError(op, r1)
 	}
 	if out == 0 {
-		return "", false, nil
+		return Value{}, false, nil
 	}
-	txt, err := (Value{iso: s.iso, sc: s, h: out}).StringValue()
-	return txt, true, err
+	return Value{iso: s.iso, sc: s, h: out}, true, nil
 }
 
 // FrameCount returns the number of frames in the trace.
@@ -456,57 +535,81 @@ func (f *StackFrame) check() error {
 	return f.sc.check()
 }
 
-// FunctionName returns the called function's name; ok=false when anonymous.
-func (f *StackFrame) FunctionName() (string, bool, error) {
+// valueField returns a scope-local String produced by a StackFrame getter.
+func (f *StackFrame) valueField(procName, op string) (Value, bool, error) {
 	if err := f.check(); err != nil {
-		return "", false, err
-	}
-	var out uintptr
-	r1, _, _ := proc("gov8_ca_frame_function_name").Call(
-		f.iso.handleAssumingCheck(), f.sc.handle, f.h, uintptr(unsafe.Pointer(&out)))
-	if int64(r1) < 0 {
-		return "", false, shimError("StackFrame.FunctionName", r1)
-	}
-	if out == 0 {
-		return "", false, nil
-	}
-	txt, err := (Value{iso: f.iso, sc: f.sc, h: out}).StringValue()
-	return txt, true, err
-}
-
-// ScriptName returns the frame's script name; ok=false when absent.
-func (f *StackFrame) ScriptName() (string, bool, error) {
-	if err := f.check(); err != nil {
-		return "", false, err
-	}
-	var out uintptr
-	r1, _, _ := proc("gov8_ca_frame_script_name").Call(
-		f.iso.handleAssumingCheck(), f.sc.handle, f.h, uintptr(unsafe.Pointer(&out)))
-	if int64(r1) < 0 {
-		return "", false, shimError("StackFrame.ScriptName", r1)
-	}
-	if out == 0 {
-		return "", false, nil
-	}
-	txt, err := (Value{iso: f.iso, sc: f.sc, h: out}).StringValue()
-	return txt, true, err
-}
-
-func (f *StackFrame) textField(procName, op string) (string, bool, error) {
-	if err := f.check(); err != nil {
-		return "", false, err
+		return Value{}, false, err
 	}
 	var out uintptr
 	r1, _, _ := proc(procName).Call(
 		f.iso.handleAssumingCheck(), f.sc.handle, f.h,
 		uintptr(unsafe.Pointer(&out)))
 	if int64(r1) < 0 {
-		return "", false, shimError(op, r1)
+		return Value{}, false, shimError(op, r1)
 	}
 	if out == 0 {
-		return "", false, nil
+		return Value{}, false, nil
 	}
-	txt, err := (Value{iso: f.iso, sc: f.sc, h: out}).StringValue()
+	return Value{iso: f.iso, sc: f.sc, h: out}, true, nil
+}
+
+// FunctionNameValue returns the function name as a scope-local JavaScript
+// String. ok=false means the frame has no function name.
+func (f *StackFrame) FunctionNameValue() (Value, bool, error) {
+	return f.valueField("gov8_ca_frame_function_name", "StackFrame.FunctionNameValue")
+}
+
+// ScriptNameValue returns the script name as a scope-local JavaScript String.
+func (f *StackFrame) ScriptNameValue() (Value, bool, error) {
+	return f.valueField("gov8_ca_frame_script_name", "StackFrame.ScriptNameValue")
+}
+
+// ScriptNameOrSourceURLValue returns the script name or sourceURL fallback as
+// a scope-local JavaScript String.
+func (f *StackFrame) ScriptNameOrSourceURLValue() (Value, bool, error) {
+	return f.valueField("gov8_ea_frame_script_name_or_source_url",
+		"StackFrame.ScriptNameOrSourceURLValue")
+}
+
+// ScriptSourceValue returns the complete script source as a scope-local
+// JavaScript String.
+func (f *StackFrame) ScriptSourceValue() (Value, bool, error) {
+	return f.valueField("gov8_ea_frame_script_source", "StackFrame.ScriptSourceValue")
+}
+
+// SourceMappingURLValue returns the source-map URL as a scope-local JavaScript
+// String.
+func (f *StackFrame) SourceMappingURLValue() (Value, bool, error) {
+	return f.valueField("gov8_ea_frame_script_source_mapping_url",
+		"StackFrame.SourceMappingURLValue")
+}
+
+// FunctionName returns the called function's name; ok=false when anonymous.
+func (f *StackFrame) FunctionName() (string, bool, error) {
+	v, ok, err := f.valueField("gov8_ca_frame_function_name", "StackFrame.FunctionName")
+	if err != nil || !ok {
+		return "", ok, err
+	}
+	txt, err := v.StringValue()
+	return txt, true, err
+}
+
+// ScriptName returns the frame's script name; ok=false when absent.
+func (f *StackFrame) ScriptName() (string, bool, error) {
+	v, ok, err := f.valueField("gov8_ca_frame_script_name", "StackFrame.ScriptName")
+	if err != nil || !ok {
+		return "", ok, err
+	}
+	txt, err := v.StringValue()
+	return txt, true, err
+}
+
+func (f *StackFrame) textField(procName, op string) (string, bool, error) {
+	v, ok, err := f.valueField(procName, op)
+	if err != nil || !ok {
+		return "", ok, err
+	}
+	txt, err := v.StringValue()
 	return txt, true, err
 }
 
@@ -642,6 +745,9 @@ func ExceptionStackTrace(s *Scope, exc Value) (*StackTrace, bool, error) {
 	if err != nil {
 		return nil, false, err
 	}
+	if s.iso != exc.iso {
+		return nil, false, foreignIsolate("exception")
+	}
 	var out uintptr
 	r1, _, _ := proc("gov8_ca_exception_get_stack_trace").Call(
 		exc.iso.handleAssumingCheck(), sh, exc.h, uintptr(unsafe.Pointer(&out)))
@@ -666,6 +772,9 @@ func (i *Isolate) SetCaptureStackTraceForUncaughtExceptions(enable bool, frameLi
 	}
 	if frameLimit < 0 {
 		return fmt.Errorf("gov8: negative frame limit")
+	}
+	if uint64(frameLimit) > uint64(^uint32(0)>>1) {
+		return fmt.Errorf("gov8: frame limit exceeds V8 int32 range")
 	}
 	capture := uintptr(0)
 	if enable {

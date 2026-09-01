@@ -300,14 +300,13 @@ constexpr int64_t kOriginFlagModule = 8;
 // Builds a v8::ScriptOrigin on the caller's C++ stack from the wire
 // parameters. Strings may be absent (len <= 0 / null pointer): the source
 // map URL is then omitted, mirroring the crate's None.
-v8::ScriptOrigin CaMakeOrigin(v8::Local<v8::String> name, int64_t line_offset,
+v8::ScriptOrigin CaMakeOrigin(v8::Local<v8::Value> name, int64_t line_offset,
                               int64_t column_offset, int64_t script_id,
                               v8::Local<v8::String> source_map,
                               int64_t flags) {
-  v8::Local<v8::Value> name_value = name;
   v8::Local<v8::Value> smap_value = source_map;
   return v8::ScriptOrigin(
-      name_value, static_cast<int>(line_offset), static_cast<int>(column_offset),
+      name, static_cast<int>(line_offset), static_cast<int>(column_offset),
       (flags & kOriginFlagSharedCrossOrigin) != 0,
       static_cast<int>(script_id), smap_value,
       (flags & kOriginFlagOpaque) != 0, (flags & kOriginFlagWasm) != 0,
@@ -332,6 +331,49 @@ bool CaOriginStrings(v8::Isolate* iso, const char* name, int64_t name_len,
     return false;
   }
   if (smap != nullptr && smap_len > 0) {
+    if (!v8::String::NewFromUtf8(iso, smap, v8::NewStringType::kNormal,
+                                 static_cast<int>(smap_len))
+             .ToLocal(out_smap)) {
+      SetErr("origin source map url allocation failed");
+      return false;
+    }
+  }
+  return true;
+}
+
+// Resolves either the existing UTF-8 resource-name form or an arbitrary
+// caller-owned Value wire. A raw wire takes precedence and is never coerced;
+// the Go side has already validated its scope, isolate, and thread affinity.
+bool CaOriginValues(v8::Isolate* iso, void* resource_value,
+                    const char* name, int64_t name_len, const char* smap,
+                    int64_t smap_len, bool required,
+                    v8::Local<v8::Value>* out_name,
+                    v8::Local<v8::String>* out_smap, bool* out_present) {
+  if (out_name == nullptr || out_smap == nullptr || out_present == nullptr ||
+      (name == nullptr && name_len > 0) ||
+      (smap == nullptr && smap_len > 0)) {
+    SetErr("invalid origin argument");
+    return false;
+  }
+  *out_present = false;
+  if (resource_value != nullptr) {
+    *out_name = FromWire<v8::Value>(resource_value);
+    *out_present = true;
+  } else if (name != nullptr && name_len > 0) {
+    v8::Local<v8::String> name_s;
+    if (!v8::String::NewFromUtf8(iso, name, v8::NewStringType::kNormal,
+                                 static_cast<int>(name_len))
+             .ToLocal(&name_s)) {
+      SetErr("origin resource name allocation failed");
+      return false;
+    }
+    *out_name = name_s;
+    *out_present = true;
+  } else if (required) {
+    SetErr("origin resource name required");
+    return false;
+  }
+  if (*out_present && smap != nullptr && smap_len > 0) {
     if (!v8::String::NewFromUtf8(iso, smap, v8::NewStringType::kNormal,
                                  static_cast<int>(smap_len))
              .ToLocal(out_smap)) {
@@ -1122,6 +1164,70 @@ __declspec(dllexport) int64_t gov8_ca_script_compile_origin(
   }
 }
 
+// Arbitrary-Value resource-name counterpart. The wire is used verbatim so
+// Message::GetScriptResourceName preserves its type and identity.
+__declspec(dllexport) int64_t gov8_ca_script_compile_origin_value(
+    v8::Isolate* iso, void* ctxw, void* scope, void* tcw, const char* src,
+    int64_t src_len, const char* name, int64_t name_len, void* resource_value,
+    int64_t line_offset, int64_t column_offset, int64_t script_id,
+    const char* smap, int64_t smap_len, int64_t flags, void** out_script) {
+  ClearErr();
+  CtxWrap* w = AsCtx(ctxw);
+  if (w == nullptr || resource_value == nullptr || out_script == nullptr ||
+      !ScopeIs(iso, scope) || !OwnedBy(iso, w->iso)) {
+    SetErr("invalid argument");
+    return kErrBadArg;
+  }
+  if (src == nullptr && src_len > 0) {
+    SetErr("null source buffer");
+    return kErrBadArg;
+  }
+  try {
+    Gov8IsolateScope iso_scope(iso);
+    v8::Local<v8::Context> ctx = w->ctx->Get(iso);
+    v8::Context::Scope ctx_scope(ctx);
+    FallbackTryCatch fallback;
+    v8::TryCatch* tc = nullptr;
+    if (!CaResolveTc(iso, tcw, &fallback, &tc)) {
+      return kErrBadArg;
+    }
+    v8::Local<v8::String> source;
+    if (!v8::String::NewFromUtf8(iso, src, v8::NewStringType::kNormal,
+                                 static_cast<int>(src_len))
+             .ToLocal(&source)) {
+      SetErr("String::NewFromUtf8 failed");
+      return kErrGeneric;
+    }
+    v8::Local<v8::Value> name_v;
+    v8::Local<v8::String> smap_s;
+    bool has_origin = false;
+    if (!CaOriginValues(iso, resource_value, name, name_len, smap, smap_len,
+                        true, &name_v, &smap_s, &has_origin)) {
+      return kErrBadArg;
+    }
+    v8::ScriptOrigin origin = CaMakeOrigin(
+        name_v, line_offset, column_offset, script_id, smap_s, flags);
+    const v8::Script* compiled = v8__Script__Compile(
+        gov8_snap_impl::DerefLocal(ctx), gov8_snap_impl::DerefLocal(source),
+        origin);
+    if (compiled == nullptr) {
+      SetErr("compile failed");
+      return kErrException;
+    }
+    v8::Local<v8::Script> script;
+    std::memcpy(&script, &compiled, sizeof(void*));
+    ScriptWrap* sw = new ScriptWrap{};
+    sw->magic = kScriptMagic;
+    sw->iso = iso;
+    sw->script = new v8::Global<v8::Script>(iso, script);
+    *out_script = sw;
+    return kOk;
+  } catch (...) {
+    SetErr("C++ exception in script_compile_origin_value");
+    return kErrCpp;
+  }
+}
+
 // --- unbound scripts ------------------------------------------------------------------
 
 // Roots the compiled script's UnboundScript in a persistent wrapper.
@@ -1611,6 +1717,27 @@ __declspec(dllexport) int64_t gov8_ca_message_text(v8::Isolate* iso,
   }
 }
 
+// Message::Get as a String wire in the CALLER's open HandleScope. Unlike
+// gov8_ca_message_text this preserves the engine value without conversion.
+__declspec(dllexport) int64_t gov8_ca_message_get_value(v8::Isolate* iso,
+                                                        void* scope,
+                                                        void* msg,
+                                                        void** out) {
+  ClearErr();
+  if (msg == nullptr || out == nullptr || !ScopeIs(iso, scope)) {
+    SetErr("invalid argument");
+    return kErrBadArg;
+  }
+  try {
+    Gov8IsolateScope iso_scope(iso);
+    *out = ToWire(FromWire<v8::Message>(msg)->Get());
+    return kOk;
+  } catch (...) {
+    SetErr("C++ exception in message_get_value");
+    return kErrCpp;
+  }
+}
+
 #define GOV8_CA_MSG_SIMPLE(name, expr)                                         \
   __declspec(dllexport) int64_t name(v8::Isolate* iso, void* scope, void* msg) { \
     ClearErr();                                                                \
@@ -1717,6 +1844,32 @@ __declspec(dllexport) int64_t gov8_ca_message_source_line(v8::Isolate* iso,
   }
 }
 
+// Source line as a String wire in the CALLER's open HandleScope. A null wire
+// is the binding's Option::None; an empty String remains a non-null wire.
+__declspec(dllexport) int64_t gov8_ca_message_source_line_value(
+    v8::Isolate* iso, void* ctxw, void* scope, void* msg, void** out) {
+  ClearErr();
+  CtxWrap* w = AsCtx(ctxw);
+  if (w == nullptr || msg == nullptr || out == nullptr ||
+      !ScopeIs(iso, scope) || !OwnedBy(iso, w->iso)) {
+    SetErr("invalid argument");
+    return kErrBadArg;
+  }
+  try {
+    Gov8IsolateScope iso_scope(iso);
+    v8::Local<v8::Context> ctx = w->ctx->Get(iso);
+    v8::Context::Scope ctx_scope(ctx);
+    const v8::String* p = v8__Message__GetSourceLine(
+        gov8_snap_impl::DerefLocal(FromWire<v8::Message>(msg)),
+        gov8_snap_impl::DerefLocal(ctx));
+    *out = const_cast<void*>(static_cast<const void*>(p));
+    return kOk;
+  } catch (...) {
+    SetErr("C++ exception in message_source_line_value");
+    return kErrCpp;
+  }
+}
+
 // Script resource name (lossy UTF-8 of the value; "" when absent).
 __declspec(dllexport) int64_t gov8_ca_message_resource_name(v8::Isolate* iso,
                                                             void* ctxw,
@@ -1750,6 +1903,27 @@ __declspec(dllexport) int64_t gov8_ca_message_resource_name(v8::Isolate* iso,
     return BufferUtf8(text, buf, cap, out_len);
   } catch (...) {
     SetErr("C++ exception in message_resource_name");
+    return kErrCpp;
+  }
+}
+
+// Script resource name as its original Value wire. No ToString conversion is
+// performed, so non-string resources and undefined remain distinguishable.
+__declspec(dllexport) int64_t gov8_ca_message_resource_name_value(
+    v8::Isolate* iso, void* scope, void* msg, void** out) {
+  ClearErr();
+  if (msg == nullptr || out == nullptr || !ScopeIs(iso, scope)) {
+    SetErr("invalid argument");
+    return kErrBadArg;
+  }
+  try {
+    Gov8IsolateScope iso_scope(iso);
+    const v8::Value* p = v8__Message__GetScriptResourceName(
+        gov8_snap_impl::DerefLocal(FromWire<v8::Message>(msg)));
+    *out = const_cast<void*>(static_cast<const void*>(p));
+    return kOk;
+  } catch (...) {
+    SetErr("C++ exception in message_resource_name_value");
     return kErrCpp;
   }
 }
@@ -1837,7 +2011,7 @@ __declspec(dllexport) int64_t gov8_ca_exception_get_stack_trace(
 __declspec(dllexport) int64_t gov8_ca_set_capture_stack_trace_uncaught(
     v8::Isolate* iso, int32_t capture, int64_t frame_limit) {
   ClearErr();
-  if (iso == nullptr || frame_limit < 0) {
+  if (iso == nullptr || frame_limit < 0 || frame_limit > 2147483647LL) {
     SetErr("invalid argument");
     return kErrBadArg;
   }
