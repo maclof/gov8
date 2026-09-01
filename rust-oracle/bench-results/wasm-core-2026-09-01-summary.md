@@ -95,3 +95,41 @@ These fresh retained-path measurements put the current public operation at
 about 3.51-3.91x the frozen Rust 149.43 ns midpoint and its native floor at
 about 1.84x. Native transitions account for roughly two thirds of sampled CPU;
 required affinity checks and HandleScope lifecycle dominate the remainder.
+
+## Go wrapper escape follow-up
+
+The Go restoration implementation was split into a validated `Value`-returning
+helper and a deliberately small public pointer wrapper. The compiler can inline
+the wrapper and keep a short-lived result on the caller's stack; callers that
+retain the public pointer still get the same heap-backed API. Native restoration,
+the compiled-module ownership lock, error ordering, context entry, and scope
+lifetime are unchanged.
+
+The Go and pinned Rust restoration workloads use the identical 36-byte module,
+compile it once outside the timed region, retain the compiled representation,
+and create a fresh nested scope for each timed restoration. The Go benchmark now
+also keeps the returned object alive explicitly and performs an untimed type
+probe. A second Go workload disposes the producer isolate before constructing a
+consumer isolate; all producer/consumer setup remains outside the timed region,
+so its timed operation is the same restoration measured by Rust.
+
+Eight two-second frozen A/B pairs alternated old and new Go source against the
+same committed ABI-41 DLL (`0FBD464E2A21526067125465110DCB25C2BCBAD86C4B229809DE9E33A66CA6BF`):
+
+```text
+go test -c -o gov8-{base,candidate}.test.exe .
+gov8-*.test.exe -test.run=^$ -test.bench=^BenchmarkWasmFromCompiledAnswerModule$ -test.benchmem -test.benchtime=2s -test.count=1
+gov8-*.test.exe -test.run=^$ -test.bench=^BenchmarkWasmFromCompiledAnswerModuleCrossIsolate$ -test.benchmem -test.benchtime=2s -test.count=1
+```
+
+| Workload | Go before ns/op samples | Go after ns/op samples | Before; after allocations | After / Rust midpoint |
+|---|---:|---:|---:|---:|
+| Same isolate | 480.9, 509.8, 482.2, 504.3, 476.1, 471.2, 466.7, 468.3 | 429.7, 469.2, 459.4, 448.2, 444.9, 453.2, 450.6, 449.0 | 72 B/2; 48 B/1 | 3.01x |
+| Producer disposed, consumer isolate | 459.4, 473.6, 449.1, 457.7, 460.0, 456.2, 462.8, 471.2 | 433.8, 437.9, 437.4, 472.9, 431.7, 431.8, 443.7, 438.0 | 72 B/2; 48 B/1 | 2.93x |
+
+The same-isolate median fell from 478.5 to 449.8 ns (6.0%), with all eight
+pairs improving. The cross-isolate median fell from 459.7 to 437.65 ns (4.8%),
+with seven of eight pairs improving. Both workloads save 24 bytes and one
+allocation per restoration. Ratios use the pinned Rust 149.43 ns midpoint;
+Rust does not separately time producer-isolate disposal, which is untimed in
+the Go cross-isolate workload as well.

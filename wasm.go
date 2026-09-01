@@ -111,25 +111,37 @@ func (c *Context) CompileWasmModule(s *Scope, wireBytes []byte, tc *TryCatch) (*
 
 // WasmModuleFromCompiled creates a local module object from a shareable
 // compiled module. The compiled handle remains owned by the caller.
-func (c *Context) WasmModuleFromCompiled(s *Scope, compiled *CompiledWasmModule) (*WasmModuleObject, error) {
+func (c *Context) WasmModuleFromCompiled(s *Scope, compiled *CompiledWasmModule) (result *WasmModuleObject, err error) {
+	value, err := c.wasmModuleFromCompiled(s, compiled)
+	if err == nil {
+		result = &WasmModuleObject{Value: value}
+	}
+	return result, err
+}
+
+// wasmModuleFromCompiled performs the validated native restoration without
+// imposing pointer-wrapper escape decisions on callers. Keeping the public
+// wrapper tiny lets the compiler place a short-lived WasmModuleObject on the
+// caller's stack; retained results preserve the same heap-backed pointer API.
+func (c *Context) wasmModuleFromCompiled(s *Scope, compiled *CompiledWasmModule) (Value, error) {
 	if err := c.check(); err != nil {
-		return nil, err
+		return Value{}, err
 	}
 	if s == nil || s.iso != c.iso {
-		return nil, foreignIsolate("scope")
+		return Value{}, foreignIsolate("scope")
 	}
 	sh, err := s.checkedHandleAssumingIsolate()
 	if err != nil {
-		return nil, err
+		return Value{}, err
 	}
 	if compiled == nil {
-		return nil, errors.New("gov8: nil compiled wasm module")
+		return Value{}, errors.New("gov8: nil compiled wasm module")
 	}
 	wasmFromCompiledProcOnce.Do(resolveWasmFromCompiledProc)
 	compiled.mu.Lock()
 	if compiled.closed {
 		compiled.mu.Unlock()
-		return nil, errors.New("gov8: compiled wasm module used after Close")
+		return Value{}, errors.New("gov8: compiled wasm module used after Close")
 	}
 	var out uintptr
 	// Proc.Call marks every uintptr argument as escaping. This fixed-arity
@@ -142,9 +154,9 @@ func (c *Context) WasmModuleFromCompiled(s *Scope, compiled *CompiledWasmModule)
 		uintptr(unsafe.Pointer(&out)), 0)
 	compiled.mu.Unlock()
 	if int64(r1) < 0 {
-		return nil, shimError("WasmModuleFromCompiled", r1)
+		return Value{}, shimError("WasmModuleFromCompiled", r1)
 	}
-	return &WasmModuleObject{Value: Value{iso: c.iso, sc: s, h: out}}, nil
+	return Value{iso: c.iso, sc: s, h: out}, nil
 }
 
 // CompiledModule returns a newly owned compiled representation.
