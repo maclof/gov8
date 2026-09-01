@@ -249,12 +249,15 @@ func customPlatformDispatch(frame *customPlatformFrame) uintptr {
 		case platformDispatchNonNestableDelayed:
 			entry.impl.PostNonNestableDelayedTask(isolate, task, math.Float64frombits(frame.delay))
 		}
+		task.armFinalizer()
 	case platformDispatchIdle:
 		if frame.isolate == 0 || frame.task == 0 {
 			fatalHostMisuse("custom platform idle dispatch received a null native handle")
 			return 0
 		}
-		entry.impl.PostIdleTask(isolate, newPlatformIdleTask(entry, frame.id, isolate, frame.task))
+		task := newPlatformIdleTask(entry, frame.id, isolate, frame.task)
+		entry.impl.PostIdleTask(isolate, task)
+		task.armFinalizer()
 	case platformDispatchDrop:
 		dropCustomPlatformEntry(frame.id, entry)
 	default:
@@ -303,18 +306,32 @@ func dropCustomPlatformEntry(id uint64, entry *customPlatformEntry) {
 // mutually exclusive. Close may run on any thread; Run requires the owning
 // live Isolate and therefore cannot accidentally execute on a worker thread.
 type Task struct {
-	mu      sync.Mutex
-	handle  uintptr
-	isolate PlatformIsolate
-	entry   *customPlatformEntry
-	workID  uint64
+	mu             sync.Mutex
+	handle         uintptr
+	isolate        PlatformIsolate
+	entry          *customPlatformEntry
+	workID         uint64
+	finalizerArmed bool
 }
 
 func newPlatformTask(entry *customPlatformEntry, _ uint64, isolate PlatformIsolate, handle uintptr) *Task {
 	task := &Task{handle: handle, isolate: isolate, entry: entry}
 	task.workID = entry.add(task)
-	runtime.SetFinalizer(task, func(task *Task) { _ = task.Close() })
 	return task
+}
+
+// armFinalizer is deliberately delayed until the posting callback returns.
+// Synchronously consumed tasks are the common path and remain live through
+// the callback, so installing and immediately removing a runtime finalizer
+// only adds bookkeeping. A retained task receives the same finalizer before
+// the dispatcher releases its local reference.
+func (task *Task) armFinalizer() {
+	task.mu.Lock()
+	if task.handle != 0 {
+		runtime.SetFinalizer(task, func(task *Task) { _ = task.Close() })
+		task.finalizerArmed = true
+	}
+	task.mu.Unlock()
 }
 
 func (task *Task) take() (uintptr, error) {
@@ -328,8 +345,12 @@ func (task *Task) take() (uintptr, error) {
 	}
 	handle := task.handle
 	task.handle = 0
+	finalizerArmed := task.finalizerArmed
+	task.finalizerArmed = false
 	task.mu.Unlock()
-	runtime.SetFinalizer(task, nil)
+	if finalizerArmed {
+		runtime.SetFinalizer(task, nil)
+	}
 	task.entry.remove(task.workID)
 	return handle, nil
 }
@@ -353,7 +374,11 @@ func (task *Task) Run(isolate *Isolate) error {
 	if err != nil {
 		return err
 	}
-	return callErr("Task.Run", proc("gov8_pc_task_run_delete"), handle)
+	r1, _, _ := syscall.Syscall(proc("gov8_pc_task_run_delete").Addr(), 1, handle, 0, 0)
+	if int64(r1) < 0 {
+		return shimError("Task.Run", r1)
+	}
+	return nil
 }
 
 // Close destroys a task without executing it and may be called from any
@@ -363,7 +388,11 @@ func (task *Task) Close() error {
 	if err != nil {
 		return err
 	}
-	return callErr("Task.Close", proc("gov8_pc_task_delete"), handle)
+	r1, _, _ := syscall.Syscall(proc("gov8_pc_task_delete").Addr(), 1, handle, 0, 0)
+	if int64(r1) < 0 {
+		return shimError("Task.Close", r1)
+	}
+	return nil
 }
 
 func (task *Task) closeFromPlatform() {
@@ -377,26 +406,39 @@ func (task *Task) closeFromPlatform() {
 	}
 	handle := task.handle
 	task.handle = 0
+	finalizerArmed := task.finalizerArmed
+	task.finalizerArmed = false
 	task.mu.Unlock()
-	runtime.SetFinalizer(task, nil)
-	_, _, _ = proc("gov8_pc_task_delete").Call(handle)
+	if finalizerArmed {
+		runtime.SetFinalizer(task, nil)
+	}
+	_, _, _ = syscall.Syscall(proc("gov8_pc_task_delete").Addr(), 1, handle, 0, 0)
 }
 
 // IdleTask is a transferred V8 idle task with the same one-shot ownership and
 // affinity contract as Task.
 type IdleTask struct {
-	mu      sync.Mutex
-	handle  uintptr
-	isolate PlatformIsolate
-	entry   *customPlatformEntry
-	workID  uint64
+	mu             sync.Mutex
+	handle         uintptr
+	isolate        PlatformIsolate
+	entry          *customPlatformEntry
+	workID         uint64
+	finalizerArmed bool
 }
 
 func newPlatformIdleTask(entry *customPlatformEntry, _ uint64, isolate PlatformIsolate, handle uintptr) *IdleTask {
 	task := &IdleTask{handle: handle, isolate: isolate, entry: entry}
 	task.workID = entry.add(task)
-	runtime.SetFinalizer(task, func(task *IdleTask) { _ = task.Close() })
 	return task
+}
+
+func (task *IdleTask) armFinalizer() {
+	task.mu.Lock()
+	if task.handle != 0 {
+		runtime.SetFinalizer(task, func(task *IdleTask) { _ = task.Close() })
+		task.finalizerArmed = true
+	}
+	task.mu.Unlock()
 }
 
 func (task *IdleTask) take() (uintptr, error) {
@@ -410,8 +452,12 @@ func (task *IdleTask) take() (uintptr, error) {
 	}
 	handle := task.handle
 	task.handle = 0
+	finalizerArmed := task.finalizerArmed
+	task.finalizerArmed = false
 	task.mu.Unlock()
-	runtime.SetFinalizer(task, nil)
+	if finalizerArmed {
+		runtime.SetFinalizer(task, nil)
+	}
 	task.entry.remove(task.workID)
 	return handle, nil
 }
@@ -434,8 +480,12 @@ func (task *IdleTask) Run(isolate *Isolate, deadlineInSeconds float64) error {
 	if err != nil {
 		return err
 	}
-	return callErr("IdleTask.Run", proc("gov8_pc_idle_task_run_delete"),
-		handle, uintptr(math.Float64bits(deadlineInSeconds)))
+	r1, _, _ := syscall.Syscall(proc("gov8_pc_idle_task_run_delete").Addr(), 2,
+		handle, uintptr(math.Float64bits(deadlineInSeconds)), 0)
+	if int64(r1) < 0 {
+		return shimError("IdleTask.Run", r1)
+	}
+	return nil
 }
 
 // Close destroys an idle task without running it and may run on any thread.
@@ -444,7 +494,11 @@ func (task *IdleTask) Close() error {
 	if err != nil {
 		return err
 	}
-	return callErr("IdleTask.Close", proc("gov8_pc_idle_task_delete"), handle)
+	r1, _, _ := syscall.Syscall(proc("gov8_pc_idle_task_delete").Addr(), 1, handle, 0, 0)
+	if int64(r1) < 0 {
+		return shimError("IdleTask.Close", r1)
+	}
+	return nil
 }
 
 func (task *IdleTask) closeFromPlatform() {
@@ -458,7 +512,11 @@ func (task *IdleTask) closeFromPlatform() {
 	}
 	handle := task.handle
 	task.handle = 0
+	finalizerArmed := task.finalizerArmed
+	task.finalizerArmed = false
 	task.mu.Unlock()
-	runtime.SetFinalizer(task, nil)
-	_, _, _ = proc("gov8_pc_idle_task_delete").Call(handle)
+	if finalizerArmed {
+		runtime.SetFinalizer(task, nil)
+	}
+	_, _, _ = syscall.Syscall(proc("gov8_pc_idle_task_delete").Addr(), 1, handle, 0, 0)
 }

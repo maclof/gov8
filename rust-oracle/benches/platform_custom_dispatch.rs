@@ -5,6 +5,8 @@
 //! `ImmediateImpl` consumes it synchronously with `Task::run`, which invokes
 //! the virtual Run method and deletes the task. Context construction and all
 //! created/dispatched/run/destroyed counter validation are outside timing.
+//! The one-probe/10,000-operation explicit warm-up and reset boundaries match
+//! the Go benchmark exactly.
 
 mod common;
 
@@ -14,6 +16,8 @@ use std::ffi::c_void;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
+
+const EXPLICIT_WARM_UP_ITERATIONS: u64 = 10_000;
 
 unsafe extern "C" {
     fn gov8_oracle_platform_bench_post_noop_task(
@@ -76,6 +80,24 @@ fn noop_task_dispatch(c: &mut Criterion) {
     assert!(unsafe { gov8_oracle_platform_bench_post_noop_task(context, isolate_identity) });
     assert_eq!(counters.dispatched.load(Ordering::SeqCst), 1);
     assert_eq!(native_counts(), (1, 1, 1));
+    unsafe { gov8_oracle_platform_bench_reset_noop_task_counts() };
+    counters.dispatched.store(0, Ordering::SeqCst);
+
+    for _ in 0..EXPLICIT_WARM_UP_ITERATIONS {
+        assert!(unsafe { gov8_oracle_platform_bench_post_noop_task(context, isolate_identity) });
+    }
+    assert_eq!(
+        counters.dispatched.load(Ordering::SeqCst),
+        EXPLICIT_WARM_UP_ITERATIONS
+    );
+    assert_eq!(
+        native_counts(),
+        (
+            EXPLICIT_WARM_UP_ITERATIONS,
+            EXPLICIT_WARM_UP_ITERATIONS,
+            EXPLICIT_WARM_UP_ITERATIONS
+        )
+    );
     unsafe { gov8_oracle_platform_bench_reset_noop_task_counts() };
     counters.dispatched.store(0, Ordering::SeqCst);
 

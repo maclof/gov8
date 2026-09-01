@@ -17,39 +17,32 @@ import (
 
 type immediateBenchmarkPlatform struct {
 	gov8.PlatformImplFuncs
-	mu      sync.Mutex
-	isolate *gov8.Isolate
+	isolate atomic.Pointer[gov8.Isolate]
 	posts   atomic.Uint64
-	err     error
+	err     atomic.Pointer[benchmarkCallbackError]
 }
+
+type benchmarkCallbackError struct{ err error }
 
 func (p *immediateBenchmarkPlatform) PostTask(_ gov8.PlatformIsolate, task *gov8.Task) {
 	p.posts.Add(1)
-	p.mu.Lock()
-	isolate := p.isolate
-	p.mu.Unlock()
-	if err := task.Run(isolate); err != nil {
+	if err := task.Run(p.isolate.Load()); err != nil {
 		_ = task.Close()
-		p.mu.Lock()
-		if p.err == nil {
-			p.err = err
-		}
-		p.mu.Unlock()
+		p.err.CompareAndSwap(nil, &benchmarkCallbackError{err: err})
 	}
 }
 
 func (p *immediateBenchmarkPlatform) begin(isolate *gov8.Isolate) {
-	p.mu.Lock()
-	p.isolate = isolate
-	p.err = nil
-	p.mu.Unlock()
+	p.isolate.Store(isolate)
+	p.err.Store(nil)
 	p.posts.Store(0)
 }
 
 func (p *immediateBenchmarkPlatform) callbackError() error {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	return p.err
+	if callbackError := p.err.Load(); callbackError != nil {
+		return callbackError.err
+	}
+	return nil
 }
 
 func loadBenchmarkShimDLL() (*syscall.DLL, error) {
@@ -167,8 +160,9 @@ func TestMain(m *testing.M) {
 
 // BenchmarkCustomPlatformNoopTaskDispatch measures one synthetic v8::Task
 // allocation, CustomPlatform PostTask callback into Go, Task.Run, and delete
-// per iteration. Platform/isolate setup and all counter validation are outside
-// the timed region.
+// per iteration. It uses the same one-probe/10,000-operation explicit warm-up
+// and counter-reset boundaries as the pinned rusty_v8 benchmark. Platform and
+// isolate setup plus all counter validation are outside the timed region.
 func BenchmarkCustomPlatformNoopTaskDispatch(b *testing.B) {
 	initializeCustomPlatformBenchmark()
 	if customPlatformBenchmark.err != nil {
@@ -195,6 +189,14 @@ func BenchmarkCustomPlatformNoopTaskDispatch(b *testing.B) {
 	benchmarkStatus(b, "post no-op task", func() uintptr { r, _, _ := post.Call(); return r }())
 	if impl.posts.Load() != 1 || impl.callbackError() != nil {
 		b.Fatalf("probe posts=%d callback_error=%v", impl.posts.Load(), impl.callbackError())
+	}
+	benchmarkStatus(b, "reset counts", func() uintptr { r, _, _ := reset.Call(); return r }())
+	impl.begin(isolate)
+	for range 10_000 {
+		benchmarkStatus(b, "warm-up post no-op task", func() uintptr { r, _, _ := post.Call(); return r }())
+	}
+	if impl.posts.Load() != 10_000 || impl.callbackError() != nil {
+		b.Fatalf("warm-up posts=%d callback_error=%v", impl.posts.Load(), impl.callbackError())
 	}
 	benchmarkStatus(b, "reset counts", func() uintptr { r, _, _ := reset.Call(); return r }())
 	impl.begin(isolate)
