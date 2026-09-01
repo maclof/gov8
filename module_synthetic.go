@@ -9,6 +9,7 @@ import (
 	"os"
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"unicode/utf8"
 	"unsafe"
@@ -89,21 +90,32 @@ type syntheticEvaluationState struct {
 
 var syntheticModuleRegistry = struct {
 	sync.Mutex
-	next    uint64
 	entries map[uint64]syntheticModuleEntry
 }{entries: make(map[uint64]syntheticModuleEntry)}
+
+var syntheticModuleNext atomic.Uint64
 
 var (
 	syntheticDispatcherOnce sync.Once
 	syntheticDispatcherErr  error
+	syntheticCreateAddr     uintptr
+	syntheticSetExportAddr  uintptr
+	syntheticEvaluateAddr   uintptr
+	syntheticStatusAddr     uintptr
+	syntheticPanicAbortAddr uintptr
 )
+
+//go:uintptrescapes
+func syntheticEscapingSyscall6(trap, nargs, a1, a2, a3, a4, a5, a6 uintptr) (uintptr, uintptr, syscall.Errno) {
+	return syscall.Syscall6(trap, nargs, a1, a2, a3, a4, a5, a6)
+}
 
 var syntheticEvaluationDispatcher = syscall.NewCallback(
 	func(id, contextWire, scopeWire, outWire uintptr) (handled uintptr) {
 		defer func() {
 			if recovered := recover(); recovered != nil {
 				fmt.Fprintf(os.Stderr, "gov8: panic in synthetic module evaluation callback: %v\n", recovered)
-				proc("gov8_host_panic_abort").Call()
+				_, _, _ = syscall.Syscall(syntheticPanicAbortAddr, 0, 0, 0, 0)
 				panic(recovered) // unreachable
 			}
 		}()
@@ -144,12 +156,16 @@ var syntheticEvaluationDispatcher = syscall.NewCallback(
 			return 0
 		}
 		if value.h != 0 {
-			if err := value.check(); err != nil {
-				moduleThrowResolverError(entry.module.iso, err.Error())
-				return 0
-			}
 			if value.iso != entry.module.iso {
 				moduleThrowResolverError(entry.module.iso, foreignIsolate("synthetic evaluation result").Error())
+				return 0
+			}
+			if value.sc == nil {
+				moduleThrowResolverError(entry.module.iso, "gov8: synthetic evaluation result has no scope")
+				return 0
+			}
+			if _, err := value.sc.checkedHandleAssumingIsolate(); err != nil {
+				moduleThrowResolverError(entry.module.iso, err.Error())
 				return 0
 			}
 			*(*uintptr)(abiWordToPtr(outWire)) = value.h
@@ -164,28 +180,31 @@ func registerSyntheticModuleCallback(callback SyntheticModuleEvaluationCallback)
 	syntheticDispatcherOnce.Do(func() {
 		syntheticDispatcherErr = callErr("SyntheticModule.Dispatcher",
 			proc("gov8_synthetic_set_dispatcher"), syntheticEvaluationDispatcher)
+		if syntheticDispatcherErr == nil {
+			syntheticCreateAddr = proc("gov8_synthetic_create").Addr()
+			syntheticSetExportAddr = proc("gov8_synthetic_set_export").Addr()
+			syntheticEvaluateAddr = proc("gov8_synthetic_evaluate").Addr()
+			syntheticStatusAddr = proc("gov8_module_status").Addr()
+			syntheticPanicAbortAddr = proc("gov8_host_panic_abort").Addr()
+		}
 	})
 	if syntheticDispatcherErr != nil {
 		return 0, syntheticDispatcherErr
 	}
-	syntheticModuleRegistry.Lock()
-	if syntheticModuleRegistry.next == math.MaxUint64 {
-		syntheticModuleRegistry.Unlock()
-		return 0, errors.New("gov8: synthetic module callback registry exhausted")
+	for {
+		previous := syntheticModuleNext.Load()
+		if previous == math.MaxUint64 {
+			return 0, errors.New("gov8: synthetic module callback registry exhausted")
+		}
+		if syntheticModuleNext.CompareAndSwap(previous, previous+1) {
+			return previous + 1, nil
+		}
 	}
-	syntheticModuleRegistry.next++
-	id := syntheticModuleRegistry.next
-	syntheticModuleRegistry.entries[id] = syntheticModuleEntry{callback: callback}
-	syntheticModuleRegistry.Unlock()
-	return id, nil
 }
 
-func bindSyntheticModuleCallback(id uint64, module *Module) {
+func bindSyntheticModuleCallback(id uint64, module *Module, callback SyntheticModuleEvaluationCallback) {
 	syntheticModuleRegistry.Lock()
-	if entry, found := syntheticModuleRegistry.entries[id]; found {
-		entry.module = module
-		syntheticModuleRegistry.entries[id] = entry
-	}
+	syntheticModuleRegistry.entries[id] = syntheticModuleEntry{module: module, callback: callback}
 	syntheticModuleRegistry.Unlock()
 }
 
@@ -256,7 +275,6 @@ func (c *Context) NewSyntheticModule(s *Scope, moduleName string,
 	if err != nil {
 		return nil, err
 	}
-	createProc := proc("gov8_synthetic_create")
 	isolateHandle := c.iso.handleAssumingCheck()
 	var moduleNamePointer unsafe.Pointer
 	if len(moduleName) != 0 {
@@ -268,7 +286,7 @@ func (c *Context) NewSyntheticModule(s *Scope, moduleName string,
 		lengthsArg = unsafe.Pointer(&nameLengths[0])
 	}
 	var out uintptr
-	r1, _, _ := syscall.Syscall12(createProc.Addr(), 10,
+	r1, _, _ := syscall.Syscall12(syntheticCreateAddr, 10,
 		isolateHandle, c.handle, scopeHandle,
 		uintptr(moduleNamePointer), uintptr(len(moduleName)), uintptr(namesArg),
 		uintptr(lengthsArg), uintptr(len(exportNames)), uintptr(callbackID),
@@ -278,13 +296,12 @@ func (c *Context) NewSyntheticModule(s *Scope, moduleName string,
 	runtime.KeepAlive(namePointers)
 	runtime.KeepAlive(nameLengths)
 	if int64(r1) < 0 {
-		dropSyntheticModuleCallback(callbackID)
 		return nil, shimError("NewSyntheticModule", r1)
 	}
 	module := &Module{
 		iso: c.iso, ctx: c, handle: out, syntheticCallbackID: callbackID,
 	}
-	bindSyntheticModuleCallback(callbackID, module)
+	bindSyntheticModuleCallback(callbackID, module, callback)
 	moduleRegMu.Lock()
 	moduleByHandle[out] = module
 	moduleRegMu.Unlock()
@@ -306,11 +323,17 @@ func (m *Module) setSyntheticModuleExport(s *Scope, name string, value Value,
 	if err != nil {
 		return false, err
 	}
-	if err := value.check(); err != nil {
-		return false, err
+	if value.h == 0 {
+		return false, errors.New("gov8: zero value handle")
 	}
 	if value.iso != m.iso {
 		return false, foreignIsolate("synthetic export value")
+	}
+	if value.sc == nil {
+		return false, errors.New("gov8: synthetic export value has no scope")
+	}
+	if _, err := value.sc.checkedHandleAssumingIsolate(); err != nil {
+		return false, err
 	}
 	if len(name) > math.MaxInt32 {
 		return false, errors.New("gov8: synthetic export name exceeds int32")
@@ -328,13 +351,16 @@ func (m *Module) setSyntheticModuleExport(s *Scope, name string, value Value,
 		}
 		tryCatchHandle = tc.handle
 	}
-	nameBytes := []byte(name)
+	var namePointer unsafe.Pointer
+	if len(name) != 0 {
+		namePointer = unsafe.Pointer(unsafe.StringData(name))
+	}
 	var updated int32
-	r1, _, _ := proc("gov8_synthetic_set_export").Call(
+	r1, _, _ := syscall.Syscall9(syntheticSetExportAddr, 8,
 		m.iso.handleAssumingCheck(), scopeHandle, m.handle, tryCatchHandle,
-		bytesPtr(nameBytes), uintptr(len(nameBytes)), value.h,
-		uintptr(unsafe.Pointer(&updated)))
-	runtime.KeepAlive(nameBytes)
+		uintptr(namePointer), uintptr(len(name)), value.h,
+		uintptr(unsafe.Pointer(&updated)), 0)
+	runtime.KeepAlive(name)
 	if int64(r1) < 0 {
 		return false, shimError("Module.SetSyntheticModuleExport", r1)
 	}
@@ -363,10 +389,11 @@ func (m *Module) evaluateSyntheticValue(s *Scope, tc *TryCatch) (Value, error) {
 	if err != nil {
 		return Value{}, err
 	}
-	status, err := m.Status()
-	if err != nil {
-		return Value{}, err
+	statusWord, _, _ := syscall.Syscall(syntheticStatusAddr, 1, m.handle, 0, 0)
+	if int64(statusWord) < 0 {
+		return Value{}, shimError("Module.Status", statusWord)
 	}
+	status := ModuleStatus(statusWord)
 	if status < ModuleInstantiated {
 		return Value{}, fmt.Errorf("gov8: Evaluate requires an instantiated module, got %s", status)
 	}
@@ -381,7 +408,7 @@ func (m *Module) evaluateSyntheticValue(s *Scope, tc *TryCatch) (Value, error) {
 		tryCatchHandle = tc.handle
 	}
 	var out uintptr
-	r1, _, _ := proc("gov8_synthetic_evaluate").Call(
+	r1, _, _ := syntheticEscapingSyscall6(syntheticEvaluateAddr, 6,
 		m.iso.handleAssumingCheck(), m.ctx.handle, scopeHandle, m.handle,
 		tryCatchHandle, uintptr(unsafe.Pointer(&out)))
 	if int64(r1) < 0 {
