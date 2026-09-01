@@ -81,3 +81,43 @@ one fewer allocation. The extra 16 bytes hold the two view words. Using the
 pinned Rust midpoint of 1579.05 ns, the current route is about 1.90x Rust.
 Normal, race and exact conformance runs cover repeated and retained byte access;
 a 350,000-route nested-output stress test verifies reentrant storage safety.
+
+## ABI-41 bounded reprofile
+
+The exact matched workload was reprofiled against the committed ABI-41 DLL
+`0FBD464E2A21526067125465110DCB25C2BCBAD86C4B229809DE9E33A66CA6BF`.
+The Rust and Go timed boundaries remain equivalent: both reuse the parsed
+request; synchronously dispatch one domain callback; validate command and call
+ID; create and send a success response; copy its serialized CBOR; convert and
+validate the exact JSON; and verify one callback and delivery per iteration.
+
+Seven fresh one-second Go samples were 2372, 2454, 3571, 3835, 3549, 3684,
+and 3832 ns/op at 192 bytes and five allocations. Their 3571 ns median is 2.26x
+the pinned Rust 1579.05 ns midpoint. Host frequency varied materially during
+this pass: the eight baseline legs of the subsequent balanced experiment were
+3081, 2761, 2762, 2494, 2460, 4378, 2581, and 2855 ns/op, a 2761.5 ns median
+or 1.75x Rust. The prior roughly 1.9x result remains representative of the
+observed range.
+
+A five-second profile measured 3200 ns/op. Native/DLL transitions accounted
+for 68.3% flat and 92.5% cumulative CPU. The nested send-response route was
+65.8% cumulative, channel delivery 31.4%, and CBOR-to-JSON validation 23.4%.
+Required borrowed-value thread checks accounted for about 5.1%. The five Go
+allocations were the retainable domain invocation and channel message wrappers,
+the synchronized success-response wrapper, and the two owned serialized byte
+copies used for exact validation.
+
+Two Go-only experiments were rejected:
+
+- A value-returning response constructor became inlineable, but the response
+  still escaped through `sync.Mutex.Lock` in public `SendResponse`. Allocation
+  remained 192 bytes and five allocations, so the experiment was reverted.
+- Calling `syscall.Syscall6` directly instead of the annotated escaping wrapper
+  preserved allocations but regressed the balanced median from 2761.5 to
+  2876 ns/op (4.1%); only three of eight pairs improved. Candidate samples were
+  4288, 3114, 2746, 2670, 3546, 2529, 3006, and 2616 ns/op. It was reverted.
+
+No production change was accepted. The remaining difference is dominated by
+the required native-to-Go callback topology and owned validation copies; the
+retainable callback wrappers, thread checks, and heap-stable reentrant output
+storage enforce public lifecycle and moving-stack safety.
