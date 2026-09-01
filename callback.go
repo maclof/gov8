@@ -194,7 +194,12 @@ func registerHostEntry(iso *Isolate, e *hostCallbackEntry, data Value) (uint64, 
 		return 0, err
 	}
 	hostCallbackRegistry.mu.Lock()
-	hostCallbackRegistry.next++
+	for {
+		hostCallbackRegistry.next++
+		if hostCallbackRegistry.next != 0 && hostCallbackRegistry.entries[hostCallbackRegistry.next] == nil {
+			break
+		}
+	}
 	h := hostCallbackRegistry.next
 	hostCallbackRegistry.mu.Unlock()
 
@@ -698,6 +703,15 @@ type PropertyCallbackArguments struct {
 	frame *hostCallbackFrame
 }
 
+// Property returns the Name supplied to a named accessor callback. It is not
+// available for indexed interceptor callbacks.
+func (a PropertyCallbackArguments) Property() (Value, error) {
+	if a.frame.propertyWire == 0 {
+		return Value{}, fmt.Errorf("gov8: property callback has no named property")
+	}
+	return a.cs.wrap(a.frame.propertyWire), nil
+}
+
 // holderWire returns the wire captured for Holder(): interceptor trampolines
 // record it in holder_wire, the older accessor trampolines in this_wire.
 func (a PropertyCallbackArguments) holderWire() uintptr {
@@ -861,6 +875,9 @@ func ReleaseIsolateHostState(i *Isolate) error {
 	// compilation is still active; otherwise clear the native binding while
 	// the isolate is alive.
 	if err := releaseWasmStreamingHostState(i); err != nil {
+		return err
+	}
+	if err := releaseModuleAdvancedHostState(i); err != nil {
 		return err
 	}
 	// Drop the Go-side registrations and slot values first (the registries are

@@ -844,7 +844,7 @@ func (u *UnboundScript) Close() error {
 
 // CompileOptions mirror the pinned crate's script_compiler::CompileOptions
 // subset this slice exercises.
-type CompileOptions uint8
+type CompileOptions uint32
 
 const (
 	// OptNoCompileOptions is the default compile.

@@ -246,21 +246,18 @@ func (t *FunctionTemplate) GetFunction(s *Scope, c *Context) (*Function, error) 
 // every function instantiated from this template in any context carries it
 // (v8 Template::Set). Values must belong to the template's isolate.
 func (t *FunctionTemplate) Set(key string, value Value) error {
-	if err := t.check(); err != nil {
-		return err
-	}
-	if err := value.check(); err != nil {
-		return err
-	}
-	if value.iso != t.iso {
-		return foreignIsolate("value")
-	}
-	k, err := t.sc.NewString(key)
+	return t.SetWithAttr(key, value, AttrNone)
+}
+
+// SetWithAttr adds a primitive property with explicit attributes to the
+// function object instantiated from this template. Use SetDataWithAttr for
+// nested templates and other non-Value Data.
+func (t *FunctionTemplate) SetWithAttr(key string, value Value, attr PropertyAttribute) error {
+	data, err := value.Data()
 	if err != nil {
 		return err
 	}
-	return callErr("FunctionTemplate.Set", proc("gov8_template_set"),
-		t.iso.handle, t.sc.handle, t.h, k.h, value.h, uintptr(AttrNone))
+	return t.SetDataWithAttr(key, data, attr)
 }
 
 // Inherit makes t inherit from parent (v8 FunctionTemplate::Inherit): the
@@ -383,21 +380,11 @@ func (t *ObjectTemplate) Set(key string, value Value) error {
 
 // SetWithAttr is Template::Set with explicit property attributes.
 func (t *ObjectTemplate) SetWithAttr(key string, value Value, attr PropertyAttribute) error {
-	if err := t.check(); err != nil {
-		return err
-	}
-	if err := value.check(); err != nil {
-		return err
-	}
-	if value.iso != t.iso {
-		return foreignIsolate("value")
-	}
-	k, err := t.sc.NewString(key)
+	data, err := value.Data()
 	if err != nil {
 		return err
 	}
-	return callErr("ObjectTemplate.Set", proc("gov8_template_set"),
-		t.iso.handle, t.sc.handle, t.h, k.h, value.h, uintptr(attr))
+	return t.SetDataWithAttr(key, data, attr)
 }
 
 // ObjectTemplate is a scope-local template for creating objects.
@@ -526,6 +513,12 @@ func (t *ObjectTemplate) SetAccessorWithSetter(key string, getter AccessorGetter
 	}
 	if getter == nil && setter == nil {
 		return fmt.Errorf("gov8: accessor requires a getter or a setter")
+	}
+	if getter == nil {
+		// The native template installer always exposes a getter trampoline.
+		// Keep the legacy setter-only shape safe by dispatching that read to a
+		// no-op getter, whose empty ReturnValue is JavaScript undefined.
+		getter = func(_ *CallbackScope, _ PropertyCallbackArguments, _ ReturnValue) {}
 	}
 	handle, err := registerAccessorCallbacks(t.iso, getter, setter, Value{})
 	if err != nil {

@@ -62,7 +62,7 @@ func ConfigurePlatform(options PlatformOptions) error {
 	if loadPlatform() != stateUninitialized {
 		return fmt.Errorf("gov8: ConfigurePlatform must be called before Initialize")
 	}
-	if selectedPlatform != nil {
+	if selectedPlatform != nil || selectedCustomPlatform != nil {
 		return fmt.Errorf("gov8: platform already configured")
 	}
 	if options.Kind > PlatformSingleThreaded {
@@ -101,6 +101,9 @@ func ConfigurePlatform(options PlatformOptions) error {
 
 // initializeSelectedPlatform is called by Initialize with lifecycleMu held.
 func initializeSelectedPlatform() error {
+	if configured, err := initializeCustomPlatformIfConfigured(); configured {
+		return err
+	}
 	if selectedPlatform == nil {
 		return callErr("Initialize", proc("gov8_initialize_platform"))
 	}

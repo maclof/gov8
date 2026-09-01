@@ -103,12 +103,6 @@ namespace gov8_stub {
 GOV8_STUB(rusty_v8_RustObj_drop)
 GOV8_STUB(rusty_v8_RustObj_get_name)
 GOV8_STUB(rusty_v8_RustObj_trace)
-GOV8_STUB(v8__Platform__CustomPlatform__BASE__DROP)
-GOV8_STUB(v8__Platform__CustomPlatform__BASE__PostDelayedTask)
-GOV8_STUB(v8__Platform__CustomPlatform__BASE__PostIdleTask)
-GOV8_STUB(v8__Platform__CustomPlatform__BASE__PostNonNestableDelayedTask)
-GOV8_STUB(v8__Platform__CustomPlatform__BASE__PostNonNestableTask)
-GOV8_STUB(v8__Platform__CustomPlatform__BASE__PostTask)
 GOV8_STUB(v8__ValueDeserializer__Delegate__GetSharedArrayBufferFromId)
 GOV8_STUB(v8__ValueDeserializer__Delegate__GetWasmModuleFromId)
 GOV8_STUB(v8__ValueDeserializer__Delegate__ReadHostObject)
@@ -419,7 +413,7 @@ extern "C" {
 
 __declspec(dllexport) int64_t gov8_abi_version(void) {
   ClearErr();
-  return 8;
+  return 11;
 }
 
 // --- platform / process lifecycle -------------------------------------------
@@ -1685,10 +1679,12 @@ __declspec(dllexport) int64_t gov8_last_error(char* buf, int64_t cap) {
 #include "features/wasm_streaming.inc"
 #include "features/buffers_serialization.inc"
 #include "features/snapshots_handles.inc"
+#include "features/module_advanced_residual.inc"
 #include "features/context_residual.inc"
 #include "features/runtime_values.inc"
 #include "features/runtime_values_residual.inc"
 #include "features/core_advanced.inc"
+#include "features/script_compiler_residual.inc"
 #include "features/exceptions_advanced.inc"
 #include "features/functions_advanced.inc"
 #include "features/context_scopes_advanced.inc"
@@ -1696,6 +1692,7 @@ __declspec(dllexport) int64_t gov8_last_error(char* buf, int64_t cap) {
 #include "features/exception_constructors.inc"
 #include "features/serialization_delegates.inc"
 #include "features/object_ops.inc"
+#include "features/object_callback_retention.inc"
 #include "features/object_residual.inc"
 #include "features/strings_bigint.inc"
 #include "features/typed_arrays.inc"
@@ -1704,3 +1701,4 @@ __declspec(dllexport) int64_t gov8_last_error(char* buf, int64_t cap) {
 #include "features/external_references.inc"
 #include "features/handles_residual.inc"
 #include "features/platform.inc"
+#include "features/platform_custom.inc"

@@ -503,37 +503,47 @@ func (o *Object) SetWithReceiver(s *Scope, c *Context, key, value Value, receive
 // a data property carrying its current value (the pinned AccessorInfo
 // observation). key must be a Name.
 func (o *Object) SetAccessor(s *Scope, c *Context, key Value, getter AccessorGetterCallback, setter AccessorSetterCallback) (bool, error) {
-	sh, err := o.receiverArgs(s, c)
-	if err != nil {
-		return false, err
+	if getter == nil {
+		sh, err := o.receiverArgs(s, c)
+		if err != nil {
+			return false, err
+		}
+		if err := o.nameArg(key); err != nil {
+			return false, err
+		}
+		if setter == nil {
+			return false, errNoAccessorSide
+		}
+		// V8's native installer always receives a getter callback. Supply an
+		// internal no-op so a read of a legacy setter-only accessor returns
+		// undefined instead of dispatching a nil Go function.
+		getter = func(_ *CallbackScope, _ PropertyCallbackArguments, _ ReturnValue) {}
+		handle, err := registerAccessorCallbacks(o.iso, getter, setter, Value{})
+		if err != nil {
+			return false, err
+		}
+		entry := lookupHostCallback(handle)
+		if entry == nil {
+			dropHostCallback(handle)
+			return false, errLostCallbackRegistration
+		}
+		var okv int32
+		r1, _, _ := proc("gov8_oo_object_set_accessor").Call(
+			o.iso.handleAssumingCheck(), c.handle, sh, o.h, key.h, entry.ctx,
+			uintptr(1), uintptr(unsafe.Pointer(&okv)))
+		if int64(r1) < 0 {
+			dropHostCallback(handle)
+			return false, shimError("Object.SetAccessor", r1)
+		}
+		if okv != 1 {
+			dropHostCallback(handle)
+		}
+		return okv == 1, nil
 	}
-	if err := o.nameArg(key); err != nil {
-		return false, err
-	}
-	if getter == nil && setter == nil {
-		return false, errNoAccessorSide
-	}
-	handle, err := registerAccessorCallbacks(o.iso, getter, setter, Value{})
-	if err != nil {
-		return false, err
-	}
-	entry := lookupHostCallback(handle)
-	if entry == nil {
-		return false, errLostCallbackRegistration
-	}
-	var okv int32
-	withSetter := uintptr(0)
-	if setter != nil {
-		withSetter = 1
-	}
-	r1, _, _ := proc("gov8_oo_object_set_accessor").Call(
-		o.iso.handleAssumingCheck(), c.handle, sh, o.h, key.h, entry.ctx,
-		withSetter, uintptr(unsafe.Pointer(&okv)))
-	if int64(r1) < 0 {
-		dropHostCallback(handle)
-		return false, shimError("Object.SetAccessor", r1)
-	}
-	return okv == 1, nil
+	return o.SetAccessorWithConfiguration(s, c, key, AccessorConfiguration{
+		Getter: getter,
+		Setter: setter,
+	})
 }
 
 // SetLazyDataProperty installs a lazy data property: getter runs on the
@@ -542,33 +552,7 @@ func (o *Object) SetAccessor(s *Scope, c *Context, key Value, getter AccessorGet
 // Name; the install uses no attributes and side-effect-ful callbacks, the
 // pinned crate's defaults.
 func (o *Object) SetLazyDataProperty(s *Scope, c *Context, key Value, getter AccessorGetterCallback) (bool, error) {
-	sh, err := o.receiverArgs(s, c)
-	if err != nil {
-		return false, err
-	}
-	if err := o.nameArg(key); err != nil {
-		return false, err
-	}
-	if getter == nil {
-		return false, errNilLazyGetter
-	}
-	handle, err := registerAccessorCallbacks(o.iso, getter, nil, Value{})
-	if err != nil {
-		return false, err
-	}
-	entry := lookupHostCallback(handle)
-	if entry == nil {
-		return false, errLostCallbackRegistration
-	}
-	var okv int32
-	r1, _, _ := proc("gov8_oo_object_set_lazy_data_property").Call(
-		o.iso.handleAssumingCheck(), c.handle, sh, o.h, key.h, entry.ctx,
-		uintptr(unsafe.Pointer(&okv)))
-	if int64(r1) < 0 {
-		dropHostCallback(handle)
-		return false, shimError("Object.SetLazyDataProperty", r1)
-	}
-	return okv == 1, nil
+	return o.SetLazyDataPropertyWithConfiguration(s, c, key, LazyDataPropertyConfiguration{Getter: getter})
 }
 
 // --- call-as-function / constructor ------------------------------------------------------
