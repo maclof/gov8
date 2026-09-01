@@ -9,23 +9,14 @@ import (
 )
 
 // Native callback benchmarks, workload-for-workload comparable with the
-// pinned oracle's benches/callback.rs:
-//
-//   - callback/native_call_from_js:  one precompiled script per iteration
-//     calls a native add(a, b) twice; the callback returns via
-//     ReturnValue.SetInt32.
-//   - callback/native_call_from_host: the host calls the same-shaped native
-//     function once per iteration with an undefined receiver and two number
-//     arguments.
-//   - callback/function_new_call:    Function creation plus a single host
-//     call per iteration.
-//
-// The isolate and context are created once per benchmark; each iteration
-// opens and closes a fresh Scope (the HandleScope equivalent). Unlike the
-// oracle, the function_new_call workload must periodically release the
-// per-function native callback registrations (the Go dispatch design keeps
-// one small shim context per created function); the release amortizes to
-// O(1) per iteration and is part of the measured workload.
+// pinned oracle's benches/callback.rs. Setup, validation probes, and teardown
+// are untimed; every measured iteration opens and closes a fresh Scope and
+// performs the same result validation as the Rust workload.
+
+const (
+	benchCallbackExpectedJSResult   = 342.0
+	benchCallbackExpectedHostResult = 42.0
+)
 
 func benchAddCb(cs *gov8.CallbackScope, args gov8.FunctionCallbackArguments, rv gov8.ReturnValue) {
 	a := cbIntOrZero(cs, args, 0)
@@ -33,9 +24,51 @@ func benchAddCb(cs *gov8.CallbackScope, args gov8.FunctionCallbackArguments, rv 
 	_ = rv.SetInt32(int32(a + b))
 }
 
+func benchAssertNumber(b *testing.B, ctx *gov8.Context, value gov8.Value, expected float64, name string) {
+	got, ok, err := value.NumberValue(ctx)
+	if err != nil {
+		b.Fatalf("%s: NumberValue: %v", name, err)
+	}
+	if !ok {
+		b.Fatalf("%s: workload result is not a number", name)
+	}
+	if got != expected {
+		b.Fatalf("%s: workload result = %v, want %v", name, got, expected)
+	}
+}
+
+func benchRunAssertedJSCallback(b *testing.B, ctx *gov8.Context, scope *gov8.Scope, script *gov8.Script) {
+	value, err := script.Run(scope, nil)
+	if err != nil {
+		b.Fatalf("callback/native_call_from_js: Run: %v", err)
+	}
+	benchAssertNumber(b, ctx, value, benchCallbackExpectedJSResult, "callback/native_call_from_js")
+}
+
+func benchRunAssertedHostCallback(b *testing.B, ctx *gov8.Context, scope *gov8.Scope, function gov8.Value) {
+	a, err := scope.Int32(20)
+	if err != nil {
+		b.Fatalf("callback/native_call_from_host: Int32(20): %v", err)
+	}
+	c, err := scope.Int32(22)
+	if err != nil {
+		b.Fatalf("callback/native_call_from_host: Int32(22): %v", err)
+	}
+	undefined, err := scope.Undefined()
+	if err != nil {
+		b.Fatalf("callback/native_call_from_host: Undefined: %v", err)
+	}
+	value, err := gov8.CallFunction(ctx, scope, function, undefined, []gov8.Value{a, c}, nil)
+	if err != nil {
+		b.Fatalf("callback/native_call_from_host: CallFunction: %v", err)
+	}
+	benchAssertNumber(b, ctx, value, benchCallbackExpectedHostResult, "callback/native_call_from_host")
+}
+
 func BenchmarkCallbackNativeCallFromJS(b *testing.B) {
 	iso := benchNewIsolate(b)
 	defer func() { _ = iso.Close() }()
+	defer func() { _ = gov8.ReleaseIsolateHostState(iso) }()
 	ctx := benchNewContext(b, iso)
 	defer func() { _ = ctx.Close() }()
 	scope, err := iso.NewScope()
@@ -44,7 +77,7 @@ func BenchmarkCallbackNativeCallFromJS(b *testing.B) {
 	}
 	defer func() { _ = scope.Close() }()
 
-	f, err := iso.NewFunction(scope, ctx, benchAddCb, nil)
+	f, err := iso.NewFunction(scope, ctx, benchAddCb, &gov8.FunctionOptions{Length: 2})
 	if err != nil {
 		b.Fatalf("NewFunction: %v", err)
 	}
@@ -61,24 +94,26 @@ func BenchmarkCallbackNativeCallFromJS(b *testing.B) {
 	}
 	defer func() { _ = script.Close() }()
 
+	benchRunAssertedJSCallback(b, ctx, scope, script)
+
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		inner, err := iso.NewScope()
 		if err != nil {
 			b.Fatalf("NewScope: %v", err)
 		}
-		if _, err := script.Run(inner, nil); err != nil {
-			b.Fatalf("Run: %v", err)
-		}
+		benchRunAssertedJSCallback(b, ctx, inner, script)
 		if err := inner.Close(); err != nil {
 			b.Fatalf("inner.Close: %v", err)
 		}
 	}
+	b.StopTimer()
 }
 
 func BenchmarkCallbackNativeCallFromHost(b *testing.B) {
 	iso := benchNewIsolate(b)
 	defer func() { _ = iso.Close() }()
+	defer func() { _ = gov8.ReleaseIsolateHostState(iso) }()
 	ctx := benchNewContext(b, iso)
 	defer func() { _ = ctx.Close() }()
 	setup, err := iso.NewScope()
@@ -87,10 +122,20 @@ func BenchmarkCallbackNativeCallFromHost(b *testing.B) {
 	}
 	defer func() { _ = setup.Close() }()
 
-	f, err := iso.NewFunction(setup, ctx, benchAddCb, nil)
+	f, err := iso.NewFunction(setup, ctx, benchAddCb, &gov8.FunctionOptions{Length: 2})
 	if err != nil {
 		b.Fatalf("NewFunction: %v", err)
 	}
+	fGlobal, err := gov8.NewGlobal(setup, f.Value)
+	if err != nil {
+		b.Fatalf("NewGlobal: %v", err)
+	}
+	defer func() { _ = fGlobal.Close() }()
+	probeFunction, err := fGlobal.ToLocal(setup)
+	if err != nil {
+		b.Fatalf("probe Global.ToLocal: %v", err)
+	}
+	benchRunAssertedHostCallback(b, ctx, setup, probeFunction)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -98,25 +143,16 @@ func BenchmarkCallbackNativeCallFromHost(b *testing.B) {
 		if err != nil {
 			b.Fatalf("NewScope: %v", err)
 		}
-		undef, err := inner.Undefined()
+		function, err := fGlobal.ToLocal(inner)
 		if err != nil {
-			b.Fatalf("Undefined: %v", err)
+			b.Fatalf("Global.ToLocal: %v", err)
 		}
-		a, err := inner.Number(20)
-		if err != nil {
-			b.Fatalf("Number: %v", err)
-		}
-		c, err := inner.Number(22)
-		if err != nil {
-			b.Fatalf("Number: %v", err)
-		}
-		if _, _, err := f.Call(inner, undef, a, c); err != nil {
-			b.Fatalf("Call: %v", err)
-		}
+		benchRunAssertedHostCallback(b, ctx, inner, function)
 		if err := inner.Close(); err != nil {
 			b.Fatalf("inner.Close: %v", err)
 		}
 	}
+	b.StopTimer()
 }
 
 func BenchmarkCallbackFunctionNewCall(b *testing.B) {
@@ -125,7 +161,26 @@ func BenchmarkCallbackFunctionNewCall(b *testing.B) {
 	ctx := benchNewContext(b, iso)
 	defer func() { _ = ctx.Close() }()
 
-	// Bound the growth of per-function dispatch registrations.
+	// Validate the exact workload once before measurement.
+	probeScope, err := iso.NewScope()
+	if err != nil {
+		b.Fatalf("probe NewScope: %v", err)
+	}
+	probeFunction, err := iso.NewFunction(probeScope, ctx, benchAddCb, &gov8.FunctionOptions{Length: 2})
+	if err != nil {
+		b.Fatalf("probe NewFunction: %v", err)
+	}
+	benchRunAssertedHostCallback(b, ctx, probeScope, probeFunction.Value)
+	if err := probeScope.Close(); err != nil {
+		b.Fatalf("probeScope.Close: %v", err)
+	}
+	if err := gov8.ReleaseIsolateHostState(iso); err != nil {
+		b.Fatalf("probe ReleaseIsolateHostState: %v", err)
+	}
+
+	// Go keeps one callback registration per created function until explicit
+	// host-state release. Bound that storage outside the measured intervals;
+	// it is lifecycle maintenance, not part of the Rust workload.
 	const releaseEvery = 512
 
 	b.ResetTimer()
@@ -134,34 +189,23 @@ func BenchmarkCallbackFunctionNewCall(b *testing.B) {
 		if err != nil {
 			b.Fatalf("NewScope: %v", err)
 		}
-		f, err := iso.NewFunction(inner, ctx, benchAddCb, nil)
+		f, err := iso.NewFunction(inner, ctx, benchAddCb, &gov8.FunctionOptions{Length: 2})
 		if err != nil {
 			b.Fatalf("NewFunction: %v", err)
 		}
-		undef, err := inner.Undefined()
-		if err != nil {
-			b.Fatalf("Undefined: %v", err)
-		}
-		a, err := inner.Number(20)
-		if err != nil {
-			b.Fatalf("Number: %v", err)
-		}
-		c, err := inner.Number(22)
-		if err != nil {
-			b.Fatalf("Number: %v", err)
-		}
-		if _, _, err := f.Call(inner, undef, a, c); err != nil {
-			b.Fatalf("Call: %v", err)
-		}
+		benchRunAssertedHostCallback(b, ctx, inner, f.Value)
 		if err := inner.Close(); err != nil {
 			b.Fatalf("inner.Close: %v", err)
 		}
 		if (i+1)%releaseEvery == 0 {
+			b.StopTimer()
 			if err := gov8.ReleaseIsolateHostState(iso); err != nil {
 				b.Fatalf("ReleaseIsolateHostState: %v", err)
 			}
+			b.StartTimer()
 		}
 	}
+	b.StopTimer()
 	if err := gov8.ReleaseIsolateHostState(iso); err != nil {
 		b.Fatalf("final ReleaseIsolateHostState: %v", err)
 	}

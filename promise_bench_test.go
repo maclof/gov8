@@ -8,119 +8,151 @@ import (
 	gov8 "gov8"
 )
 
-// Promise benchmarks aligned with rust-oracle/benches/promise.rs (criterion
-// `promise/resolver_new_resolve` and `promise/resolve_then_checkpoint`):
-// the isolate and context are created once per benchmark; every iteration
-// opens a fresh nested Scope, mirroring the oracle's fresh inner
-// HandleScope. Differences in harness (criterion warm-up/sampling versus
-// `go test -bench` defaults) must be accounted for when comparing numbers.
+// Promise benchmarks aligned with rust-oracle/benches/promise.rs. Setup,
+// validation probes, and teardown are untimed; every measured iteration
+// opens a fresh nested Scope and repeats the Rust workload's settlement
+// assertions.
 
-// BenchmarkPromiseResolverNewResolve mirrors promise/resolver_new_resolve:
-// one resolver per iteration, resolved with the number 42, settlement state
-// read afterwards.
-func BenchmarkPromiseResolverNewResolve(b *testing.B) {
-	iso, err := gov8.NewIsolate()
+func benchRunAssertedResolverRoundtrip(b *testing.B, ctx *gov8.Context, scope *gov8.Scope) {
+	resolver, err := scope.NewPromiseResolver(ctx)
 	if err != nil {
-		b.Fatalf("NewIsolate: %v", err)
+		b.Fatalf("promise/resolver_new_resolve: NewPromiseResolver: %v", err)
 	}
-	defer func() { _ = iso.Close() }()
-	ctx, err := iso.NewContext()
+	promise, err := resolver.GetPromise(scope)
 	if err != nil {
-		b.Fatalf("NewContext: %v", err)
+		b.Fatalf("promise/resolver_new_resolve: GetPromise: %v", err)
 	}
-	defer func() { _ = ctx.Close() }()
-	scope, err := iso.NewScope()
+	n42, err := scope.Number(42)
 	if err != nil {
-		b.Fatalf("NewScope: %v", err)
+		b.Fatalf("promise/resolver_new_resolve: Number(42): %v", err)
 	}
-	defer func() { _ = scope.Close() }()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		inner, err := iso.NewScope()
-		if err != nil {
-			b.Fatal(err)
-		}
-		resolver, err := scope.NewPromiseResolver(ctx)
-		if err != nil {
-			b.Fatal(err)
-		}
-		promise, err := resolver.GetPromise(inner)
-		if err != nil {
-			b.Fatal(err)
-		}
-		n42, err := inner.Number(42)
-		if err != nil {
-			b.Fatal(err)
-		}
-		if _, err := resolver.Resolve(ctx, n42); err != nil {
-			b.Fatal(err)
-		}
-		if _, err := promise.State(); err != nil {
-			b.Fatal(err)
-		}
-		_ = inner.Close()
+	resolved, err := resolver.Resolve(ctx, n42)
+	if err != nil {
+		b.Fatalf("promise/resolver_new_resolve: Resolve: %v", err)
+	}
+	if !resolved {
+		b.Fatal("promise/resolver_new_resolve: Resolve did not report success")
+	}
+	state, err := promise.State()
+	if err != nil {
+		b.Fatalf("promise/resolver_new_resolve: State: %v", err)
+	}
+	if state != gov8.PromiseFulfilled {
+		b.Fatalf("promise/resolver_new_resolve: state = %v, want Fulfilled", state)
+	}
+	result, err := promise.Result(scope)
+	if err != nil {
+		b.Fatalf("promise/resolver_new_resolve: Result: %v", err)
+	}
+	benchAssertNumber(b, ctx, result, 42, "promise/resolver_new_resolve")
+}
+
+func benchPromiseHandler(_ *gov8.CallbackScope, _ gov8.FunctionCallbackArguments, _ gov8.ReturnValue) {
+}
+
+func benchRunAssertedThenCheckpoint(b *testing.B, iso *gov8.Isolate, ctx *gov8.Context, scope *gov8.Scope, handlerGlobal *gov8.Global) {
+	resolver, err := scope.NewPromiseResolver(ctx)
+	if err != nil {
+		b.Fatalf("promise/resolve_then_checkpoint: NewPromiseResolver: %v", err)
+	}
+	promise, err := resolver.GetPromise(scope)
+	if err != nil {
+		b.Fatalf("promise/resolve_then_checkpoint: GetPromise: %v", err)
+	}
+	handler, err := handlerGlobal.ToLocal(scope)
+	if err != nil {
+		b.Fatalf("promise/resolve_then_checkpoint: Global.ToLocal: %v", err)
+	}
+	derived, err := promise.Then(ctx, handler)
+	if err != nil {
+		b.Fatalf("promise/resolve_then_checkpoint: Then: %v", err)
+	}
+	n42, err := scope.Int32(42)
+	if err != nil {
+		b.Fatalf("promise/resolve_then_checkpoint: Int32(42): %v", err)
+	}
+	resolved, err := resolver.Resolve(ctx, n42)
+	if err != nil {
+		b.Fatalf("promise/resolve_then_checkpoint: Resolve: %v", err)
+	}
+	if !resolved {
+		b.Fatal("promise/resolve_then_checkpoint: Resolve did not report success")
+	}
+	if err := iso.PerformMicrotaskCheckpoint(); err != nil {
+		b.Fatalf("promise/resolve_then_checkpoint: PerformMicrotaskCheckpoint: %v", err)
+	}
+	state, err := derived.State()
+	if err != nil {
+		b.Fatalf("promise/resolve_then_checkpoint: derived State: %v", err)
+	}
+	if state != gov8.PromiseFulfilled {
+		b.Fatalf("promise/resolve_then_checkpoint: derived state = %v, want Fulfilled", state)
 	}
 }
 
-// BenchmarkPromiseResolveThenCheckpoint mirrors
-// promise/resolve_then_checkpoint: the full native promise round-trip —
-// resolver creation, then with a native handler, resolution, and the
-// microtask checkpoint that runs the reaction job — under the Explicit
-// microtasks policy. The handler is created once outside the loop like the
-// oracle's Global-rooted handler.
-func BenchmarkPromiseResolveThenCheckpoint(b *testing.B) {
-	iso, err := gov8.NewIsolate()
-	if err != nil {
-		b.Fatalf("NewIsolate: %v", err)
-	}
+func BenchmarkPromiseResolverNewResolve(b *testing.B) {
+	iso := benchNewIsolate(b)
 	defer func() { _ = iso.Close() }()
-	if err := iso.SetMicrotasksPolicy(gov8.PolicyExplicit); err != nil {
-		b.Fatalf("SetMicrotasksPolicy: %v", err)
-	}
-	ctx, err := iso.NewContext()
-	if err != nil {
-		b.Fatalf("NewContext: %v", err)
-	}
+	ctx := benchNewContext(b, iso)
 	defer func() { _ = ctx.Close() }()
 	scope, err := iso.NewScope()
 	if err != nil {
 		b.Fatalf("NewScope: %v", err)
 	}
 	defer func() { _ = scope.Close() }()
-	handler, err := scope.NewNativeFunction(ctx, func(args []gov8.Value) (gov8.Value, bool) {
-		return gov8.Value{}, false
-	})
-	if err != nil {
-		b.Fatalf("NewNativeFunction: %v", err)
-	}
-	defer func() { _ = handler.Close() }()
+
+	benchRunAssertedResolverRoundtrip(b, ctx, scope)
+
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		inner, err := iso.NewScope()
 		if err != nil {
-			b.Fatal(err)
+			b.Fatalf("NewScope: %v", err)
 		}
-		resolver, err := scope.NewPromiseResolver(ctx)
-		if err != nil {
-			b.Fatal(err)
+		benchRunAssertedResolverRoundtrip(b, ctx, inner)
+		if err := inner.Close(); err != nil {
+			b.Fatalf("inner.Close: %v", err)
 		}
-		promise, err := resolver.GetPromise(inner)
-		if err != nil {
-			b.Fatal(err)
-		}
-		if _, err := promise.Then(ctx, handler.Value()); err != nil {
-			b.Fatal(err)
-		}
-		n42, err := inner.Number(42)
-		if err != nil {
-			b.Fatal(err)
-		}
-		if _, err := resolver.Resolve(ctx, n42); err != nil {
-			b.Fatal(err)
-		}
-		if err := iso.PerformMicrotaskCheckpoint(); err != nil {
-			b.Fatal(err)
-		}
-		_ = inner.Close()
 	}
+	b.StopTimer()
+}
+
+func BenchmarkPromiseResolveThenCheckpoint(b *testing.B) {
+	iso := benchNewIsolate(b)
+	defer func() { _ = iso.Close() }()
+	defer func() { _ = gov8.ReleaseIsolateHostState(iso) }()
+	if err := iso.SetMicrotasksPolicy(gov8.PolicyExplicit); err != nil {
+		b.Fatalf("SetMicrotasksPolicy: %v", err)
+	}
+	ctx := benchNewContext(b, iso)
+	defer func() { _ = ctx.Close() }()
+	scope, err := iso.NewScope()
+	if err != nil {
+		b.Fatalf("NewScope: %v", err)
+	}
+	defer func() { _ = scope.Close() }()
+	handler, err := iso.NewFunction(scope, ctx, benchPromiseHandler, nil)
+	if err != nil {
+		b.Fatalf("NewFunction: %v", err)
+	}
+	handlerGlobal, err := gov8.NewGlobal(scope, handler.Value)
+	if err != nil {
+		b.Fatalf("NewGlobal: %v", err)
+	}
+	defer func() { _ = handlerGlobal.Close() }()
+
+	benchRunAssertedThenCheckpoint(b, iso, ctx, scope, handlerGlobal)
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		inner, err := iso.NewScope()
+		if err != nil {
+			b.Fatalf("NewScope: %v", err)
+		}
+		benchRunAssertedThenCheckpoint(b, iso, ctx, inner, handlerGlobal)
+		if err := inner.Close(); err != nil {
+			b.Fatalf("inner.Close: %v", err)
+		}
+	}
+	b.StopTimer()
 }
