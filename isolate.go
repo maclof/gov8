@@ -103,6 +103,10 @@ func (i *Isolate) Close() error {
 		i.mu.Unlock()
 		return err
 	}
+	if err := heapSnapshotIsolateCloseError(i); err != nil {
+		i.mu.Unlock()
+		return err
+	}
 	disposedHandle := i.handle
 	r1, _, _ := proc("gov8_isolate_dispose").Call(disposedHandle)
 	// V8 has now torn down the default cppgc heap and cleared its persistent
