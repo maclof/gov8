@@ -156,8 +156,9 @@ also covered, together with the full safe ScriptCompiler surface and custom
 platform/task dispatch, configured/lazy object callbacks, attributed template
 Data, advanced module embedding hooks, snapshot-aware CreateParams, initial
 Inspector transport/evaluation, isolate Wasm policy callbacks, and complete
-serializer Wasm/legacy behavior. The Rust fixtures contain 409 normalized
-checks: 407 compare byte-for-byte with Go and two have narrowly documented
+serializer Wasm/legacy behavior, plus the safe native-descriptor substrate for
+Fast API calls. The Rust fixtures contain 413 normalized checks: 411 compare
+byte-for-byte with Go and two have narrowly documented
 safety normalizations.
 Separate fatal and panic-boundary subprocess tests cover unsafe lifecycle and
 callback edges.
@@ -165,6 +166,6 @@ callback edges.
 This is still not a feature-complete rusty_v8 binding. Major remaining families
 include dynamic-import `kDefer` delivery, residual unsafe CreateParams
 options, string-key-only template APIs, broader Inspector/CRDTP, cppgc, and
-Fast API. The
+the remaining Fast API type/adaptor surface. The
 authoritative gaps and intentional API-shape differences are tracked in
 `PARITY.md`.

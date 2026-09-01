@@ -100,6 +100,13 @@ func (i *Isolate) Close() error {
 	}
 	disposedHandle := i.handle
 	r1, _, _ := proc("gov8_isolate_dispose").Call(disposedHandle)
+	var fastAPICleanupErr error
+	if fastAPIIsolateTracked(i) {
+		// V8 retains the raw CFunction overload array and nested type metadata
+		// through FunctionTemplate lifetime. Release its native-owned copy only
+		// after isolate disposal, using disposedHandle as an opaque map key.
+		fastAPICleanupErr = afterFastAPIIsolateDispose(i, disposedHandle)
+	}
 	if i.advancedCounterHandle != 0 || i.advancedExternalReferences {
 		_, _, _ = proc("gov8_ia_after_isolate_dispose").Call(disposedHandle)
 		dropIsolateCounter(i.advancedCounterHandle)
@@ -116,6 +123,9 @@ func (i *Isolate) Close() error {
 	runtime.UnlockOSThread()
 	if int64(r1) < 0 {
 		return shimError("Isolate.Close", r1)
+	}
+	if fastAPICleanupErr != nil {
+		return fastAPICleanupErr
 	}
 	return nil
 }

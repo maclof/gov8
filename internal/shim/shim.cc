@@ -401,7 +401,7 @@ extern "C" {
 
 __declspec(dllexport) int64_t gov8_abi_version(void) {
   ClearErr();
-  return 16;
+  return 17;
 }
 
 // --- platform / process lifecycle -------------------------------------------
@@ -1657,6 +1657,7 @@ __declspec(dllexport) int64_t gov8_last_error(char* buf, int64_t cap) {
 // Feature slices are separate textual includes so independent implementations
 // can share the core wrapper types without editing this file concurrently.
 #include "features/templates_callbacks.inc"
+#include "features/fast_api.inc"
 #include "features/promises.inc"
 #include "features/modules.inc"
 #include "features/modules_synthetic.inc"

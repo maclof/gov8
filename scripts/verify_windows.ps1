@@ -57,6 +57,7 @@ $ConformancePackages = @(
     './conformance-exception-constructors',
     './conformance-exception-string-local',
     './conformance-external-references',
+    './conformance-fast-api-substrate',
     './conformance-functions-advanced',
     './conformance-inspector-transport',
     './conformance-inspector-session-controls',
