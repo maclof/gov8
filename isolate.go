@@ -20,12 +20,13 @@ import (
 // try-catches, microtask queues) must be closed before Isolate.Close, and
 // Close must be called on the owning thread.
 type Isolate struct {
-	mu                    sync.Mutex // guards lifecycle/configuration flags; calls are thread-serialized by affinity
-	handle                uintptr
-	tid                   uint32
-	closed                bool
-	contextsCreated       bool
-	advancedCounterHandle uintptr
+	mu                         sync.Mutex // guards lifecycle/configuration flags; calls are thread-serialized by affinity
+	handle                     uintptr
+	tid                        uint32
+	closed                     bool
+	contextsCreated            bool
+	advancedCounterHandle      uintptr
+	advancedExternalReferences bool
 }
 
 // NewIsolate creates a fresh isolate with a default ArrayBuffer allocator.
@@ -92,10 +93,11 @@ func (i *Isolate) Close() error {
 	}
 	disposedHandle := i.handle
 	r1, _, _ := proc("gov8_isolate_dispose").Call(disposedHandle)
-	if i.advancedCounterHandle != 0 {
+	if i.advancedCounterHandle != 0 || i.advancedExternalReferences {
 		_, _, _ = proc("gov8_ia_after_isolate_dispose").Call(disposedHandle)
 		dropIsolateCounter(i.advancedCounterHandle)
 		i.advancedCounterHandle = 0
+		i.advancedExternalReferences = false
 	}
 	i.closed = true
 	i.handle = 0

@@ -75,6 +75,8 @@ func entropyFill7(buf []byte) bool {
 // steps (the process setup order is itself part of the contract).
 type setupResult struct {
 	commandLineUnrecognized []string
+	commandLineWithUsage    []string
+	wasmTrapHandlerEnabled  bool
 }
 
 var (
@@ -85,13 +87,16 @@ var (
 
 // ensureSetup runs the whole process setup in the contractual order, exactly
 // once:
-//  1. SetFlagsFromCommandLine (pre-init): "--log-colour" is recognized by
+//  1. EnableWebAssemblyTrapHandler(false): exact platform/build capability.
+//  2. SetFlagsFromCommandLineWithUsage (pre-init): usage is accepted while
+//     recognized flags are consumed normally.
+//  3. SetFlagsFromCommandLine (pre-init): "--log-colour" is recognized by
 //     this engine and consumed; anything else is returned to the embedder.
-//  2. SetFlagsFromString("--expose-gc"): required for
+//  4. SetFlagsFromString("--expose-gc"): required for
 //     RequestGarbageCollectionForTesting (fatal CHECK without it) and to
 //     expose the JS gc() global in contexts created afterwards.
-//  3. SetEntropySource(fill42): pins Math.random().
-//  4. gov8.Initialize(): identical platform config to the oracle
+//  5. SetEntropySource(fill42): pins Math.random().
+//  6. gov8.Initialize(): identical platform config to the oracle
 //     (new_default_platform(0, false)). The flag set is frozen afterwards.
 func ensureSetup(t tester) setupResult {
 	t.Helper()
@@ -99,6 +104,16 @@ func ensureSetup(t tester) setupResult {
 	defer setupMu.Unlock()
 	if setupDone {
 		return setupObserved
+	}
+	trapEnabled, err := gov8.EnableWebAssemblyTrapHandler(false)
+	if err != nil {
+		t.Fatalf("EnableWebAssemblyTrapHandler: %v", err)
+	}
+	usageLeftover, err := gov8.SetFlagsFromCommandLineWithUsage([]string{
+		"usage-probe", "--log-colour", "--usage-leftover",
+	}, "Usage: usage-probe [v8 flags]\n")
+	if err != nil {
+		t.Fatalf("SetFlagsFromCommandLineWithUsage: %v", err)
 	}
 	leftover, err := gov8.SetFlagsFromCommandLine([]string{
 		"conformance-controls-hooks", "--log-colour", "--should-be-ignored",
@@ -115,12 +130,34 @@ func ensureSetup(t tester) setupResult {
 	if err := gov8.Initialize(); err != nil {
 		t.Fatalf("Initialize: %v", err)
 	}
-	setupObserved = setupResult{commandLineUnrecognized: leftover}
+	setupObserved = setupResult{
+		commandLineUnrecognized: leftover,
+		commandLineWithUsage:    usageLeftover,
+		wasmTrapHandlerEnabled:  trapEnabled,
+	}
 	setupDone = true
 	return setupObserved
 }
 
 // --- the checks, in contractual order ----------------------------------------
+
+func chWasmTrapHandlerPreinit(t tester) obs {
+	t.Helper()
+	setup := ensureSetup(t)
+	return wantGot("controls/wasm_trap_handler_preinit", jbool(true),
+		jbool(setup.wasmTrapHandlerEnabled))
+}
+
+func chFlagsCommandLineWithUsagePreinit(t tester) obs {
+	t.Helper()
+	setup := ensureSetup(t)
+	got := make([]jsonValue, len(setup.commandLineWithUsage))
+	for i, s := range setup.commandLineWithUsage {
+		got[i] = jstr(s)
+	}
+	return wantGot("controls/flags_command_line_with_usage_preinit",
+		jsonStrings("usage-probe", "--usage-leftover"), jarr(got...))
+}
 
 // chFlagsCommandLinePreinit: recognized flags are consumed, everything else
 // (including argv[0]) is returned.
@@ -1101,6 +1138,8 @@ func chOomFatalHandlersSubprocess(t tester) obs {
 // check functions return a vec of outcomes; the gc-without-expose-gc check
 // emits two lines (full and minor) under the same id.
 var checks = []func(tester) []obs{
+	one(chWasmTrapHandlerPreinit),
+	one(chFlagsCommandLineWithUsagePreinit),
 	one(chFlagsCommandLinePreinit),
 	one(chFlagsExposeGcPreinit),
 	one(chEntropySourceBeforeInit),

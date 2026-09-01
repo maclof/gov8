@@ -1,0 +1,4 @@
+{"check":"external-references/value_semantics","ok":true,"value":{"size":8,"align":8,"null_equal":true,"copy_equal":true,"different_pointer_unequal":true,"function_copy_equal":true,"null_debug":"0x0"}}
+{"check":"external-references/empty_table","ok":true,"value":{"ordinary_isolate_result":42,"blob_nonempty":true,"blob_valid":true,"reuse_without_table":42,"reuse_with_empty_table":43}}
+{"check":"external-references/snapshot_remap_and_reuse","ok":true,"value":{"blob_nonempty":true,"blob_valid":true,"producer_dropped":true,"auto_terminated_table_result":"2","explicitly_terminated_table_result":"3","third_reuse_result":"4"}}
+{"summary":{"total":3,"passed":3,"failed":0}}

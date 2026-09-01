@@ -1,0 +1,3 @@
+{"check":"runtime-values-residual/symbol/all_well_known","ok":true,"value":{"async_iterator":true,"has_instance":true,"is_concat_spreadable":true,"iterator":true,"match":true,"replace":true,"search":true,"split":true,"to_primitive":true,"to_string_tag":true,"unscopables":true,"repeated_stable":true,"all_distinct":true}}
+{"check":"runtime-values-residual/private/for_api_some_names","ok":true,"value":{"empty_idempotent":true,"empty_name_is_string":true,"empty_name_length_zero":true,"empty_differs_fresh_none":true,"named_idempotent":true,"named_name":"named"}}
+{"summary":{"total":2,"passed":2,"failed":0}}

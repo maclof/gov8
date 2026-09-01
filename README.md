@@ -150,17 +150,18 @@ compilation, movable asynchronous compilation and compiled-module restoration,
 Go-string and exact V8 String-local exception constructors, and raw message/stack
 handles, callbacks/templates/interceptors, native promises, buffers and all
 typed-array kinds, structured clone delegates, snapshots, and the complete
-pinned simdutf and ICU surfaces. The Rust fixtures contain 343 normalized
-checks: 341 compare byte-for-byte with Go, one stack-frame check has a narrowly
-documented memory-safety normalization, and one Inspector-dependent Function
-check remains oracle-only.
+pinned simdutf and ICU surfaces. External-reference tables and snapshot remaps,
+the audited String/BigInt surface, and all safe specialized runtime values are
+also covered. The Rust fixtures contain 358 normalized checks: 349 compare
+byte-for-byte with Go, one stack-frame check has a narrowly documented
+memory-safety normalization, and eight checks remain oracle-only (seven
+platform/task observations plus one Inspector-dependent Function check).
 Separate fatal and panic-boundary subprocess tests cover unsafe lifecycle and
 callback edges.
 
 This is still not a feature-complete rusty_v8 binding. Major remaining families
 include dynamic/source/deferred modules, residual unsafe CreateParams
-options, residual object/function APIs, Wasm policy/trap/serializer
-integration, Inspector/CRDTP, cppgc, Fast API, custom platforms/tasks, and
-external references. The
+options, residual object/function APIs, Wasm policy/serializer integration,
+Inspector/CRDTP, cppgc, Fast API, and custom platforms/tasks. The
 authoritative gaps and intentional API-shape differences are tracked in
 `PARITY.md`.

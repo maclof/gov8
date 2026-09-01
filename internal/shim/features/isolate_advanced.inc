@@ -5,6 +5,14 @@
 #include <mutex>
 #include <unordered_map>
 
+namespace gov8_external_references_impl {
+void* CopyTable(const intptr_t* words, size_t length);
+const intptr_t* TableWords(void* opaque);
+void AdoptTable(v8::Isolate* isolate, void* opaque) noexcept;
+void DestroyTable(void* opaque) noexcept;
+void DropTable(v8::Isolate* isolate) noexcept;
+}  // namespace gov8_external_references_impl
+
 namespace gov8_ia_impl {
 
 extern "C" {
@@ -102,10 +110,15 @@ __declspec(dllexport) int64_t gov8_ia_derive_constraints(
 __declspec(dllexport) void* gov8_ia_isolate_new(
     uint64_t max_old, uint64_t max_young, uint64_t code_range,
     uint64_t initial_old, uint64_t initial_young, int32_t allow_atomics_wait,
-    int32_t use_empty_external_references, void* counter_host_context) {
+    int32_t use_external_references, const intptr_t* external_references,
+    size_t external_reference_count, void* counter_host_context) {
   ClearErr();
   if (g_platform == nullptr || (allow_atomics_wait != 0 && allow_atomics_wait != 1) ||
-      (use_empty_external_references != 0 && use_empty_external_references != 1)) {
+      (use_external_references != 0 && use_external_references != 1) ||
+      (use_external_references == 0 &&
+       (external_references != nullptr || external_reference_count != 0)) ||
+      (use_external_references != 0 && external_references == nullptr &&
+       external_reference_count != 0)) {
     SetErr("invalid argument");
     return nullptr;
   }
@@ -123,9 +136,18 @@ __declspec(dllexport) void* gov8_ia_isolate_new(
     params.constraints.set_initial_young_generation_size_in_bytes(
         static_cast<size_t>(initial_young));
     params.allow_atomics_wait = allow_atomics_wait != 0;
-    static const intptr_t empty_external_references[] = {0};
-    if (use_empty_external_references != 0) {
-      params.external_references = empty_external_references;
+    std::unique_ptr<void, void (*)(void*)> external_reference_state(
+        nullptr, gov8_external_references_impl::DestroyTable);
+    if (use_external_references != 0) {
+      external_reference_state.reset(gov8_external_references_impl::CopyTable(
+          external_references, external_reference_count));
+      if (!external_reference_state) {
+        SetErr("external-reference table allocation failed");
+        return nullptr;
+      }
+      params.external_references =
+          gov8_external_references_impl::TableWords(
+              external_reference_state.get());
     }
 
     std::unique_ptr<CounterState> counter_state;
@@ -140,6 +162,10 @@ __declspec(dllexport) void* gov8_ia_isolate_new(
     if (isolate == nullptr) {
       SetErr("Isolate::New failed");
       return nullptr;
+    }
+    if (external_reference_state) {
+      gov8_external_references_impl::AdoptTable(
+          isolate, external_reference_state.release());
     }
     if (counter_state) {
       std::lock_guard<std::mutex> lock(counter_mutex);
@@ -158,6 +184,7 @@ __declspec(dllexport) int64_t gov8_ia_after_isolate_dispose(v8::Isolate* isolate
   ClearErr();
   std::lock_guard<std::mutex> lock(counter_mutex);
   counter_states.erase(isolate);
+  gov8_external_references_impl::DropTable(isolate);
   return kOk;
 }
 

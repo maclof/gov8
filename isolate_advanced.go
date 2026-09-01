@@ -19,21 +19,22 @@ import (
 type CounterLookupCallback func(name string)
 
 // CreateParams is the safe Go counterpart of v8::CreateParams for the options
-// characterized by the pinned oracle. Custom allocators, non-empty external
-// reference tables, raw stack limits at isolate construction, snapshots and
-// embedder CppHeap ownership are intentionally not accepted here.
+// characterized by the pinned oracle. Custom allocators, raw stack limits at
+// isolate construction, snapshots and embedder CppHeap ownership are
+// intentionally not accepted here.
 type CreateParams struct {
-	initialized                bool
-	maxOldGeneration           uint64
-	maxYoungGeneration         uint64
-	codeRange                  uint64
-	initialOldGeneration       uint64
-	initialYoungGeneration     uint64
-	stackLimit                 uintptr
-	allowAtomicsWait           bool
-	arrayBufferAllocatorSet    bool
-	emptyExternalReferencesSet bool
-	counterLookup              CounterLookupCallback
+	initialized             bool
+	maxOldGeneration        uint64
+	maxYoungGeneration      uint64
+	codeRange               uint64
+	initialOldGeneration    uint64
+	initialYoungGeneration  uint64
+	stackLimit              uintptr
+	allowAtomicsWait        bool
+	arrayBufferAllocatorSet bool
+	externalReferencesSet   bool
+	externalReferences      []ExternalReference
+	counterLookup           CounterLookupCallback
 }
 
 // NewCreateParams returns the Rust builder's defaults. The allocator flag is
@@ -106,9 +107,7 @@ func (p *CreateParams) UseDefaultArrayBufferAllocator() *CreateParams {
 // UseEmptyExternalReferences installs a process-lifetime, null-terminated
 // empty external-reference table. Non-empty raw address tables are excluded.
 func (p *CreateParams) UseEmptyExternalReferences() *CreateParams {
-	p.initialize()
-	p.emptyExternalReferencesSet = true
-	return p
+	return p.SetExternalReferences(nil)
 }
 
 func (p *CreateParams) SetCounterLookupCallback(callback CounterLookupCallback) *CreateParams {
@@ -129,7 +128,9 @@ func (p *CreateParams) AllowAtomicsWait() bool {
 	return !p.initialized || p.allowAtomicsWait
 }
 func (p *CreateParams) HasSetArrayBufferAllocator() bool { return p.arrayBufferAllocatorSet }
-func (p *CreateParams) HasEmptyExternalReferences() bool { return p.emptyExternalReferencesSet }
+func (p *CreateParams) HasEmptyExternalReferences() bool {
+	return p.externalReferencesSet && len(p.externalReferences) == 0
+}
 
 func (p *CreateParams) setDerived(values [5]uint64) {
 	p.maxOldGeneration = values[0]
@@ -253,22 +254,29 @@ func NewIsolateWithParams(params *CreateParams) (*Isolate, error) {
 	if configuration.allowAtomicsWait {
 		allowAtomics = 1
 	}
-	emptyReferences := uintptr(0)
-	if configuration.emptyExternalReferencesSet {
-		emptyReferences = 1
+	referencesSet := uintptr(0)
+	if configuration.externalReferencesSet {
+		referencesSet = 1
+	}
+	referenceWords := externalReferenceWords(configuration.externalReferences)
+	var referencePointer uintptr
+	if len(referenceWords) != 0 {
+		referencePointer = uintptr(unsafe.Pointer(&referenceWords[0]))
 	}
 	handle, err := callHandle("Isolate.NewWithParams", proc("gov8_ia_isolate_new"),
 		uintptr(configuration.maxOldGeneration), uintptr(configuration.maxYoungGeneration),
 		uintptr(configuration.codeRange), uintptr(configuration.initialOldGeneration),
-		uintptr(configuration.initialYoungGeneration), allowAtomics, emptyReferences,
-		counterHandle)
+		uintptr(configuration.initialYoungGeneration), allowAtomics, referencesSet,
+		referencePointer, uintptr(len(referenceWords)), counterHandle)
+	runtime.KeepAlive(referenceWords)
 	if err != nil {
 		abandonIsolateCreate()
 		dropIsolateCounter(counterHandle)
 		runtime.UnlockOSThread()
 		return nil, err
 	}
-	isolate := &Isolate{handle: handle, tid: tid, advancedCounterHandle: counterHandle}
+	isolate := &Isolate{handle: handle, tid: tid, advancedCounterHandle: counterHandle,
+		advancedExternalReferences: configuration.externalReferencesSet}
 	finishIsolateCreate(isolate)
 	return isolate, nil
 }

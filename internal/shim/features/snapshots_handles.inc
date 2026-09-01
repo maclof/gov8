@@ -50,6 +50,10 @@
 #include <atomic>
 #include <cstring>
 
+namespace gov8_external_references_impl {
+void DropTable(v8::Isolate* isolate) noexcept;
+}  // namespace gov8_external_references_impl
+
 namespace gov8_snap_impl {
 
 constexpr uint64_t kCreatorMagic = 0x674f5638534e5053ULL;  // "gOV8SNPS"
@@ -393,7 +397,9 @@ __declspec(dllexport) int64_t gov8_snapshot_creator_dispose(void* creatorw) {
     return kErrMagic;
   }
   try {
+    v8::Isolate* isolate = w->iso;
     v8__SnapshotCreator__DESTRUCT(w->sc_storage);
+    gov8_external_references_impl::DropTable(isolate);
     gov8_snap_impl::FreeBlobHolder(w->blob);
     w->magic = 0;
     delete w;
@@ -513,6 +519,7 @@ __declspec(dllexport) int64_t gov8_snapshot_create_blob(
     return kErrBadArg;
   }
   try {
+    v8::Isolate* creator_isolate = w->iso;
     v8::StartupData blob;
     {
       // Scoped tightly: the creator's destructor below EXITS AND DELETES
@@ -526,6 +533,7 @@ __declspec(dllexport) int64_t gov8_snapshot_create_blob(
     }
     // Tear the creator down either way: the engine isolate is owned by it.
     v8__SnapshotCreator__DESTRUCT(w->sc_storage);
+    gov8_external_references_impl::DropTable(creator_isolate);
     gov8_snap_impl::FreeBlobHolder(w->blob);
     w->magic = 0;
     delete w;

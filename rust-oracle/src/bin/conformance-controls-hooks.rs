@@ -105,6 +105,8 @@ use oracle::report::{expect_eq, CheckOutcome};
 // ---------------------------------------------------------------------------
 
 static SETUP_RESULT: Mutex<Option<Json>> = Mutex::new(None);
+static TRAP_HANDLER_RESULT: Mutex<Option<bool>> = Mutex::new(None);
+static FLAGS_USAGE_RESULT: Mutex<Option<Vec<String>>> = Mutex::new(None);
 
 fn entropy_fill_42(buf: &mut [u8]) -> bool {
     buf.fill(42);
@@ -123,6 +125,19 @@ fn ensure_v8_setup() -> Json {
     if let Some(setup) = guard.as_ref() {
         return setup.clone();
     }
+    // Process-global WebAssembly trap handling is selected before V8 is
+    // initialized. `false` asks V8 not to install its own signal handler.
+    let trap_enabled = v8::V8::enable_web_assembly_trap_handler(false);
+    *TRAP_HANDLER_RESULT.lock().unwrap() = Some(trap_enabled);
+    let usage_leftover = v8::V8::set_flags_from_command_line_with_usage(
+        vec![
+            "usage-probe".to_string(),
+            "--log-colour".to_string(),
+            "--usage-leftover".to_string(),
+        ],
+        Some("Usage: usage-probe [v8 flags]\n"),
+    );
+    *FLAGS_USAGE_RESULT.lock().unwrap() = Some(usage_leftover);
     // 1. Command-line flags (pre-init). "--log-colour" is recognized by this
     //    engine and consumed; anything else is returned to the embedder.
     let leftover = v8::V8::set_flags_from_command_line(vec![
@@ -258,6 +273,26 @@ fn optional_json(value: &Option<String>) -> Json {
 // ---------------------------------------------------------------------------
 // The checks, in contractual order.
 // ---------------------------------------------------------------------------
+
+fn wasm_trap_handler_preinit() -> Vec<CheckOutcome> {
+    ensure_v8_setup();
+    let enabled = TRAP_HANDLER_RESULT.lock().unwrap().unwrap();
+    vec![expect_eq(
+        "controls/wasm_trap_handler_preinit",
+        Json::b(true),
+        Json::b(enabled),
+    )]
+}
+
+fn flags_command_line_with_usage_preinit() -> Vec<CheckOutcome> {
+    ensure_v8_setup();
+    let leftover = FLAGS_USAGE_RESULT.lock().unwrap().clone().unwrap();
+    vec![expect_eq(
+        "controls/flags_command_line_with_usage_preinit",
+        json_strings(&["usage-probe", "--usage-leftover"]),
+        Json::arr(leftover.iter().map(|arg| Json::s(arg)).collect()),
+    )]
+}
 
 /// `V8::set_flags_from_command_line` before `V8::initialize`: recognized
 /// flags are consumed, everything else (including argv[0]) is returned.
@@ -1513,6 +1548,8 @@ fn sub_invalid_flag_preinit() {
 type CheckFn = fn() -> Vec<CheckOutcome>;
 
 const CHECKS: &[CheckFn] = &[
+    wasm_trap_handler_preinit,
+    flags_command_line_with_usage_preinit,
     flags_command_line_preinit,
     flags_expose_gc_preinit,
     entropy_source_before_init,

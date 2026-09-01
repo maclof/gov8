@@ -4,6 +4,7 @@ package gov8_test
 
 import (
 	"os"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -42,6 +43,82 @@ import (
 // (verified below) rather than being observable process states.
 
 // --- recoverable creation bounds ------------------------------------------------
+
+func TestSBLatin1ToUTF8RejectsShortOutputWithoutMutation(t *testing.T) {
+	out := []byte{0xa5, 0xa5, 0xa5}
+	if _, err := gov8.Latin1ToUTF8([]byte{0x41, 0xff}, out); err == nil {
+		t.Fatal("short output accepted")
+	}
+	if want := []byte{0xa5, 0xa5, 0xa5}; !slices.Equal(out, want) {
+		t.Fatalf("output changed on error: %x", out)
+	}
+}
+
+func TestSBStringAndBigIntReadersRejectWrongTypesAndLifetimes(t *testing.T) {
+	iso, _, scope := newTestRuntime(t)
+	number, err := scope.Number(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, call := range map[string]func() error{
+		"StringValue": func() error { _, err := number.StringValue(); return err },
+		"Utf8Length":  func() error { _, err := number.Utf8Length(); return err },
+		"Length":      func() error { _, err := number.Length(); return err },
+		"BigIntInt64": func() error { _, _, err := number.BigIntInt64(); return err },
+		"BigIntUint64": func() error {
+			_, _, err := number.BigIntUint64()
+			return err
+		},
+		"BigIntWordCount": func() error { _, err := number.BigIntWordCount(); return err },
+		"BigIntToWords": func() error {
+			_, _, err := number.BigIntToWords(make([]uint64, 1))
+			return err
+		},
+	} {
+		if err := call(); err == nil || !strings.Contains(err.Error(), "not a") {
+			t.Errorf("%s wrong-type error = %v", name, err)
+		}
+	}
+
+	closedScope, err := iso.NewScope()
+	if err != nil {
+		t.Fatal(err)
+	}
+	str, err := closedScope.NewString("closed")
+	if err != nil {
+		t.Fatal(err)
+	}
+	big, err := closedScope.BigIntFromInt64(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := closedScope.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := str.Length(); err == nil {
+		t.Fatal("Length accepted a closed local")
+	}
+	if _, _, err := big.BigIntInt64(); err == nil {
+		t.Fatal("BigIntInt64 accepted a closed local")
+	}
+
+	errCh := make(chan error, 2)
+	stringValue, err := scope.NewString("thread")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bigint, err := scope.BigIntFromInt64(2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() { _, err := stringValue.Length(); errCh <- err }()
+	go func() { _, _, err := bigint.BigIntUint64(); errCh <- err }()
+	for range 2 {
+		if err := <-errCh; err == nil || !strings.Contains(err.Error(), "affinity") {
+			t.Fatalf("wrong-thread reader error = %v", err)
+		}
+	}
+}
 
 func TestSBStringCreationOverMaxLengthIsError(t *testing.T) {
 	if testing.Short() {

@@ -61,11 +61,20 @@ type StartupData struct {
 	bytes    []byte
 	refs     map[*Isolate]uintptr // isolate -> engine blob copy (consumers)
 	released bool
+	// Set for blobs produced by a creator whose effective external-reference
+	// table was non-empty. Such blobs must not reach V8 without a table.
+	requiresExternalReferences bool
+	// False for StartupDataFromBytes: V8 exposes no safe query for whether an
+	// arbitrary serialized blob contains external references.
+	externalReferencesKnown bool
 }
 
 // StartupDataFromBytes wraps raw snapshot bytes (the analog of the pinned
 // crate's StartupData::from(Vec<u8>), e.g. a blob loaded from a file). The
-// bytes are used as-is; validity is checked at use.
+// bytes are used as-is; validity is checked at use. Because a raw blob does
+// not reveal whether it contains external references, consume it through
+// NewIsolateFromSnapshotWithParams with an explicit table; the table may be
+// empty for a blob known by the caller not to contain external references.
 func StartupDataFromBytes(b []byte) *StartupData {
 	if len(b) == 0 {
 		return &StartupData{}
@@ -209,9 +218,10 @@ func isolateClosed(i *Isolate) bool {
 // drop-without-create_blob panic into an explicit, safe operation; see
 // Close). All methods must run on the creator's owning thread.
 type SnapshotCreator struct {
-	iso    *Isolate
-	wrap   uintptr
-	closed bool
+	iso                        *Isolate
+	wrap                       uintptr
+	closed                     bool
+	requiresExternalReferences bool
 }
 
 // NewSnapshotCreator creates a fresh creator isolate.
@@ -225,6 +235,9 @@ func NewSnapshotCreator() (*SnapshotCreator, error) {
 func NewSnapshotCreatorFromExistingSnapshot(blob *StartupData) (*SnapshotCreator, error) {
 	if err := blob.validForCreation(); err != nil {
 		return nil, err
+	}
+	if !blob.externalReferencesKnown || blob.requiresExternalReferences {
+		return nil, fmt.Errorf("gov8: snapshot may require external references; use NewSnapshotCreatorFromExistingSnapshotWithExternalReferences")
 	}
 	return newSnapshotCreator(blob)
 }
@@ -388,7 +401,8 @@ func (sc *SnapshotCreator) CreateBlob(policy FunctionCodeHandling) (*StartupData
 		uintptr(unsafe.Pointer(&buf[0])), uintptr(size)); err != nil {
 		return nil, err
 	}
-	return &StartupData{bytes: buf}, nil
+	return &StartupData{bytes: buf, requiresExternalReferences: sc.requiresExternalReferences,
+		externalReferencesKnown: true}, nil
 }
 
 // Close releases the creator isolate without producing a blob. In the
@@ -416,9 +430,18 @@ func (sc *SnapshotCreator) Close() error {
 // has released the thread's engine-enter state.
 func (sc *SnapshotCreator) teardown() {
 	sc.iso.mu.Lock()
+	disposedHandle := sc.iso.handle
+	hadExternalReferences := sc.iso.advancedExternalReferences
 	sc.iso.closed = true
 	sc.iso.handle = 0
+	sc.iso.advancedExternalReferences = false
 	sc.iso.mu.Unlock()
+	if hadExternalReferences {
+		// The native creator has already destroyed its isolate. The cleanup hook
+		// only drops isolate-keyed host tables and is idempotent with the native
+		// creator teardown path.
+		_, _, _ = proc("gov8_ia_after_isolate_dispose").Call(disposedHandle)
+	}
 	unregisterIsolate(sc.iso)
 	runtime.UnlockOSThread()
 	sc.closed = true
@@ -438,6 +461,12 @@ func NewIsolateFromSnapshot(blob *StartupData) (*Isolate, error) {
 	}
 	if err := blob.validForCreation(); err != nil {
 		return nil, err
+	}
+	if !blob.externalReferencesKnown {
+		return nil, fmt.Errorf("gov8: snapshot external-reference requirements are unknown; use NewIsolateFromSnapshotWithParams with an explicit table")
+	}
+	if blob.requiresExternalReferences {
+		return nil, fmt.Errorf("gov8: snapshot requires external references; use NewIsolateFromSnapshotWithParams")
 	}
 	runtime.LockOSThread()
 	tid := currentThreadID()

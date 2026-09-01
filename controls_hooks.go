@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+	"strings"
 	"sync"
 	"syscall"
 	"unsafe"
@@ -67,18 +68,55 @@ import (
 // Process-level: flags, entropy, fatal handler
 // ---------------------------------------------------------------------------
 
+// EnableWebAssemblyTrapHandler activates V8's trap-based WebAssembly bounds
+// checks. Call it before Initialize. If useV8SignalHandler is true, V8 installs
+// its own signal handler; otherwise the embedder is responsible for routing
+// faults to V8. The result reports whether trap handling is available in the
+// pinned engine build.
+func EnableWebAssemblyTrapHandler(useV8SignalHandler bool) (bool, error) {
+	if err := loadShim(); err != nil {
+		return false, err
+	}
+	flag := uintptr(0)
+	if useV8SignalHandler {
+		flag = 1
+	}
+	r1, _, _ := proc("gov8_ch_enable_wasm_trap_handler").Call(flag)
+	if int64(r1) < 0 {
+		return false, shimError("EnableWebAssemblyTrapHandler", r1)
+	}
+	return r1 == 1, nil
+}
+
 // SetFlagsFromCommandLine passes args to the engine BEFORE Initialize.
 // Recognized flags are consumed; the args the engine did not understand are
 // returned in order (including the program name at args[0]). The engine
 // exits the process on --help; do not pass it.
 func SetFlagsFromCommandLine(args []string) ([]string, error) {
+	return setFlagsFromCommandLine(args, nil)
+}
+
+// SetFlagsFromCommandLineWithUsage is the usage-bearing form of
+// SetFlagsFromCommandLine. V8 prints usage followed by its flag catalogue when
+// args requests help. As in rusty_v8, usage must not contain an embedded NUL.
+func SetFlagsFromCommandLineWithUsage(args []string, usage string) ([]string, error) {
+	return setFlagsFromCommandLine(args, &usage)
+}
+
+func setFlagsFromCommandLine(args []string, usage *string) ([]string, error) {
 	if err := loadShim(); err != nil {
 		return nil, err
+	}
+	if len(args) == 0 {
+		return nil, errors.New("gov8: command line requires argv[0]")
 	}
 	cstrs := make([][]byte, len(args))
 	ptrs := make([]uintptr, len(args))
 	origin := make(map[uintptr]string, len(args))
 	for i, a := range args {
+		if strings.IndexByte(a, 0) >= 0 {
+			return nil, fmt.Errorf("gov8: command-line argument %d contains NUL", i)
+		}
 		b := make([]byte, len(a)+1)
 		copy(b, a)
 		cstrs[i] = b
@@ -94,10 +132,23 @@ func SetFlagsFromCommandLine(args []string) ([]string, error) {
 	if len(ptrs) > 0 {
 		argvPtr = uintptr(unsafe.Pointer(&ptrs[0]))
 	}
-	r1, _, _ := proc("gov8_ch_set_flags_from_command_line").Call(
-		uintptr(unsafe.Pointer(&argc)), argvPtr)
+	var usageBytes []byte
+	var usagePtr uintptr
+	procName := "gov8_ch_set_flags_from_command_line"
+	if usage != nil {
+		if strings.IndexByte(*usage, 0) >= 0 {
+			return nil, errors.New("gov8: usage contains NUL")
+		}
+		usageBytes = make([]byte, len(*usage)+1)
+		copy(usageBytes, *usage)
+		usagePtr = uintptr(unsafe.Pointer(&usageBytes[0]))
+		procName = "gov8_ch_set_flags_from_command_line_with_usage"
+	}
+	r1, _, _ := proc(procName).Call(uintptr(unsafe.Pointer(&argc)), argvPtr, usagePtr)
+	runtime.KeepAlive(cstrs)
+	runtime.KeepAlive(usageBytes)
 	if int64(r1) < 0 {
-		return nil, shimError("SetFlagsFromCommandLine", r1)
+		return nil, shimError(procName, r1)
 	}
 	if argc < 0 || int(argc) > len(args) {
 		return nil, fmt.Errorf("gov8: SetFlagsFromCommandLine reported %d leftover args", argc)

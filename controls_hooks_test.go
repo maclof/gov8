@@ -218,6 +218,26 @@ func TestFlagsFromCommandLineUnrecognizedReturnLeftover(t *testing.T) {
 	}
 }
 
+func TestFlagsFromCommandLineWithUsageAndValidation(t *testing.T) {
+	args := []string{"gov8-test-binary", "--gov8-usage-fake"}
+	leftover, err := gov8.SetFlagsFromCommandLineWithUsage(args, "Usage: gov8-test-binary\n")
+	if err != nil {
+		t.Fatalf("SetFlagsFromCommandLineWithUsage: %v", err)
+	}
+	if len(leftover) != len(args) || leftover[0] != args[0] || leftover[1] != args[1] {
+		t.Fatalf("leftover = %v, want %v", leftover, args)
+	}
+	if _, err := gov8.SetFlagsFromCommandLine(nil); err == nil {
+		t.Fatal("empty command line must fail without argv[0]")
+	}
+	if _, err := gov8.SetFlagsFromCommandLine([]string{"bad\x00arg"}); err == nil {
+		t.Fatal("embedded NUL argument must fail")
+	}
+	if _, err := gov8.SetFlagsFromCommandLineWithUsage([]string{"ok"}, "bad\x00usage"); err == nil {
+		t.Fatal("embedded NUL usage must fail")
+	}
+}
+
 // --- GC controls ---------------------------------------------------------------------
 
 // TestClearKeptObjectsKeepsIsolateUsable exercises ClearKeptObjects in

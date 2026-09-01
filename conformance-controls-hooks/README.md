@@ -6,7 +6,7 @@ controls & hooks conformance slice
 
 - **Crate / engine**: `v8 =152.2.0` / V8 `15.2.124.1-rusty`
 - **Fixture**: `../rust-oracle/tests/fixtures/conformance-controls-hooks-v8_152.2.0_x86_64-pc-windows-msvc.jsonl`
-- **Checks**: 22 lines (the full/minor gc-request check emits two lines under
+- **Checks**: 24 lines (the full/minor gc-request check emits two lines under
   one id), in the fixed oracle order (the order is part of the observable
   contract)
 
@@ -30,7 +30,7 @@ asserted — the oracle fixture itself repeats the
 
 | Area | Checks | Go surface exercised |
 |---|---|---|
-| `flags` | 2 | `SetFlagsFromCommandLine` (recognized flags consumed, leftovers returned in engine-compacted order), `SetFlagsFromString("--expose-gc")` + the JS `gc()` global |
+| `process configuration` | 4 | `EnableWebAssemblyTrapHandler(false)`, `SetFlagsFromCommandLineWithUsage`, `SetFlagsFromCommandLine` (recognized flags consumed, leftovers returned in engine-compacted order), `SetFlagsFromString("--expose-gc")` + the JS `gc()` global |
 | `entropy` | 2 | `SetEntropySource` before/after `Initialize` pinning `Math.random()` to the exact oracle constants (`0.41480742418592154` / `0.8960919850226692`) |
 | fatal/gc | 4 | frozen-flags CHECK + API fatal handler, `RequestGarbageCollectionForTesting` fatal without `--expose-gc` (full and minor; the API fatal handler must NOT fire there), WeakRef kept-objects lifecycle with `ClearKeptObjects` |
 | memory | 2 | `MemoryPressureNotification` (all three levels), `LowMemoryNotification` reclaiming 32 MiB of ArrayBuffer external memory |

@@ -16,6 +16,7 @@ import (
 //
 // Mapping from the pinned crate (semantics preserved, names idiomatic):
 //
+//	string::latin1_to_utf8       -> Latin1ToUTF8 (safe slices)
 //	String::MAX_LENGTH            -> StringMaxLength
 //	String::empty                 -> (*Scope).EmptyString
 //	String::new_from_utf8         -> (*Scope).NewStringFromUTF8
@@ -44,6 +45,9 @@ import (
 //	BigInt::to_words_array        -> Value.BigIntToWords
 // Intentional deviations (documented, semantics-preserving):
 //
+//   - Latin1ToUTF8 replaces the Rust helper's unsafe pointer/capacity
+//     preconditions with slices, rejects short output before writing, and
+//     deterministically supports overlapping slices by copying the input.
 //   - Ownership: the engine must never hold a Go pointer (the FFI is
 //     syscall-based and a retained Go pointer can be collected or moved
 //     behind the engine's back). Every byte buffer handed to an external
@@ -114,6 +118,58 @@ const (
 	StringEncodingUnknown StringEncoding = 0x1
 	StringEncodingOneByte StringEncoding = 0x8
 )
+
+// Latin1ToUTF8 converts Latin-1 bytes to UTF-8 in output and returns the
+// number of bytes written. The pinned Rust helper requires output to provide
+// the worst-case capacity of two bytes per input byte; this safe Go shape
+// validates that precondition and leaves output untouched on failure.
+func Latin1ToUTF8(input, output []byte) (int, error) {
+	if len(input) > math.MaxInt/2 {
+		return 0, fmt.Errorf("gov8: Latin1ToUTF8: input too large")
+	}
+	required := len(input) * 2
+	if len(output) < required {
+		return 0, fmt.Errorf("gov8: Latin1ToUTF8: output capacity %d is less than required %d", len(output), required)
+	}
+
+	// Copy first when the slices overlap. Forward expansion can otherwise
+	// overwrite unread input bytes; the Rust pointer API makes non-overlap a
+	// caller safety obligation, while the safe Go API handles it deterministically.
+	if slicesOverlap(input, output[:required]) {
+		input = append([]byte(nil), input...)
+	}
+
+	written := 0
+	for _, c := range input {
+		if c < 0x80 {
+			output[written] = c
+			written++
+			continue
+		}
+		output[written] = 0xc0 | c>>6
+		output[written+1] = 0x80 | c&0x3f
+		written += 2
+	}
+	return written, nil
+}
+
+func slicesOverlap(a, b []byte) bool {
+	if len(a) == 0 || len(b) == 0 {
+		return false
+	}
+	a0 := uintptr(unsafe.Pointer(unsafe.SliceData(a)))
+	b0 := uintptr(unsafe.Pointer(unsafe.SliceData(b)))
+	return a0 < b0+uintptr(len(b)) && b0 < a0+uintptr(len(a))
+}
+
+// requireBigInt validates that v is a live BigInt local. Rust's typed Local
+// prevents this misuse at compile time; Go validates before any BigInt FFI.
+func (v Value) requireBigInt() error {
+	if _, err := typedCast(v, v.IsBigInt, "BigInt"); err != nil {
+		return err
+	}
+	return nil
+}
 
 // StringMaxLength returns v8::String::kMaxLength (536870888 on 64-bit
 // targets): the maximum string length the engine accepts, and the bound
@@ -944,7 +1000,7 @@ func (s *Scope) BigIntFromWords(c *Context, sign bool, words []uint64, tc *TryCa
 // BigIntUint64 returns the unsigned 64-bit view of a BigInt and whether
 // the conversion was lossless (false when truncated or negative).
 func (v Value) BigIntUint64() (value uint64, lossless bool, err error) {
-	if err := v.check(); err != nil {
+	if err := v.requireBigInt(); err != nil {
 		return 0, false, err
 	}
 	if err := requireInitialized(); err != nil {
@@ -963,7 +1019,7 @@ func (v Value) BigIntUint64() (value uint64, lossless bool, err error) {
 
 // BigIntWordCount returns the number of 64-bit words the BigInt occupies.
 func (v Value) BigIntWordCount() (int, error) {
-	if err := v.check(); err != nil {
+	if err := v.requireBigInt(); err != nil {
 		return 0, err
 	}
 	if err := requireInitialized(); err != nil {
@@ -982,7 +1038,7 @@ func (v Value) BigIntWordCount() (int, error) {
 // capacity; the returned subslice covers exactly the words written, and
 // buffer bytes beyond it are untouched. A zero BigInt writes nothing.
 func (v Value) BigIntToWords(buf []uint64) (sign bool, words []uint64, err error) {
-	if err := v.check(); err != nil {
+	if err := v.requireBigInt(); err != nil {
 		return false, nil, err
 	}
 	if err := requireInitialized(); err != nil {

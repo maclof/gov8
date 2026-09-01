@@ -372,7 +372,7 @@ func (v Value) Uint32Value(c *Context) (val uint32, ok bool, err error) {
 
 // BigIntInt64 returns (value, lossless) for a BigInt via v8 BigInt::Int64Value.
 func (v Value) BigIntInt64() (val int64, lossless bool, err error) {
-	if err := v.check(); err != nil {
+	if err := v.requireBigInt(); err != nil {
 		return 0, false, err
 	}
 	if err := requireInitialized(); err != nil {
@@ -392,7 +392,7 @@ func (v Value) BigIntInt64() (val int64, lossless bool, err error) {
 
 // utf8Bytes reads the full UTF-8 (lossy) encoding of a string value.
 func (v Value) utf8Bytes() ([]byte, error) {
-	if err := v.check(); err != nil {
+	if err := v.requireString(); err != nil {
 		return nil, err
 	}
 	if err := requireInitialized(); err != nil {
@@ -432,7 +432,7 @@ func (v Value) StringValue() (string, error) {
 // Utf8Length returns the number of bytes in the value's UTF-8 encoding
 // (string values only).
 func (v Value) Utf8Length() (int, error) {
-	if err := v.check(); err != nil {
+	if err := v.requireString(); err != nil {
 		return 0, err
 	}
 	if err := requireInitialized(); err != nil {
@@ -447,7 +447,7 @@ func (v Value) Utf8Length() (int, error) {
 
 // Length returns the number of UTF-16 code units in a string value.
 func (v Value) Length() (int, error) {
-	if err := v.check(); err != nil {
+	if err := v.requireString(); err != nil {
 		return 0, err
 	}
 	if err := requireInitialized(); err != nil {

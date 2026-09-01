@@ -14,21 +14,21 @@ characterized but the Go implementation is not integrated; **missing** means no
 production Go implementation exists. A family is not promoted merely because a
 type or stub exists.
 
-The fixtures under `rust-oracle/tests/fixtures` currently contain 343 normalized
+The fixtures under `rust-oracle/tests/fixtures` currently contain 358 normalized
 checks. Fatal and panic-boundary subprocess tests are additional evidence and are
 not counted in that total.
 
 | Rust API family / behavior | Go implementation | Conformance and benchmark evidence | Status / remaining gaps |
 |---|---|---|---|
 | Platform initialization, version, dispose ordering | `Initialize`, `EngineVersion`, `VersionString`, `Dispose`, `DisposePlatform`, `Shutdown` | base conformance; startup benchmarks | **complete** for the default platform lifecycle; invalid Rust transitions panic while Go intentionally returns errors |
-| Platform/task implementations and message-loop control | `Isolate.PumpMessageLoop` for the initialized default platform | Wasm asynchronous conformance and matched end-to-end compilation benchmark | **partial**: default-platform nonblocking/blocking task pumping is implemented; `PlatformImpl`, custom/single-threaded/unprotected platforms, `Task`, `IdleTask`, idle tasks, flags-with-usage and trap-handler controls remain |
-| `Isolate` lifecycle and parallel isolates | `NewIsolate`, `NewIsolateWithParams`, `CreateParams`, heap/code/space statistics, profiler/notification and control APIs | base, 9-check isolate-advanced, core-advanced, snapshots and controls-hooks fixtures; lifecycle/concurrency/fatal tests; startup benchmarks | **partial**: unsafe custom allocators, non-empty raw external references, raw Go-stack limits, embedder-owned C++ heaps, heap snapshots and remaining profiler controls are explicit gaps |
+| Platform/task implementations and message-loop control | default-platform `Isolate.PumpMessageLoop`, flags with optional usage, and WebAssembly trap activation | 4-check constructor/idle and 3-check custom-platform Rust oracles, controls-hooks and Wasm async conformance; matched end-to-end compilation benchmark | **partial**: default-platform task pumping, flags-with-usage and trap-handler controls are exact; Go custom/single-threaded/unprotected platform construction, `PlatformImpl`, `Task`, `IdleTask` and `RunIdleTasks` remain |
+| `Isolate` lifecycle and parallel isolates | `NewIsolate`, `NewIsolateWithParams`, `CreateParams`, external-reference tables, heap/code/space statistics, profiler/notification and control APIs | base, 9-check isolate-advanced, core-advanced, snapshots, external-reference and controls-hooks fixtures; lifecycle/concurrency/fatal tests; startup benchmarks | **partial**: unsafe custom allocators, raw Go-stack limits, embedder-owned C++ heaps, heap snapshots and remaining profiler controls are explicit gaps |
 | `Locker`, shared isolates and thread affinity | `locker.go`; owner-thread validation | `core-advanced/thread/*`; wrong-thread and concurrent-isolate tests | **complete** for characterized Locker entry/unlock behavior; broader shared-isolate integration remains |
 | Local, escapable, persistent and weak handles | `Scope`, `EscapableScope`, `Global`, `Weak`, `Eternal`, `TracedReference`, guaranteed finalizers | core-advanced, host, snapshots and 8-check residual-handle fixtures; lifecycle/finalizer/wrong-isolate tests | **partial**: cppgc tracing is still required for an unrooted `TracedReference` target; remaining execution-control handle scopes require audit |
 | Context creation and globals | `NewContext`, `NewContextWithOptions`, global reuse, extras binding, continuation data, promise hooks and execution allow/disallow scopes | base/core/runtime/template plus 8-check context-scopes fixture and fatal subprocess tests; context startup benchmarks | **partial**: snapshot-context options and residual embedder-data APIs remain |
-| Primitive values and conversions | `value.go`, `strings_bigint.go`, `object_ops.go` | base, strings-bigint, runtime-values and 25-check object-ops fixtures; conversion benchmarks | **partial**: every public `Data` predicate and residual local numeric/string conversion is covered; remaining gaps live in specialized value families |
-| String and BigInt APIs | `strings_bigint.go` | 16-check fixture, negative/lifetime tests, Go benchmarks | **partial**: implemented surface is strongly covered; final upstream declaration audit remains |
-| Date, RegExp, JSON, Array, Map, Set, Proxy, Symbol and Private | `runtime_values.go`, `fixed_primitive_arrays.go`, `object_ops.go` | 27-check runtime, 6-check fixed/primitive-array and Data-predicate fixtures; negative/lifecycle tests; Go benchmarks | **partial**: characterized `FixedArray`/`PrimitiveArray` and public `Data` predicate behavior is complete; final specialized-type declaration audit remains |
+| Primitive values and conversions | `value.go`, `strings_bigint.go`, `object_ops.go` | base, strings-bigint, runtime-values and 25-check object-ops fixtures; negative type/lifetime tests; conversion benchmarks | **complete** for public `Data` predicates, primitive constructors, predicates and local numeric/string conversions |
+| String and BigInt APIs | `strings_bigint.go`, including safe `Latin1ToUTF8` | 17-check fixture, negative/lifetime/thread tests, Go benchmarks | **complete** for all safe executable pinned declarations; unsafe pointer/unchecked constructors map to checked slices or owned Go forms |
+| Date, RegExp, JSON, Array, Map, Set, Proxy, Symbol and Private | `runtime_values.go`, `fixed_primitive_arrays.go`, `object_ops.go` | 27-check runtime, 2-check residual-symbol/private, 6-check fixed/primitive-array and Data-predicate fixtures; negative/lifecycle/fatal tests; Go benchmarks | **complete** for the pinned public specialized-value declarations; `Private::for_api(None)` is the documented fatal-input safety normalization |
 | Object operations and predicates | `object_ops.go` | 25-check fixture; negative tests; Go benchmarks | **partial**: all pinned Value predicates, `type_repr`, local conversions and Data predicates are covered; prototype/property constructors, own-name variants, preview entries, API-wrapper and accessor variants remain |
 | Classic scripts, origins, unbound scripts and code cache | `script.go`, `core_advanced.go` | base and core-advanced fixtures; negative tests; Rust/Go script benchmarks | **partial**: direct compilation accepts arbitrary `Value` resource names; arbitrary-value origins for unbound/cached compilation, residual compiler options, streaming compilation and cache-rejection variants remain |
 | TryCatch, exceptions, Message and StackTrace | `trycatch.go`, `message.go`, advanced exception bindings, raw local getters and five native constructors accepting Go strings or exact V8 String locals | base checks, 10-check advanced, 7-check constructor, 2-check String-local and 4-check message-local fixtures; lifecycle/race/fatal tests | **partial**: full listener Message fidelity, TryCatch structural nesting and identity helpers remain; String-local constructors preserve exact UTF-16 and external-resource semantics, while raw Message/StackFrame handles and TryCatch mutation are exact with the documented fatal-handle safety normalization |
@@ -39,15 +39,15 @@ not counted in that total.
 | ArrayBuffer, SharedArrayBuffer and backing stores | `buffer.go` | 20-check buffer fixture; fatal-boundary/lifecycle tests; Go benchmarks | **partial**: implemented core is strong; final allocator/externalization audit remains |
 | Typed arrays and DataView | `typed_arrays.go` | 14-check typed-array fixture; per-kind boundary/fatal tests; Go benchmarks | **complete** for all 12 pinned typed-array kinds and characterized geometry/data behavior |
 | Value serializer/deserializer and delegates | `serializer.go`, `serializer_delegates.go` | buffer and 25-check delegate fixtures; delegate panic boundaries; Go benchmarks | **partial**: legacy-wire-format control and actual Wasm-module return support remain |
-| Snapshots and startup data | `snapshot.go`; creation, validation, rehashability, context/data recovery and ownership | 15-check snapshot/handle fixture; negative and cross-thread tests; Go benchmarks | **partial**: `StartupData::can_be_rehashed` is exact; snapshot-creator external-reference/CreateParams inputs remain with the external-reference family |
+| Snapshots and startup data | `snapshot.go`; creation, validation, rehashability, context/data recovery, external-reference remapping and ownership | 15-check snapshot/handle plus 3-check external-reference fixtures; negative, reuse and cross-thread tests; Go benchmarks | **partial**: external-reference creator/consumer inputs are exact; arbitrary additional `CreateParams` inputs to snapshot creators remain |
 | Source-text and synthetic ES modules | `module.go`, `module_cache.go`, `module_synthetic.go`; source-text compile/link/evaluate, synthetic exports/callbacks, unbound scripts and opaque code cache | 7-check source-text, 3-check module-cache and 3-check synthetic-module fixtures; cache/resolver/evaluation-callback panic, fatal, lifecycle and thread tests; matched Rust/Go module benchmarks | **partial**: dynamic/source/deferred imports, import-meta callbacks and stalled-TLA diagnostics remain |
-| Wasm compile/stream/cache APIs | `wasm.go`, `wasm_streaming.go`; synchronous and streaming compile, caching callbacks, movable experimental async compilation, compiled-module extraction/cross-isolate restoration, memory buffer access and predicates | 2-check core and 5-check streaming/async fixtures exact in Go; negative/panic/lifecycle/thread tests; matched sync compile/rehydration and end-to-end async benchmarks | **partial**: positive serialized-cache acceptance, isolate policy callbacks, trap handling and serializer module return remain |
+| Wasm compile/stream/cache APIs | `wasm.go`, `wasm_streaming.go`; synchronous and streaming compile, caching callbacks, movable experimental async compilation, compiled-module extraction/cross-isolate restoration, trap activation, memory buffer access and predicates | 2-check core, 5-check streaming/async and controls fixtures exact in Go; negative/panic/lifecycle/thread tests; matched sync compile/rehydration and end-to-end async benchmarks | **partial**: positive serialized-cache acceptance, isolate policy callbacks and serializer module return remain |
 | Inspector and CRDTP | none | none | **missing** |
 | cppgc and Rust object tracing | none | none | **missing** |
 | Fast API / `CFunction` | none | none | **missing** |
 | simdutf validation, transcoding, lengths, counts, detection and base64 | `simdutf.go`; all 43 pinned public functions plus result/options constants | 5-check full-surface fixture; destination-boundary tests; matched Rust/Go throughput benchmarks | **complete** for the pinned public simdutf module; Go converts Rust's unsafe output/precondition contracts into checked errors |
 | ICU controls | `icu.go`; ICU 78 common data, locale and time-zone get/set | 3-check exact fixture; valid-data, fatal, malformed, process-global lifecycle and concurrency tests | **complete** for all five pinned public ICU APIs; Go safely copies/aligned-retains common data and converts Rust panic/fatal input boundaries to errors |
-| External-reference API | none | none | **missing** |
+| External-reference API | `external_references.go`; raw/native callback words, owned null-terminated CreateParams tables and snapshot remapping/reuse | 3-check exact fixture; fatal-input normalization, lifecycle, concurrency and creator cleanup tests | **complete** for public value/table behavior and supported native callbacks; Go closures remain deliberately non-serializable |
 | Non-Windows-amd64 targets | none | unsupported-target guards | **out of scope** by the pinned-artifact project decision |
 
 ## Known intentional API-shape differences
@@ -86,17 +86,23 @@ not counted in that total.
   frame-getter FFI and returns an error. The advanced fixture comparison
   normalizes only the four repetitions of this field on its single stack line;
   the emitted Go report retains the truthful `false` values.
+- Rust `Private::for_api` accepts an optional name at the type level, but a
+  `None` name access-violates (`0xC0000005`) in the pinned build. Go's
+  `PrivateForApi` requires a live same-isolate String and rejects its zero
+  `Value` representation before FFI; anonymous fresh private symbols remain
+  available through `NewPrivate(Value{})`.
 
 ## Verification state
 
-On 2026-09-01, the Rust fixtures contain 343 checks. Go compares 341 checks
+On 2026-09-01, the Rust fixtures contain 358 checks. Go compares 349 checks
 byte-for-byte; the advanced stack line passes after the single fatal-handle
-safety normalization documented above. One check remains oracle-only: the
-Function `throwOnSideEffect` observation that requires Inspector. The Rust
+safety normalization documented above. Eight checks remain oracle-only: seven
+platform/task observations and the Function
+`throwOnSideEffect` observation that requires Inspector. The Rust
 oracle suites pass formatting, strict Clippy and full tests; the Go suite passes
 `go test ./... -count=1`, `go vet ./...`, full race checks and benchmark smoke runs.
 `scripts/verify_windows.ps1` explicitly reruns every current conformance package.
 
-The remaining rows are real product scope. In particular, residual Wasm policy
-and trap integration, Inspector, cppgc, Fast API and custom platforms are
+The remaining rows are real product scope. In particular, residual Wasm policy,
+Inspector, cppgc, Fast API and custom platforms are
 not silently deferred.

@@ -1189,6 +1189,46 @@ func (s *Scope) GetHasInstanceSymbol() (*Symbol, error) {
 	return s.wellKnown("gov8_rv_symbol_get_has_instance", "GetHasInstanceSymbol")
 }
 
+// GetAsyncIteratorSymbol returns the well-known Symbol.asyncIterator.
+func (s *Scope) GetAsyncIteratorSymbol() (*Symbol, error) {
+	return s.wellKnown("gov8_rvr_symbol_get_async_iterator", "GetAsyncIteratorSymbol")
+}
+
+// GetIsConcatSpreadableSymbol returns the well-known Symbol.isConcatSpreadable.
+func (s *Scope) GetIsConcatSpreadableSymbol() (*Symbol, error) {
+	return s.wellKnown("gov8_rvr_symbol_get_is_concat_spreadable", "GetIsConcatSpreadableSymbol")
+}
+
+// GetMatchSymbol returns the well-known Symbol.match.
+func (s *Scope) GetMatchSymbol() (*Symbol, error) {
+	return s.wellKnown("gov8_rvr_symbol_get_match", "GetMatchSymbol")
+}
+
+// GetReplaceSymbol returns the well-known Symbol.replace.
+func (s *Scope) GetReplaceSymbol() (*Symbol, error) {
+	return s.wellKnown("gov8_rvr_symbol_get_replace", "GetReplaceSymbol")
+}
+
+// GetSearchSymbol returns the well-known Symbol.search.
+func (s *Scope) GetSearchSymbol() (*Symbol, error) {
+	return s.wellKnown("gov8_rvr_symbol_get_search", "GetSearchSymbol")
+}
+
+// GetSplitSymbol returns the well-known Symbol.split.
+func (s *Scope) GetSplitSymbol() (*Symbol, error) {
+	return s.wellKnown("gov8_rvr_symbol_get_split", "GetSplitSymbol")
+}
+
+// GetToPrimitiveSymbol returns the well-known Symbol.toPrimitive.
+func (s *Scope) GetToPrimitiveSymbol() (*Symbol, error) {
+	return s.wellKnown("gov8_rvr_symbol_get_to_primitive", "GetToPrimitiveSymbol")
+}
+
+// GetUnscopablesSymbol returns the well-known Symbol.unscopables.
+func (s *Scope) GetUnscopablesSymbol() (*Symbol, error) {
+	return s.wellKnown("gov8_rvr_symbol_get_unscopables", "GetUnscopablesSymbol")
+}
+
 func (s *Scope) wellKnown(op, export string) (*Symbol, error) {
 	sh, err := s.checkedHandle()
 	if err != nil {
@@ -1261,7 +1301,9 @@ func (s *Scope) NewPrivate(name Value) (*Private, error) {
 
 // PrivateForApi returns the private symbol registered per isolate for name
 // (Private.for_api — repeated calls with the same name return the same
-// private). name must be a JS string.
+// private). name must be a JS string. Although the pinned Rust signature
+// accepts None, that input access-violates in this build; Go rejects a zero
+// Value before FFI.
 func (s *Scope) PrivateForApi(name Value) (*Private, error) {
 	sh, err := s.checkedHandle()
 	if err != nil {

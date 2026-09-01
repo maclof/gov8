@@ -3,6 +3,7 @@
 package gov8_test
 
 import (
+	"bytes"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -19,6 +20,43 @@ import (
 // Thread-affinity note: every subtest body runs on its own goroutine, so
 // each subtest creates its own isolate (NewIsolate pins that goroutine to
 // the owning OS thread) rather than sharing the parent's.
+
+func TestSBLatin1ToUTF8(t *testing.T) {
+	tests := []struct {
+		name  string
+		input []byte
+		want  []byte
+	}{
+		{name: "empty"},
+		{name: "ascii", input: []byte("ABCDEFGH"), want: []byte("ABCDEFGH")},
+		{name: "boundaries", input: []byte{0x00, 0x7f, 0x80, 0xff}, want: []byte{0x00, 0x7f, 0xc2, 0x80, 0xc3, 0xbf}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			out := bytes.Repeat([]byte{0xa5}, 2*len(tc.input)+3)
+			n, err := gov8.Latin1ToUTF8(tc.input, out)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Equal(out[:n], tc.want) {
+				t.Fatalf("output = %x, want %x", out[:n], tc.want)
+			}
+			if !bytes.Equal(out[n:], bytes.Repeat([]byte{0xa5}, len(out)-n)) {
+				t.Fatalf("tail modified: %x", out[n:])
+			}
+		})
+	}
+
+	// The safe Go form also makes overlapping input/output deterministic.
+	overlap := []byte{0x41, 0x80, 0xff, 0x7f, 0, 0, 0, 0}
+	n, err := gov8.Latin1ToUTF8(overlap[:4], overlap)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []byte{0x41, 0xc2, 0x80, 0xc3, 0xbf, 0x7f}; !bytes.Equal(overlap[:n], want) {
+		t.Fatalf("overlap output = %x, want %x", overlap[:n], want)
+	}
+}
 
 func TestSBStringCreationRepresentations(t *testing.T) {
 	t.Run("latin1 one-byte", func(t *testing.T) {

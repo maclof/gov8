@@ -1,6 +1,6 @@
 //go:build windows && amd64
 
-// The conformance-controls-hooks runner: it executes the 22 checks in the
+// The conformance-controls-hooks runner: it executes the 24 checks in the
 // fixed oracle order, renders the same normalized JSON-lines report as the
 // other slices, and compares the report byte-for-byte against the pinned
 // fixture. The shape and determinism tests mirror
@@ -116,7 +116,7 @@ func runFreshReport(t *testing.T) string {
 	return string(report)
 }
 
-// TestConformanceFixture runs all 22 checks in a fresh subprocess (the Go
+// TestConformanceFixture runs all 24 checks in a fresh subprocess (the Go
 // analog of the oracle's run_binary()) and compares the report byte-for-byte
 // against the pinned fixture.
 func TestConformanceFixture(t *testing.T) {

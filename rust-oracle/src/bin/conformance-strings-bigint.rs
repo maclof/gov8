@@ -1,6 +1,8 @@
-﻿//! Advanced String and BigInt conformance slice for the pinned `v8` crate.
+//! Advanced String and BigInt conformance slice for the pinned `v8` crate.
 //!
 //! Characterizes, in fixed order, the observable contract of:
+//! - The public `string::latin1_to_utf8` helper across ASCII, boundary bytes,
+//!   and the complete Latin-1 byte domain.
 //! - `String` creation flavors: `new` (UTF-8, lossy on invalid input),
 //!   `new_from_utf8` with `NewStringType::Normal`/`Internalized`,
 //!   `new_from_one_byte` (Latin-1), `new_from_two_byte` (UTF-16 incl.
@@ -1514,6 +1516,53 @@ fn str_external_deleter_lifetime() -> Vec<CheckOutcome> {
     )]
 }
 
+/// Public `string::latin1_to_utf8`: ASCII, boundary bytes, the full byte
+/// domain, exact write counts, and untouched output capacity.
+fn str_latin1_to_utf8_helper() -> Vec<CheckOutcome> {
+    let convert = |input: &[u8]| {
+        let mut output = vec![0xa5; input.len() * 2 + 3];
+        // SAFETY: output has the helper's documented worst-case capacity and
+        // both pointers remain valid for the duration of this call.
+        let written =
+            unsafe { v8::latin1_to_utf8(input.len(), input.as_ptr(), output.as_mut_ptr()) };
+        let tail_untouched = output[written..].iter().all(|byte| *byte == 0xa5);
+        output.truncate(written);
+        (output, written, tail_untouched)
+    };
+
+    let (empty, empty_written, _) = convert(&[]);
+    let (ascii, ascii_written, _) = convert(b"01234567");
+    let (boundaries, boundaries_written, _) = convert(&[0x00, 0x7f, 0x80, 0xff]);
+    let all_input: Vec<u8> = (0..=u8::MAX).collect();
+    let (all, all_written, tail_untouched) = convert(&all_input);
+
+    let actual = Json::obj(vec![
+        ("empty_written", Json::i(empty_written as i64)),
+        ("empty_hex", Json::s(&hex(&empty))),
+        ("ascii_written", Json::i(ascii_written as i64)),
+        ("ascii_hex", Json::s(&hex(&ascii))),
+        ("boundaries_written", Json::i(boundaries_written as i64)),
+        ("boundaries_hex", Json::s(&hex(&boundaries))),
+        ("all_bytes_written", Json::i(all_written as i64)),
+        ("first_non_ascii_hex", Json::s(&hex(&all[128..130]))),
+        ("last_hex", Json::s(&hex(&all[all.len() - 2..]))),
+        ("tail_untouched", Json::b(tail_untouched)),
+    ]);
+    let expected = Json::obj(vec![
+        ("empty_written", Json::i(0)),
+        ("empty_hex", Json::s("")),
+        ("ascii_written", Json::i(8)),
+        ("ascii_hex", Json::s("3031323334353637")),
+        ("boundaries_written", Json::i(6)),
+        ("boundaries_hex", Json::s("007fc280c3bf")),
+        ("all_bytes_written", Json::i(384)),
+        ("first_non_ascii_hex", Json::s("c280")),
+        ("last_hex", Json::s("c3bf")),
+        ("tail_untouched", Json::b(true)),
+    ]);
+    vec![expect_eq("strings/latin1_to_utf8_helper", expected, actual)]
+}
+
 /// `BigInt::new_from_i64`/`new_from_u64` boundaries and the
 /// `u64_value`/`i64_value` truncation semantics.
 #[allow(clippy::too_many_lines)]
@@ -2072,6 +2121,7 @@ const CHECKS: &[CheckFn] = &[
     str_external_resource_identity,
     str_external_owned,
     str_external_deleter_lifetime,
+    str_latin1_to_utf8_helper,
     bigint_i64_u64_views,
     bigint_words_construction,
     bigint_words_extraction,

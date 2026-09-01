@@ -1,6 +1,6 @@
 // ===========================================================================
 // Controls & hooks feature slice: safe deterministic V8 flags and pre-init
-// rules (SetFlagsFromCommandLine / SetFlagsFromString / entropy source), the
+// rules (flags, usage strings, WebAssembly trap handling and entropy), the
 // process fatal-error handler, per-isolate OOM and near-heap-limit handlers,
 // GC requests and clear-kept-objects, memory-pressure and low-memory
 // notifications, atomics-wait toggle, idle and timezone notifications,
@@ -56,6 +56,7 @@ extern "C" {
 void v8__V8__SetFlagsFromCommandLine(int* argc, char** argv,
                                      const char* usage);
 void v8__V8__SetFlagsFromString(const char* flags, size_t length);
+bool v8__V8__EnableWebAssemblyTrapHandler(bool use_v8_signal_handler);
 void v8__V8__SetEntropySource(v8::EntropySource callback);
 void v8__V8__SetFatalErrorHandler(v8::V8FatalErrorCallback that);
 void v8__Isolate__MemoryPressureNotification(v8::Isolate* isolate,
@@ -349,13 +350,30 @@ __declspec(dllexport) int64_t gov8_ch_set_dispatcher(uintptr_t dispatch) {
 
 // --- flags / entropy / fatal (process-level, pre-init rules live in Go) -------
 
-// Passes the command line to the engine (recognized flags are consumed;
-// *argc shrinks). The usage string is not exposed by this port; the pinned
-// oracle passes none.
+__declspec(dllexport) int64_t gov8_ch_enable_wasm_trap_handler(
+    int32_t use_v8_signal_handler) {
+  ClearErr();
+  if (use_v8_signal_handler != 0 && use_v8_signal_handler != 1) {
+    SetErr("invalid signal-handler flag");
+    return kErrBadArg;
+  }
+  try {
+    return v8__V8__EnableWebAssemblyTrapHandler(
+               use_v8_signal_handler != 0)
+               ? 1
+               : 0;
+  } catch (...) {
+    SetErr("C++ exception in enable_web_assembly_trap_handler");
+    return kErrCpp;
+  }
+}
+
+// Passes the command line to the engine (recognized flags are consumed and
+// *argc shrinks) without a custom usage prefix.
 __declspec(dllexport) int64_t gov8_ch_set_flags_from_command_line(
     int32_t* argc, char** argv) {
   ClearErr();
-  if (argc == nullptr || argv == nullptr) {
+  if (argc == nullptr || *argc <= 0 || argv == nullptr) {
     SetErr("null out params");
     return kErrBadArg;
   }
@@ -366,6 +384,24 @@ __declspec(dllexport) int64_t gov8_ch_set_flags_from_command_line(
     return kOk;
   } catch (...) {
     SetErr("C++ exception in set_flags_from_command_line");
+    return kErrCpp;
+  }
+}
+
+__declspec(dllexport) int64_t gov8_ch_set_flags_from_command_line_with_usage(
+    int32_t* argc, char** argv, const char* usage) {
+  ClearErr();
+  if (argc == nullptr || *argc <= 0 || argv == nullptr || usage == nullptr) {
+    SetErr("null argument");
+    return kErrBadArg;
+  }
+  try {
+    int c = static_cast<int>(*argc);
+    v8__V8__SetFlagsFromCommandLine(&c, argv, usage);
+    *argc = static_cast<int32_t>(c);
+    return kOk;
+  } catch (...) {
+    SetErr("C++ exception in set_flags_from_command_line_with_usage");
     return kErrCpp;
   }
 }

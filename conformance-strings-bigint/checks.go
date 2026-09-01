@@ -1,6 +1,6 @@
 //go:build windows && amd64
 
-// The 16 advanced strings/BigInt checks in the fixed oracle order (the
+// The 17 advanced strings/BigInt checks in the fixed oracle order (the
 // JSON-lines fixture follows exactly this order): all strings/ checks
 // precede all bigint/ checks. Every check builds the fixed expectation the
 // pinned oracle binary produces and the Go observation of the same calls.
@@ -1089,6 +1089,48 @@ func checkExternalDeleterLifetime(t *testing.T) obs {
 		))
 }
 
+// checkLatin1ToUTF8Helper pins the public string::latin1_to_utf8 helper,
+// including the ASCII/non-ASCII boundary and every possible Latin-1 byte.
+func checkLatin1ToUTF8Helper(t *testing.T) obs {
+	t.Helper()
+	convert := func(input []byte) ([]byte, int, bool) {
+		out := bytes.Repeat([]byte{0xa5}, len(input)*2+3)
+		n, err := gov8.Latin1ToUTF8(input, out)
+		if err != nil {
+			t.Fatalf("Latin1ToUTF8: %v", err)
+		}
+		tailUntouched := bytes.Equal(out[n:], bytes.Repeat([]byte{0xa5}, len(out)-n))
+		return out[:n], n, tailUntouched
+	}
+
+	empty, emptyN, _ := convert(nil)
+	ascii, asciiN, _ := convert([]byte("01234567"))
+	boundaries, boundariesN, _ := convert([]byte{0x00, 0x7f, 0x80, 0xff})
+	allInput := make([]byte, 256)
+	for index := range allInput {
+		allInput[index] = byte(index)
+	}
+	all, allN, tailUntouched := convert(allInput)
+
+	want := obj(
+		kv("empty_written", i(0)), kv("empty_hex", s("")),
+		kv("ascii_written", i(8)), kv("ascii_hex", s("3031323334353637")),
+		kv("boundaries_written", i(6)), kv("boundaries_hex", s("007fc280c3bf")),
+		kv("all_bytes_written", i(384)),
+		kv("first_non_ascii_hex", s("c280")), kv("last_hex", s("c3bf")),
+		kv("tail_untouched", b(true)),
+	)
+	got := obj(
+		kv("empty_written", i(int64(emptyN))), kv("empty_hex", s(lowerHex(empty))),
+		kv("ascii_written", i(int64(asciiN))), kv("ascii_hex", s(lowerHex(ascii))),
+		kv("boundaries_written", i(int64(boundariesN))), kv("boundaries_hex", s(lowerHex(boundaries))),
+		kv("all_bytes_written", i(int64(allN))),
+		kv("first_non_ascii_hex", s(lowerHex(all[128:130]))), kv("last_hex", s(lowerHex(all[len(all)-2:]))),
+		kv("tail_untouched", b(tailUntouched)),
+	)
+	return wantGot("strings/latin1_to_utf8_helper", want, got)
+}
+
 // --- bigint ---------------------------------------------------------------------------
 
 // checkBigIntI64U64Views pins BigInt::new_from_i64/new_from_u64 boundaries
@@ -1468,6 +1510,7 @@ func allChecks() []checkFn {
 		checkExternalResourceIdentity,
 		checkExternalOwned,
 		checkExternalDeleterLifetime,
+		checkLatin1ToUTF8Helper,
 		checkBigIntI64U64Views,
 		checkBigIntWordsConstruction,
 		checkBigIntWordsExtraction,
