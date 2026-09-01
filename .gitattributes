@@ -1,0 +1,3 @@
+# Keep text files byte-for-byte consistent across development and CI hosts.
+# In particular, gofmt always emits LF and rejects CRLF-only checkouts.
+* text=auto eol=lf
