@@ -70,3 +70,26 @@ a candidate median of 308.90 ns, a 2.2% improvement. Against the Rust 43.62 ns
 confidence-interval midpoint, current overhead is about 7.08x. Profiles place
 roughly 57% in callback runtime and 27% in `Task.Run`; the required callback
 transition and owner check now dominate.
+
+## Verified thread-ID and single-swap follow-up
+
+The next slice reads the Windows amd64 TEB thread ID after a one-time
+`GetCurrentThreadId` verification and falls back to that API on any mismatch.
+`Task.take` and `IdleTask.take` also use their mutex-guarded atomic swap as the
+single consumed check and claim, removing a redundant load without changing
+ownership or finalization. Thirty-two locked OS threads compare both thread-ID
+paths with Win32 for 1,000 iterations each; focused lifecycle, wrong-thread,
+conformance, race and vet checks pass.
+
+Twelve alternating fresh-process pairs used clean-master and current test
+executables at a fixed 2,000,000 iterations:
+
+| Version | Samples (ns/op) | Median | B/op; allocs/op |
+|---|---:|---:|---:|
+| clean master | 299.2, 300.9, 285.6, 289.9, 343.8, 302.9, 323.8, 323.3, 312.7, 329.6, 323.6, 301.2 | 307.8 | 32; 1 |
+| current | 281.1, 275.2, 263.6, 296.6, 267.8, 302.7, 301.6, 307.1, 290.2, 296.2, 316.8, 265.5 | 293.2 | 32; 1 |
+
+Current won 11/12 pairs and improved the median 4.74%. Against the archived
+43.62 ns Rust confidence-interval midpoint, the remaining ratio is about
+6.72x. This comparison measures the integrated thread-ID and single-swap
+slice; it does not attribute the full change to either component alone.

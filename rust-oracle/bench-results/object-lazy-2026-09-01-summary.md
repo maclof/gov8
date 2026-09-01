@@ -68,3 +68,20 @@ median fell from 5290 to 4043 ns/op (23.6%), while allocation cost fell from
 448 bytes/14 allocations to 360 bytes/12 allocations. Against the frozen Rust
 1194.4 ns point estimate, the conservative paired ratio is now about 3.38x.
 Focused lifecycle, callback-retention, conformance, race, and vet checks pass.
+
+## Verified thread-ID follow-up
+
+The Windows amd64 owner-thread check now uses a TEB read after one-time Win32
+verification, with a cached `GetCurrentThreadId` fallback. Eight alternating
+fresh-process clean-master/current pairs at 200,000 fixed iterations produced:
+
+| Version | Samples (ns/op) | Median | B/op; allocs/op |
+|---|---:|---:|---:|
+| clean master | 2754, 2669, 2745, 2730, 2741, 2728, 2761, 2809 | 2743 | 344; 10 |
+| current | 2286, 2299, 2263, 2314, 2203, 2202, 2241, 2327 | 2274.5 | 344; 10 |
+
+Current won 8/8 pairs and improved the median 17.08%. The current median is
+about 1.90x the frozen 1194.4 ns Rust estimate. The added eager-property
+control keeps the same scope/object/key/read/conversion lifecycle without lazy
+registration or callback materialization, so future paired runs can separate
+ordinary object setup from the lazy path.

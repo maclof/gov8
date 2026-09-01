@@ -448,3 +448,27 @@ The ratios use the pinned Rust confidence-interval midpoints of 125.03 ns and
 410.7 ns. The unchanged success, settlement, result and derived-state probes
 show that entering the ambient context changes neither benchmark result
 semantics nor the measured operation boundaries.
+
+## Verified Windows thread-ID fast path
+
+Owner-thread validation previously crossed the Win32 syscall trampoline for
+every wrapper operation. The retained implementation verifies the amd64 TEB
+thread ID against `GetCurrentThreadId` on first use, reads it directly after
+that verification, and keeps the cached Win32 call as its mismatch fallback.
+Thirty-two locked OS threads compare both paths against Win32 for 1,000
+iterations each; focused affinity/lifecycle tests, race tests and vet pass.
+
+Alternating clean-master/current fresh-process comparisons recorded these
+fixed-run medians:
+
+| Workload | Clean master | Current | Change | Pair wins | Current Rust ratio |
+|---|---:|---:|---:|---:|---:|
+| thread-ID read | 28.905 ns | 2.5 ns | -91.35% | 10/10 | n/a |
+| callback/native_call_from_js | 1559.5 ns | 1025.5 ns | -34.24% | 7/8 | 6.64x |
+| callback/native_call_from_host | 1623.5 ns | 1110.5 ns | -31.60% | 8/8 | 8.01x |
+| callback/function_new_call | 3397 ns | 2863.5 ns | -15.71% | 6/8 | 2.88x |
+
+Allocations were unchanged. The FFI no-op control was flat at 30.63 versus
+30.58 ns; the precompiled-script control moved from 5531 to 5570 ns (+0.71%,
+4/8 wins), consistent with noise rather than a broad machine effect. Ratios
+use the original pinned Rust midpoints of 154.45, 138.605 and 992.985 ns.

@@ -533,3 +533,42 @@ func BenchmarkLazyDataPropertyFirstRead(b *testing.B) {
 		}
 	}
 }
+
+// BenchmarkLazyDataPropertyEagerControl keeps the same scope, object, key,
+// read, conversion, and teardown shape without callback registration or lazy
+// materialization. It distinguishes lazy-path changes from machine-wide or
+// ordinary object-operation movement during paired measurements.
+func BenchmarkLazyDataPropertyEagerControl(b *testing.B) {
+	e := newObjectEnvTB(b)
+	defer e.close()
+	want := e.mustInt(42)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		inner, err := e.iso.NewScope()
+		if err != nil {
+			b.Fatal(err)
+		}
+		obj, err := inner.NewObject(e.ctx)
+		if err != nil {
+			b.Fatal(err)
+		}
+		key, err := inner.NewString("lazy")
+		if err != nil {
+			b.Fatal(err)
+		}
+		if ok, err := obj.SetByKey(inner, e.ctx, key, want); err != nil || !ok {
+			b.Fatalf("set: ok=%v err=%v", ok, err)
+		}
+		value, err := obj.GetByKey(inner, e.ctx, key)
+		if err != nil {
+			b.Fatal(err)
+		}
+		if got, ok, err := value.Int32Value(e.ctx); err != nil || !ok || got != 42 {
+			b.Fatalf("read: value=%d ok=%v err=%v", got, ok, err)
+		}
+		if err := inner.Close(); err != nil {
+			b.Fatal(err)
+		}
+	}
+}

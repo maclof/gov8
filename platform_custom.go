@@ -386,11 +386,11 @@ func (task *Task) take() (uintptr, error) {
 		return 0, fmt.Errorf("gov8: nil Task")
 	}
 	task.mu.Lock()
-	if task.handle.Load() == 0 {
+	handle := task.handle.Swap(0)
+	if handle == 0 {
 		task.mu.Unlock()
 		return 0, fmt.Errorf("gov8: Task already consumed")
 	}
-	handle := task.handle.Swap(0)
 	retention := task.retention
 	task.retention = nil
 	task.mu.Unlock()
@@ -499,11 +499,11 @@ func (task *IdleTask) take() (uintptr, error) {
 		return 0, fmt.Errorf("gov8: nil IdleTask")
 	}
 	task.mu.Lock()
-	if task.handle.Load() == 0 {
+	handle := task.handle.Swap(0)
+	if handle == 0 {
 		task.mu.Unlock()
 		return 0, fmt.Errorf("gov8: IdleTask already consumed")
 	}
-	handle := task.handle.Swap(0)
 	retention := task.retention
 	task.retention = nil
 	task.mu.Unlock()
