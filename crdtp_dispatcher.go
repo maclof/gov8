@@ -318,12 +318,14 @@ func NewCRDTPFrontendChannel(handler CRDTPFrontendChannel) (*CRDTPFrontendChanne
 		return nil, err
 	}
 	var out uintptr
-	if err := callErr("NewCRDTPFrontendChannel", proc("gov8_crdtp_channel_new"),
-		uintptr(id), uintptr(unsafe.Pointer(&out))); err != nil {
+	status, _, _ := proc("gov8_crdtp_channel_new").Call(
+		uintptr(id), uintptr(unsafe.Pointer(&out)))
+	runtime.KeepAlive(&out)
+	if int64(status) < 0 {
 		crdtpCallbacks.Lock()
 		delete(crdtpCallbacks.channels, id)
 		crdtpCallbacks.Unlock()
-		return nil, err
+		return nil, shimError("NewCRDTPFrontendChannel", status)
 	}
 	return &CRDTPFrontendChannelHandle{handle: out, id: id}, nil
 }
@@ -378,9 +380,11 @@ func NewCRDTPUberDispatcher(channel *CRDTPFrontendChannelHandle) (*CRDTPUberDisp
 		return nil, errCRDTPClosed
 	}
 	var out uintptr
-	if err := callErr("NewCRDTPUberDispatcher", proc("gov8_crdtp_uber_new"),
-		channel.handle, uintptr(unsafe.Pointer(&out))); err != nil {
-		return nil, err
+	status, _, _ := proc("gov8_crdtp_uber_new").Call(
+		channel.handle, uintptr(unsafe.Pointer(&out)))
+	runtime.KeepAlive(&out)
+	if int64(status) < 0 {
+		return nil, shimError("NewCRDTPUberDispatcher", status)
 	}
 	crdtpCallbacks.Lock()
 	entry := crdtpCallbacks.channels[channel.id]
@@ -547,12 +551,17 @@ func (r *CRDTPDispatchRequest) CallID() (int32, bool, error) {
 		return 0, false, err
 	}
 	var has, id int32
-	err := callErr("CRDTPDispatchRequest.CallID", proc("gov8_crdtp_request_call_id"),
+	status, _, _ := proc("gov8_crdtp_request_call_id").Call(
 		r.frame.request, uintptr(unsafe.Pointer(&has)), uintptr(unsafe.Pointer(&id)))
-	if err == nil && has != 0 && has != 1 {
+	runtime.KeepAlive(&has)
+	runtime.KeepAlive(&id)
+	if int64(status) < 0 {
+		return 0, false, shimError("CRDTPDispatchRequest.CallID", status)
+	}
+	if has != 0 && has != 1 {
 		return 0, false, fmt.Errorf("gov8: invalid CRDTP has-call-ID value %d", has)
 	}
-	return id, has == 1, err
+	return id, has == 1, nil
 }
 
 func (r *CRDTPDispatchRequest) Method() ([]byte, error)         { return r.bytes(0) }
@@ -568,9 +577,11 @@ func (r *CRDTPDispatchRequest) bytes(kind uintptr) ([]byte, error) {
 		return nil, err
 	}
 	var out uintptr
-	if err := callErr("CRDTPDispatchRequest.Accessor", proc("gov8_crdtp_request_bytes"),
-		r.frame.request, kind, uintptr(unsafe.Pointer(&out))); err != nil {
-		return nil, err
+	status, _, _ := proc("gov8_crdtp_request_bytes").Call(
+		r.frame.request, kind, uintptr(unsafe.Pointer(&out)))
+	runtime.KeepAlive(&out)
+	if int64(status) < 0 {
+		return nil, shimError("CRDTPDispatchRequest.Accessor", status)
 	}
 	return takeCRDTPBytes(out)
 }
@@ -642,17 +653,17 @@ func NewCRDTPDispatchableWithFallthrough(cbor, associatedData []byte, callback C
 		return nil, err
 	}
 	var out uintptr
-	err = callErr("NewCRDTPDispatchableWithFallthrough",
-		proc("gov8_crdtp_dispatchable_fallthrough_new"), slicePointer(cbor),
+	status, _, _ := proc("gov8_crdtp_dispatchable_fallthrough_new").Call(slicePointer(cbor),
 		uintptr(len(cbor)), slicePointer(associatedData), uintptr(len(associatedData)),
 		uintptr(id), uintptr(unsafe.Pointer(&out)))
 	runtime.KeepAlive(cbor)
 	runtime.KeepAlive(associatedData)
-	if err != nil {
+	runtime.KeepAlive(&out)
+	if int64(status) < 0 {
 		crdtpCallbacks.Lock()
 		delete(crdtpCallbacks.fall, id)
 		crdtpCallbacks.Unlock()
-		return nil, err
+		return nil, shimError("NewCRDTPDispatchableWithFallthrough", status)
 	}
 	return &CRDTPDispatchable{handle: out}, nil
 }

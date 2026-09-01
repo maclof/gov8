@@ -136,6 +136,10 @@ func shimError(op string, status uintptr) error {
 
 // callErr invokes a shim function returning an int64 status and converts
 // negative results into errors.
+// uintptr arguments may be transient Go pointers forwarded to Proc.Call, so
+// preserve its escape/liveness contract through this wrapper.
+//
+//go:uintptrescapes
 func callErr(op string, p *syscall.Proc, args ...uintptr) error {
 	r1, _, _ := p.Call(args...)
 	if int64(r1) < 0 {

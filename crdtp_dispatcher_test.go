@@ -5,6 +5,7 @@ package gov8
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"math"
 	"runtime"
 	"strings"
@@ -454,5 +455,99 @@ func TestCRDTPDispatcherRegistryOverflowRollsBack(t *testing.T) {
 	crdtpCallbacks.Unlock()
 	if after != before {
 		t.Fatalf("registry size changed: before=%d after=%d", before, after)
+	}
+}
+
+type crdtpNestedOutStress struct {
+	callbacks, deliveries int
+	err                   error
+}
+
+func (s *crdtpNestedOutStress) SendProtocolResponse(callID int32, message *CRDTPSerializable) {
+	data, err := message.Bytes()
+	if err == nil {
+		var ok bool
+		data, ok, err = CRDTPCBORToJSON(data)
+		if err == nil && (!ok || callID != 1 || string(data) != `{"id":1,"result":{}}`) {
+			err = errors.New("unexpected stress response")
+		}
+	}
+	if closeErr := message.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil && s.err == nil {
+		s.err = err
+		return
+	}
+	s.deliveries++
+}
+func (*crdtpNestedOutStress) SendProtocolNotification(message *CRDTPSerializable) {
+	_ = message.Close()
+}
+func (*crdtpNestedOutStress) FlushProtocolNotifications() {}
+
+func (s *crdtpNestedOutStress) Dispatch(command []byte, request *CRDTPDispatchRequest, responder *CRDTPDomainResponder) bool {
+	s.callbacks++
+	callID, present, err := request.CallID()
+	method, methodErr := request.Method()
+	if err != nil || methodErr != nil || !present || callID != 1 ||
+		string(command) != "ok" || string(method) != "Stress.ok" {
+		if s.err == nil {
+			s.err = fmt.Errorf("stress request command=%q method=%q id=%d present=%v errors=%v/%v",
+				command, method, callID, present, err, methodErr)
+		}
+		return false
+	}
+	response, err := NewCRDTPSuccessResponse()
+	if err == nil {
+		err = responder.SendResponse(callID, response, nil)
+	}
+	if err != nil {
+		if s.err == nil {
+			s.err = err
+		}
+		return false
+	}
+	return true
+}
+
+func TestCRDTPDispatcherNestedOutParametersStress(t *testing.T) {
+	const iterations = 350000
+	state := &crdtpNestedOutStress{}
+	channel, err := NewCRDTPFrontendChannel(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dispatcher, err := NewCRDTPUberDispatcher(channel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := dispatcher.WireDomain("Stress", state); err != nil {
+		t.Fatal(err)
+	}
+	message, err := NewCRDTPDispatchable(mustCRDTPCBORT(t,
+		`{"id":1,"method":"Stress.ok","params":{}}`), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range iterations {
+		if err := dispatcher.Dispatch(message); err != nil {
+			t.Fatalf("iteration %d: %v", state.callbacks, err)
+		}
+		if state.err != nil {
+			t.Fatalf("iteration %d callback: %v", state.callbacks, state.err)
+		}
+	}
+	if state.callbacks != iterations || state.deliveries != iterations {
+		t.Fatalf("callbacks=%d deliveries=%d", state.callbacks, state.deliveries)
+	}
+	if err := message.Close(); err != nil {
+		t.Error(err)
+	}
+	if err := dispatcher.Close(); err != nil {
+		t.Error(err)
+	}
+	if err := channel.Close(); err != nil {
+		t.Error(err)
 	}
 }

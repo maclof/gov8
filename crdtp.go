@@ -98,13 +98,14 @@ func NewCRDTPDispatchable(cbor, associatedData []byte) (*CRDTPDispatchable, erro
 		return nil, err
 	}
 	var out uintptr
-	err := callErr("NewCRDTPDispatchable", proc("gov8_crdtp_dispatchable_new"),
+	status, _, _ := proc("gov8_crdtp_dispatchable_new").Call(
 		slicePointer(cbor), uintptr(len(cbor)), slicePointer(associatedData),
 		uintptr(len(associatedData)), uintptr(unsafe.Pointer(&out)))
 	runtime.KeepAlive(cbor)
 	runtime.KeepAlive(associatedData)
-	if err != nil {
-		return nil, err
+	runtime.KeepAlive(&out)
+	if int64(status) < 0 {
+		return nil, shimError("NewCRDTPDispatchable", status)
 	}
 	if out == 0 {
 		return nil, errors.New("gov8: NewCRDTPDispatchable returned null")
@@ -136,9 +137,11 @@ func (d *CRDTPDispatchable) OK() (bool, error) {
 		return false, err
 	}
 	var out int32
-	if err := callErr("CRDTPDispatchable.OK", proc("gov8_crdtp_dispatchable_ok"),
-		handle, uintptr(unsafe.Pointer(&out))); err != nil {
-		return false, err
+	status, _, _ := proc("gov8_crdtp_dispatchable_ok").Call(
+		handle, uintptr(unsafe.Pointer(&out)))
+	runtime.KeepAlive(&out)
+	if int64(status) < 0 {
+		return false, shimError("CRDTPDispatchable.OK", status)
 	}
 	if out != 0 && out != 1 {
 		return false, fmt.Errorf("gov8: invalid CRDTP Dispatchable OK value %d", out)
@@ -157,10 +160,12 @@ func (d *CRDTPDispatchable) CallID() (id int32, has bool, err error) {
 		return 0, false, err
 	}
 	var hasValue, value int32
-	err = callErr("CRDTPDispatchable.CallID", proc("gov8_crdtp_dispatchable_call_id"),
+	status, _, _ := proc("gov8_crdtp_dispatchable_call_id").Call(
 		handle, uintptr(unsafe.Pointer(&hasValue)), uintptr(unsafe.Pointer(&value)))
-	if err != nil {
-		return 0, false, err
+	runtime.KeepAlive(&hasValue)
+	runtime.KeepAlive(&value)
+	if int64(status) < 0 {
+		return 0, false, shimError("CRDTPDispatchable.CallID", status)
 	}
 	if hasValue != 0 && hasValue != 1 {
 		return 0, false, fmt.Errorf("gov8: invalid CRDTP has-call-ID value %d", hasValue)
@@ -189,9 +194,11 @@ func (d *CRDTPDispatchable) bytes(kind uintptr) ([]byte, error) {
 		return nil, err
 	}
 	var out uintptr
-	if err := callErr("CRDTPDispatchable.Accessor", proc("gov8_crdtp_dispatchable_bytes"),
-		handle, kind, uintptr(unsafe.Pointer(&out))); err != nil {
-		return nil, err
+	status, _, _ := proc("gov8_crdtp_dispatchable_bytes").Call(
+		handle, kind, uintptr(unsafe.Pointer(&out)))
+	runtime.KeepAlive(&out)
+	if int64(status) < 0 {
+		return nil, shimError("CRDTPDispatchable.Accessor", status)
 	}
 	return takeCRDTPBytes(out)
 }
@@ -268,11 +275,12 @@ func newCRDTPDispatchResponse(kind crdtpResponseKind, message string) (*CRDTPDis
 	}
 	bytes := []byte(message)
 	var out uintptr
-	err := callErr("NewCRDTPDispatchResponse", proc("gov8_crdtp_response_new"),
+	status, _, _ := proc("gov8_crdtp_response_new").Call(
 		uintptr(kind), slicePointer(bytes), uintptr(len(bytes)), uintptr(unsafe.Pointer(&out)))
 	runtime.KeepAlive(bytes)
-	if err != nil {
-		return nil, err
+	runtime.KeepAlive(&out)
+	if int64(status) < 0 {
+		return nil, shimError("NewCRDTPDispatchResponse", status)
 	}
 	if out == 0 {
 		return nil, errors.New("gov8: NewCRDTPDispatchResponse returned null")
@@ -304,9 +312,13 @@ func (r *CRDTPDispatchResponse) query(kind uintptr) (int32, error) {
 		return 0, err
 	}
 	var out int32
-	err = callErr("CRDTPDispatchResponse.Query", proc("gov8_crdtp_response_query"),
+	status, _, _ := proc("gov8_crdtp_response_query").Call(
 		handle, kind, uintptr(unsafe.Pointer(&out)))
-	return out, err
+	runtime.KeepAlive(&out)
+	if int64(status) < 0 {
+		return 0, shimError("CRDTPDispatchResponse.Query", status)
+	}
+	return out, nil
 }
 
 func (r *CRDTPDispatchResponse) IsSuccess() (bool, error) {
@@ -334,9 +346,11 @@ func (r *CRDTPDispatchResponse) Message() (string, error) {
 		return "", err
 	}
 	var out uintptr
-	if err := callErr("CRDTPDispatchResponse.Message", proc("gov8_crdtp_response_message"),
-		handle, uintptr(unsafe.Pointer(&out))); err != nil {
-		return "", err
+	status, _, _ := proc("gov8_crdtp_response_message").Call(
+		handle, uintptr(unsafe.Pointer(&out)))
+	runtime.KeepAlive(&out)
+	if int64(status) < 0 {
+		return "", shimError("CRDTPDispatchResponse.Message", status)
 	}
 	bytes, err := takeCRDTPBytes(out)
 	return string(bytes), err
@@ -393,9 +407,11 @@ func (s *CRDTPSerializable) Bytes() ([]byte, error) {
 		return nil, err
 	}
 	var out uintptr
-	if err := callErr("CRDTPSerializable.Bytes", proc("gov8_crdtp_serializable_bytes"),
-		handle, uintptr(unsafe.Pointer(&out))); err != nil {
-		return nil, err
+	status, _, _ := proc("gov8_crdtp_serializable_bytes").Call(
+		handle, uintptr(unsafe.Pointer(&out)))
+	runtime.KeepAlive(&out)
+	if int64(status) < 0 {
+		return nil, shimError("CRDTPSerializable.Bytes", status)
 	}
 	return takeCRDTPBytes(out)
 }
