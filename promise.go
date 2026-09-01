@@ -299,10 +299,16 @@ func (p Promise) StrictEquals(other Value) (bool, error) {
 	return r1 == 1, nil
 }
 
-// checkFunction validates that v is a usable function value of the same
-// isolate. This guards the ABI: the shim would reinterpret a non-function
-// slot as v8::Function.
-func checkFunctionAssumingIsolate(v Value, iso *Isolate) error {
+const (
+	promiseHandlerTypeError       = "gov8: promise handler is not a function"
+	promiseHandlerTypeErrorDetail = "promise handler is not a function"
+)
+
+// checkPromiseHandlerLocal validates the Go-owned lifetime and ownership
+// metadata for a handler without asking V8 for its dynamic type. The reaction
+// shims accept a Value wire and check IsFunction before casting, so successful
+// calls need only one native transition.
+func checkPromiseHandlerLocal(v Value, iso *Isolate) error {
 	if v.iso != iso {
 		// Validate the foreign value first so zero, stale-scope, isolate-lifecycle,
 		// and wrong-thread errors retain their established precedence over the
@@ -323,15 +329,38 @@ func checkFunctionAssumingIsolate(v Value, iso *Isolate) error {
 	if err := requireInitialized(); err != nil {
 		return err
 	}
+	return nil
+}
+
+// checkPromiseHandlerType performs the former standalone native type check.
+// It remains only for Then2's negative slow path, where the first handler's
+// type error must retain precedence over a local-validation error on the
+// second handler.
+func checkPromiseHandlerType(v Value, iso *Isolate) error {
 	ensurePromiseHotProcs()
 	r1, _, _ := syscall.Syscall(promiseIsFunctionAddr, 2, iso.handleAssumingCheck(), v.h, 0)
 	if int64(r1) < 0 {
 		return shimError("gov8_is_function", r1)
 	}
 	if r1 != 1 {
-		return errors.New("gov8: promise handler is not a function")
+		return errors.New(promiseHandlerTypeError)
 	}
 	return nil
+}
+
+// mapPromiseReactionError restores the public Go error used by the former
+// standalone predicate while retaining every other shim status and detail.
+// The mapping is failure-only; successful calls avoid last-error work.
+func mapPromiseReactionError(err error) error {
+	shimErr, ok := err.(*ShimError)
+	if ok && shimErr.Code == errBadArg && shimErr.Detail == promiseHandlerTypeErrorDetail {
+		return errors.New(promiseHandlerTypeError)
+	}
+	return err
+}
+
+func promiseReactionError(op string, status uintptr) error {
+	return mapPromiseReactionError(shimError(op, status))
 }
 
 // Then registers handler as the fulfillment AND rejection reaction
@@ -361,7 +390,7 @@ func (p Promise) thenImpl(c *Context, onFulfilled, onRejected Value, op string) 
 	if err := c.checkAssumingIsolate(); err != nil {
 		return Promise{}, err
 	}
-	if err := checkFunctionAssumingIsolate(onFulfilled, p.iso); err != nil {
+	if err := checkPromiseHandlerLocal(onFulfilled, p.iso); err != nil {
 		return Promise{}, err
 	}
 	if onRejected.h == 0 {
@@ -369,14 +398,21 @@ func (p Promise) thenImpl(c *Context, onFulfilled, onRejected Value, op string) 
 		r1, _, _ := syscall.Syscall6(promiseThenAddr, 5,
 			p.iso.handleAssumingCheck(), c.handle, p.sc.handle, p.h, onFulfilled.h, 0)
 		if int64(r1) < 0 {
-			return Promise{}, shimError("Promise."+op, r1)
+			return Promise{}, promiseReactionError("Promise."+op, r1)
 		}
 		if r1 == 0 {
 			return Promise{}, shimError("Promise."+op, r1)
 		}
 		return Promise{Value{iso: p.iso, sc: p.sc, h: r1}}, nil
 	}
-	if err := checkFunctionAssumingIsolate(onRejected, p.iso); err != nil {
+	if err := checkPromiseHandlerLocal(onRejected, p.iso); err != nil {
+		// Previously the first handler's native type check ran before any
+		// validation of the second handler. Preserve that observable ordering
+		// only on this negative path; valid calls rely on the Then2 shim's two
+		// checked casts and avoid both standalone predicates.
+		if firstTypeErr := checkPromiseHandlerType(onFulfilled, p.iso); firstTypeErr != nil {
+			return Promise{}, firstTypeErr
+		}
 		return Promise{}, err
 	}
 	var out uintptr
@@ -384,7 +420,7 @@ func (p Promise) thenImpl(c *Context, onFulfilled, onRejected Value, op string) 
 		p.iso.handle, c.handle, p.sc.handle, p.h, onFulfilled.h, onRejected.h,
 		uintptr(unsafe.Pointer(&out)))
 	if int64(r1) < 0 {
-		return Promise{}, shimError("Promise."+op, r1)
+		return Promise{}, promiseReactionError("Promise."+op, r1)
 	}
 	return Promise{Value{iso: p.iso, sc: p.sc, h: out}}, nil
 }
@@ -401,7 +437,7 @@ func (p Promise) Catch(c *Context, handler Value) (Promise, bool, error) {
 	if err := c.checkAssumingIsolate(); err != nil {
 		return Promise{}, false, err
 	}
-	if err := checkFunctionAssumingIsolate(handler, p.iso); err != nil {
+	if err := checkPromiseHandlerLocal(handler, p.iso); err != nil {
 		return Promise{}, false, err
 	}
 	var out uintptr
@@ -410,7 +446,7 @@ func (p Promise) Catch(c *Context, handler Value) (Promise, bool, error) {
 		p.iso.handle, c.handle, p.sc.handle, p.h, handler.h,
 		uintptr(unsafe.Pointer(&out)), uintptr(unsafe.Pointer(&ok)))
 	if int64(r1) < 0 {
-		return Promise{}, false, shimError("Promise.Catch", r1)
+		return Promise{}, false, promiseReactionError("Promise.Catch", r1)
 	}
 	if ok == 0 {
 		return Promise{}, false, nil

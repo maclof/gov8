@@ -519,6 +519,20 @@ func TestPromiseArgumentErrors(t *testing.T) {
 
 	localHandler := promiseJSFunction(t, rt.ctx, rt.scope)
 	foreignHandler := promiseJSFunction(t, foreign.ctx, foreign.scope)
+	if _, err := promise.Then2(rt.ctx, str, localHandler); err == nil || err.Error() != "gov8: promise handler is not a function" {
+		t.Fatalf("Then2 with non-function fulfilled handler: err=%v", err)
+	}
+	if _, err := promise.Then2(rt.ctx, localHandler, str); err == nil || err.Error() != "gov8: promise handler is not a function" {
+		t.Fatalf("Then2 with non-function rejected handler: err=%v", err)
+	}
+	if _, _, err := promise.Catch(rt.ctx, str); err == nil || err.Error() != "gov8: promise handler is not a function" {
+		t.Fatalf("Catch with non-function handler: err=%v", err)
+	}
+	// The first handler's type error precedes ownership validation of the
+	// second handler, matching the original two-predicate ordering.
+	if _, err := promise.Then2(rt.ctx, str, foreignHandler); err == nil || err.Error() != "gov8: promise handler is not a function" {
+		t.Fatalf("Then2 mixed non-function/foreign handlers: err=%v", err)
+	}
 	wantForeignIsolateError(t, "Promise.Then foreign handler", func() error {
 		_, err := promise.Then(rt.ctx, foreignHandler)
 		return err
@@ -591,6 +605,13 @@ func TestPromiseHandlerValidationLifecycleAndAffinity(t *testing.T) {
 	}
 	if _, err := promise.Then(rt.ctx, closedForeignHandler); err == nil || !strings.Contains(err.Error(), "scope used after Close") {
 		t.Fatalf("closed foreign handler = %v, want scope-close error before ownership", err)
+	}
+	localNonFunction, err := rt.scope.NewString("not a function")
+	if err != nil {
+		t.Fatalf("local non-function: %v", err)
+	}
+	if _, err := promise.Then2(rt.ctx, localNonFunction, closedForeignHandler); err == nil || err.Error() != "gov8: promise handler is not a function" {
+		t.Fatalf("non-function before closed foreign handler = %v, want type error", err)
 	}
 
 	liveForeignHandler := promiseJSFunction(t, foreign.ctx, foreign.scope)

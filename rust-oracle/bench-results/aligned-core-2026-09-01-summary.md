@@ -296,3 +296,30 @@ Six additional order-balanced two-second pairs confirmed the direction:
 Go allocation counts do not include the removed native `new[]`/`delete[]` and
 therefore remain unchanged. The fixed-run candidate medians are approximately
 12.3x, 13.7x and 3.45x the corresponding pinned Rust midpoints.
+
+## ABI-41 Promise handler-validation consolidation
+
+The Promise reaction shims already reject non-function handlers before their
+checked cast. Successful `Then` and `Catch` calls now rely on that existing
+check instead of making a separate native predicate call; successful `Then2`
+calls remove both standalone predicates. Foreign values remain rejected from
+Go before a native call, and `Then2` retains a first-handler predicate only on
+the negative path needed to preserve mixed-invalid error ordering.
+
+Eight order-balanced fixed-300,000-iteration frozen-executable pairs measured
+the affected then/checkpoint route as follows. The resolver route is an
+unaffected load control.
+
+| Workload | Baseline samples (ns/op) | Consolidated samples (ns/op) | Median change | B/op; allocs/op |
+|---|---:|---:|---:|---:|
+| promise/resolver_new_resolve | 1172, 1193, 1916, 1101, 1114, 1110, 1085, 1091 | 1103, 1039, 1117, 1112, 1123, 1170, 1088, 1030 | 1112 to 1107.5 (-0.4%, control) | 112; 3 |
+| promise/resolve_then_checkpoint | 1938, 2753, 2287, 1957, 1925, 2000, 2037, 2132 | 1863, 2028, 1897, 1960, 1910, 1926, 1998, 1917 | 2018.5 to 1921.5 (-4.8%; 7/8 pair wins) | 176; 5 |
+
+Six balanced fixed-1,000,000-iteration confirmation pairs changed the
+then/checkpoint median from 2324.5 to 2110.5 ns (-9.2%; 4/6 pair wins), while
+the resolver control moved from 1205 to 1152.5 ns (-4.4%). A final
+then-only fixed-2,000,000-iteration confirmation changed samples from 2632,
+2286, 2322, 2253, 2376, 2396 ns to 2236, 2201, 2250, 2095, 2188, 2877 ns:
+2349 to 2218.5 ns (-5.6%; 5/6 pair wins), with allocations unchanged. The
+final median is 5.40x the pinned Rust confidence-interval midpoint of 410.7 ns;
+the 1,000,000-iteration resolver control is 9.22x its 125.03 ns Rust midpoint.
