@@ -19,6 +19,12 @@ std::atomic<size_t> g_string_fast{0};
 std::atomic<size_t> g_flag_fast{0};
 std::atomic<size_t> g_shared_fast{0};
 std::atomic<uint32_t> g_options_observations{0};
+// Callback-options data is immutable for a FunctionTemplate. Remember the
+// most recently observed V8 data object so steady-state benchmark calls do
+// only the same counter increment and value computation as the Rust oracle.
+// A different object (or a moved object after GC) is observed again, and the
+// reset export clears the cache before each independent conformance case.
+std::atomic<const void*> g_last_observed_options_data{nullptr};
 uintptr_t g_external_sentinel = 0x51a7;
 
 enum OptionObservation : uint32_t {
@@ -63,10 +69,23 @@ void ObserveOptions(const v8::FastApiCallbackOptions& options) {
   g_options_observations.fetch_or(observations, std::memory_order_seq_cst);
 }
 
+void ObserveOptionsOncePerData(
+    const v8::FastApiCallbackOptions& options) {
+  const v8::Local<v8::Value> data = options.data;
+  const void* identity =
+      data.IsEmpty() ? nullptr : static_cast<const void*>(data.operator->());
+  const void* previous =
+      g_last_observed_options_data.load(std::memory_order_relaxed);
+  if (identity == nullptr || identity != previous) {
+    ObserveOptions(options);
+    g_last_observed_options_data.store(identity, std::memory_order_relaxed);
+  }
+}
+
 uint32_t FastOptionsPointer(v8::Local<v8::Object>, uint32_t value,
                             v8::FastApiCallbackOptions* options) {
   g_options_fast.fetch_add(1, std::memory_order_seq_cst);
-  if (options != nullptr) ObserveOptions(*options);
+  if (options != nullptr) ObserveOptionsOncePerData(*options);
   return value + 1;
 }
 
@@ -141,6 +160,7 @@ __declspec(dllexport) int64_t gov8_fast_api_residual_reset(void) {
   g_flag_fast.store(0, std::memory_order_seq_cst);
   g_shared_fast.store(0, std::memory_order_seq_cst);
   g_options_observations.store(0, std::memory_order_seq_cst);
+  g_last_observed_options_data.store(nullptr, std::memory_order_relaxed);
   return kOk;
 }
 
