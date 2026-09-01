@@ -5,6 +5,7 @@
 #include <atomic>
 #include <cppgc/member.h>
 #include <new>
+#include <string>
 
 class RustObj : public v8::Object::Wrappable {
  public:
@@ -34,6 +35,10 @@ bool v8__Object__IsApiWrapper(const v8::Object& self);
 
 namespace gov8_cppgc_impl {
 
+namespace generic {
+void Dispatch(uint64_t id, uint32_t kind, int32_t value);
+}
+
 constexpr uint64_t kPayloadMagic = 0x674f563843504743ULL;  // "gOV8CPGC"
 constexpr uint16_t kMaxTag = 0x7ffe;
 using GoDispatcher = uintptr_t (*)(uint64_t registry_id, uint32_t kind);
@@ -47,6 +52,12 @@ struct Payload {
   uint16_t tag;
   uint8_t observe_trace;
   uint8_t reserved;
+  uint64_t generic_registry_id;
+  int32_t cell_value;
+  uint32_t requested_size;
+  uint32_t requested_alignment;
+  const int32_t* cell_address;
+  std::string custom_name;
   cppgc::Member<RustObj> strong;
   cppgc::WeakMember<RustObj> weak;
   v8::TracedReference<v8::Data> traced;
@@ -59,6 +70,12 @@ struct Payload {
         tag(pointer_tag),
         observe_trace(should_observe_trace ? 1 : 0),
         reserved(0),
+        generic_registry_id(0),
+        cell_value(0),
+        requested_size(0),
+        requested_alignment(1),
+        cell_address(&cell_value),
+        custom_name(),
         strong(nullptr),
         weak(nullptr),
         traced() {}
@@ -117,6 +134,12 @@ extern "C" void rusty_v8_RustObj_trace(const RustObj* object,
 extern "C" const char* rusty_v8_RustObj_get_name(const RustObj* object) {
   using namespace gov8_cppgc_impl;
   if (object == nullptr) Abort();
+  const Payload* payload = PayloadOf(object);
+  if (payload->magic != kPayloadMagic) Abort();
+  if (payload->generic_registry_id != 0) {
+    generic::Dispatch(payload->generic_registry_id, 2, 0);
+    return payload->custom_name.c_str();
+  }
   return "gov8.CppGCObject";
 }
 
@@ -126,9 +149,15 @@ extern "C" void rusty_v8_RustObj_drop(RustObj* object) {
   Payload* payload = PayloadOf(object);
   if (payload->magic != kPayloadMagic) Abort();
   const uint64_t registry_id = payload->registry_id;
+  const uint64_t generic_registry_id = payload->generic_registry_id;
+  const int32_t cell_value = payload->cell_value;
   payload->magic = 0;
   payload->traced.Reset();
   payload->~Payload();
+  if (generic_registry_id != 0) {
+    generic::Dispatch(generic_registry_id, 1, cell_value);
+    generic::Dispatch(generic_registry_id, 3, 0);
+  }
   Dispatch(registry_id, kDestroy);
 }
 

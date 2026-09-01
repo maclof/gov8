@@ -56,6 +56,7 @@ $ConformancePackages = @(
     './conformance-crdtp-core',
     './conformance-crdtp-dispatcher',
     './conformance-cppgc-heap-lifecycle',
+    './conformance-cppgc-generic-residual',
     './conformance-cppgc-object-wrapping',
     './conformance-cppgc-member',
     './conformance-cppgc-persistent',
