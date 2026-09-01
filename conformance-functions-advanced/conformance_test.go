@@ -6,8 +6,12 @@ import (
 	"bufio"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
+	"sync"
 	"testing"
 
 	gov8 "gov8"
@@ -161,6 +165,31 @@ func undefined(t *testing.T, scope *gov8.Scope) gov8.Value {
 }
 
 func noop(*gov8.CallbackScope, gov8.FunctionCallbackArguments, gov8.ReturnValue) {}
+
+type responseChannel struct {
+	mu        sync.Mutex
+	responses []string
+}
+
+func (c *responseChannel) SendResponse(_ int32, message *gov8.InspectorStringBuffer) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.responses = append(c.responses, message.StringView().String())
+}
+func (*responseChannel) SendNotification(*gov8.InspectorStringBuffer) {}
+func (*responseChannel) FlushProtocolNotifications()                  {}
+func (c *responseChannel) pop(t *testing.T) string {
+	t.Helper()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if len(c.responses) == 0 {
+		t.Fatal("inspector produced no response")
+	}
+	last := len(c.responses) - 1
+	result := c.responses[last]
+	c.responses = c.responses[:last]
+	return result
+}
 
 func TestAdvancedFunctionConformanceFixture(t *testing.T) {
 	fixtures := fixture(t)
@@ -325,25 +354,120 @@ func TestAdvancedFunctionConformanceFixture(t *testing.T) {
 		})
 	})
 
-	t.Run("side_effect_policies_metadata", func(t *testing.T) {
-		// The fixture's observable booleans require Runtime.evaluate with
-		// throwOnSideEffect. gov8 has no Inspector family yet. Validate all three
-		// metadata values are accepted without manufacturing an inspector shim.
+	t.Run("side_effect_policies", func(t *testing.T) {
 		r := newRuntime(t)
 		defer r.close(t)
-		for _, sideEffectType := range []gov8.SideEffectType{
-			gov8.SideEffectHasSideEffect,
-			gov8.SideEffectHasNoSideEffect,
-			gov8.SideEffectHasSideEffectToReceiver,
-		} {
-			if _, err := r.iso.FunctionBuilder(noop).SideEffectType(sideEffectType).Build(r.scope, r.ctx); err != nil {
-				t.Fatalf("SideEffectType(%d): %v", sideEffectType, err)
-			}
-		}
-		if _, err := r.iso.NewFunctionTemplate(r.scope, noop, &gov8.FunctionOptions{SideEffectType: gov8.SideEffectHasNoSideEffect}); err != nil {
+		inspector, err := gov8.NewInspector(r.iso)
+		if err != nil {
 			t.Fatal(err)
 		}
-		t.Log("oracle-only observation: throwOnSideEffect requires the not-yet-bound Inspector family")
+		if err := inspector.ContextCreated(r.ctx, 1, gov8.EmptyInspectorStringView(), gov8.NewInspectorStringView8([]byte(`{"isDefault":true}`))); err != nil {
+			t.Fatal(err)
+		}
+		channel := &responseChannel{}
+		session, err := inspector.Connect(1, channel, gov8.NewInspectorStringView8([]byte(`{}`)), gov8.InspectorUntrusted)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() {
+			if err := session.Close(); err != nil {
+				t.Error(err)
+			}
+			if err := inspector.ContextDestroyed(r.ctx); err != nil {
+				t.Error(err)
+			}
+			if err := inspector.Close(); err != nil {
+				t.Error(err)
+			}
+		}()
+
+		calls := 0
+		callback := func(_ *gov8.CallbackScope, _ gov8.FunctionCallbackArguments, rv gov8.ReturnValue) {
+			calls++
+			if err := rv.SetInt32(7); err != nil {
+				panic(err)
+			}
+		}
+		receiverCallback := func(cs *gov8.CallbackScope, args gov8.FunctionCallbackArguments, rv gov8.ReturnValue) {
+			calls++
+			receiver, err := args.This()
+			if err != nil {
+				panic(err)
+			}
+			value, err := args.Data()
+			if err != nil {
+				panic(err)
+			}
+			if ok, err := cs.ObjectSet(receiver.Value, "touched", value); err != nil || !ok {
+				panic("setting receiver.touched failed")
+			}
+			if err := rv.SetInt32(9); err != nil {
+				panic(err)
+			}
+		}
+		regular, err := r.iso.FunctionBuilder(callback).SideEffectType(gov8.SideEffectHasSideEffect).Build(r.scope, r.ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		noEffect, err := r.iso.FunctionBuilder(callback).SideEffectType(gov8.SideEffectHasNoSideEffect).Build(r.scope, r.ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		template, err := r.iso.NewFunctionTemplate(r.scope, callback, &gov8.FunctionOptions{SideEffectType: gov8.SideEffectHasNoSideEffect})
+		if err != nil {
+			t.Fatal(err)
+		}
+		templateFunction, err := template.GetFunction(r.scope, r.ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		trueValue, err := r.scope.Boolean(true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		receiverEffect, err := r.iso.FunctionBuilder(receiverCallback).Data(trueValue).SideEffectType(gov8.SideEffectHasSideEffectToReceiver).Build(r.scope, r.ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		r.setGlobal(t, "regularEffect", regular.Value)
+		r.setGlobal(t, "declaredNoEffect", noEffect.Value)
+		r.setGlobal(t, "templateNoEffect", templateFunction.Value)
+		r.setGlobal(t, "receiverEffect", receiverEffect.Value)
+		r.eval(t, "globalThis.persistentReceiver = {f: receiverEffect}")
+
+		inspectorEval := func(id int, expression string) string {
+			request := `{"id":` + fmt.Sprint(id) + `,"method":"Runtime.evaluate","params":{"expression":` + strconv.Quote(expression) + `,"contextId":1,"throwOnSideEffect":true,"returnByValue":true}}`
+			if err := session.DispatchProtocolMessage(gov8.NewInspectorStringView8([]byte(request))); err != nil {
+				t.Fatal(err)
+			}
+			return channel.pop(t)
+		}
+		regularResponse := inspectorEval(1, "regularEffect()")
+		afterRegular := calls
+		noEffectResponse := inspectorEval(2, "declaredNoEffect()")
+		afterNoEffect := calls
+		templateResponse := inspectorEval(3, "templateNoEffect()")
+		afterTemplate := calls
+		constructedResponse := inspectorEval(4, "(()=>{let o=new receiverEffect();return Number(o.touched)})()")
+		afterConstructed := calls
+		persistentResponse := inspectorEval(5, "persistentReceiver.f()")
+		afterPersistent := calls
+		normalValue := r.text(t, "new receiverEffect().touched")
+		afterNormal := calls
+		compare(t, fixtures, prefix+"side_effect_policies", map[string]any{
+			"regular_rejected":                          regularResponse != "" && strings.Contains(regularResponse, "exceptionDetails"),
+			"regular_callback_calls":                    afterRegular,
+			"function_no_effect_allowed":                !strings.Contains(noEffectResponse, "exceptionDetails") && strings.Contains(noEffectResponse, `"value":7`),
+			"function_no_effect_callback_calls":         afterNoEffect,
+			"template_no_effect_allowed":                !strings.Contains(templateResponse, "exceptionDetails") && strings.Contains(templateResponse, `"value":7`),
+			"template_no_effect_callback_calls":         afterTemplate,
+			"receiver_effect_construct_rejected":        strings.Contains(constructedResponse, "exceptionDetails"),
+			"receiver_effect_construct_callback_calls":  afterConstructed,
+			"receiver_effect_persistent_rejected":       strings.Contains(persistentResponse, "exceptionDetails"),
+			"receiver_effect_persistent_callback_calls": afterPersistent,
+			"receiver_effect_normal_value":              normalValue,
+			"receiver_effect_normal_callback_calls":     afterNormal,
+		})
 	})
 
 	t.Run("code_cache_roundtrip", func(t *testing.T) {

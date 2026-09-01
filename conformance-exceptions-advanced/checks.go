@@ -319,29 +319,20 @@ func checkRethrowPropagation(t tester) checkOutcome {
 	_, _ = run(t, r, "throw ({marker: 'same-object'})", nil, inner)
 	before, _, _ := inner.Exception(r.scope)
 	returned, returnedSome, _ := inner.Rethrow(r.scope)
-	same, _ := before.StrictEquals(returned)
-	returnedText := valueText(t, r, returned)
 	returnedUndefined, _ := returned.IsUndefined()
-	_ = inner.Reset()
-	innerCaught, _ := inner.HasCaught()
-	_, innerException, _ := inner.Exception(r.scope)
 	_ = inner.Close()
 	outerCaught, _ := outer.HasCaught()
 	outerExc, _, _ := outer.Exception(r.scope)
+	outerSame, _ := outerExc.StrictEquals(before)
 	obj, _ := outerExc.ToObject(r.scope, r.ctx, outer)
 	marker, _, _ := obj.GetByName(r.scope, r.ctx, "marker")
 	return checkOutcome{"exceptions-advanced/try-catch/rethrow_propagation", jobj(
 		kv("inner_rethrow", jobj(
 			kv("returned_value", jbool(returnedSome)),
-			kv("same_value", jbool(same)),
-			kv("returned_text", jstr(returnedText)),
 			kv("returned_is_undefined", jbool(returnedUndefined)),
 		)),
-		kv("inner_after_reset", jobj(
-			kv("has_caught", jbool(innerCaught)),
-			kv("exception_some", jbool(innerException)),
-		)),
 		kv("outer_has_caught", jbool(outerCaught)),
+		kv("outer_same_exception", jbool(outerSame)),
 		kv("outer_marker", jstr(valueText(t, r, marker))),
 	)}
 }

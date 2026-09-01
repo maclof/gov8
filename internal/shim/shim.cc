@@ -114,18 +114,6 @@ GOV8_STUB(v8__ValueSerializer__Delegate__IsHostObject)
 GOV8_STUB(v8__ValueSerializer__Delegate__ReallocateBufferMemory)
 GOV8_STUB(v8__ValueSerializer__Delegate__ThrowDataCloneError)
 GOV8_STUB(v8__ValueSerializer__Delegate__WriteHostObject)
-GOV8_STUB(v8_inspector__V8Inspector__Channel__BASE__flushProtocolNotifications)
-GOV8_STUB(v8_inspector__V8Inspector__Channel__BASE__sendNotification)
-GOV8_STUB(v8_inspector__V8Inspector__Channel__BASE__sendResponse)
-GOV8_STUB(v8_inspector__V8InspectorClient__BASE__consoleAPIMessage)
-GOV8_STUB(v8_inspector__V8InspectorClient__BASE__descriptionForValueSubtype)
-GOV8_STUB(v8_inspector__V8InspectorClient__BASE__ensureDefaultContextInGroup)
-GOV8_STUB(v8_inspector__V8InspectorClient__BASE__generateUniqueId)
-GOV8_STUB(v8_inspector__V8InspectorClient__BASE__quitMessageLoopOnPause)
-GOV8_STUB(v8_inspector__V8InspectorClient__BASE__resourceNameToUrl)
-GOV8_STUB(v8_inspector__V8InspectorClient__BASE__runIfWaitingForDebugger)
-GOV8_STUB(v8_inspector__V8InspectorClient__BASE__runMessageLoopOnPause)
-GOV8_STUB(v8_inspector__V8InspectorClient__BASE__valueSubtype)
 GOV8_STUB(v8_inspector__V8InspectorSession__Inspectable__BASE__DROP)
 GOV8_STUB(v8_inspector__V8InspectorSession__Inspectable__BASE__get)
 
@@ -413,7 +401,7 @@ extern "C" {
 
 __declspec(dllexport) int64_t gov8_abi_version(void) {
   ClearErr();
-  return 11;
+  return 14;
 }
 
 // --- platform / process lifecycle -------------------------------------------
@@ -1677,6 +1665,7 @@ __declspec(dllexport) int64_t gov8_last_error(char* buf, int64_t cap) {
 #include "features/icu.inc"
 #include "features/wasm_core.inc"
 #include "features/wasm_streaming.inc"
+#include "features/wasm_policy_callbacks.inc"
 #include "features/buffers_serialization.inc"
 #include "features/snapshots_handles.inc"
 #include "features/module_advanced_residual.inc"
@@ -1690,6 +1679,8 @@ __declspec(dllexport) int64_t gov8_last_error(char* buf, int64_t cap) {
 #include "features/context_scopes_advanced.inc"
 #include "features/isolate_advanced.inc"
 #include "features/exception_constructors.inc"
+#include "features/inspector_transport.inc"
+#include "features/trycatch_listener_residual.inc"
 #include "features/serialization_delegates.inc"
 #include "features/object_ops.inc"
 #include "features/object_callback_retention.inc"
@@ -1699,6 +1690,7 @@ __declspec(dllexport) int64_t gov8_last_error(char* buf, int64_t cap) {
 #include "features/fixed_primitive_arrays.inc"
 #include "features/controls_hooks.inc"
 #include "features/external_references.inc"
+#include "features/create_params_snapshot.inc"
 #include "features/handles_residual.inc"
 #include "features/platform.inc"
 #include "features/platform_custom.inc"

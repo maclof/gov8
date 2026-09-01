@@ -57,10 +57,11 @@ const minValidStartupSize = 81
 // blob bytes on every Context::New of a snapshot-backed isolate, so the
 // copies must outlive every isolate created from the blob.
 type StartupData struct {
-	mu       sync.Mutex
-	bytes    []byte
-	refs     map[*Isolate]uintptr // isolate -> engine blob copy (consumers)
-	released bool
+	mu             sync.Mutex
+	bytes          []byte
+	refs           map[*Isolate]uintptr // isolate -> engine blob copy (consumers)
+	released       bool
+	pendingCreates int
 	// Set for blobs produced by a creator whose effective external-reference
 	// table was non-empty. Such blobs must not reach V8 without a table.
 	requiresExternalReferences bool
@@ -176,6 +177,10 @@ func (s *StartupData) Release() error {
 	if s.released {
 		s.mu.Unlock()
 		return nil
+	}
+	if s.pendingCreates != 0 {
+		s.mu.Unlock()
+		return fmt.Errorf("gov8: startup blob is being consumed by %d isolate constructor(s)", s.pendingCreates)
 	}
 	var live int
 	for i := range s.refs {

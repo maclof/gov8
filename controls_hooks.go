@@ -507,10 +507,11 @@ func goCHDispatch(frame *chFrame) uintptr {
 		fatalHostMisuse("gov8: controls/hooks dispatch for unregistered kind %d (engine %#x)", frame.kind, frame.engine)
 		return 0
 	}
-	// Affinity proof for isolate-bound kinds. The process-global entropy and
-	// fatal handlers may legally run on any engine thread (including
-	// background workers), so they have no owning thread to check.
-	if entry.iso != nil {
+	// Affinity proof for isolate-bound kinds. Process-global entropy/fatal
+	// handlers and the isolate OOM observer may legally run on an engine
+	// background thread. OOM carries no handles and is process-fatal, so it
+	// must not be rejected merely because Go entered its callback elsewhere.
+	if entry.iso != nil && frame.kind != chKindOOM {
 		if err := entry.iso.check(); err != nil {
 			fatalHostMisuse("gov8: hook invoked off the owning thread: %v", err)
 			return 0
@@ -713,7 +714,7 @@ func registerCHListener(i *Isolate, cb MessageListenerCallback, level uint32) (b
 	chRegistry.mu.Lock()
 	key := chKey{kind: chKindMessageListener, engine: i.handle}
 	e := chRegistry.entries[key]
-	if e == nil {
+	if e == nil || e.iso != i {
 		e = &chEntry{iso: i}
 		chRegistry.entries[key] = e
 	}

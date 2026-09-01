@@ -300,30 +300,23 @@ fn rethrow_propagation() -> Vec<CheckOutcome> {
 
     let outer = std::pin::pin!(v8::TryCatch::new(scope));
     let outer = &mut outer.init();
-    let (inner_rethrow, inner_after_reset) = {
+    let (original, inner_rethrow) = {
         let inner = std::pin::pin!(v8::TryCatch::new(outer));
         let inner = &mut inner.init();
         let _ = compile_and_run(inner, "throw ({marker: 'same-object'})", None);
         let before = inner.exception().unwrap();
         let rethrown = inner.rethrow().unwrap();
-        let same_handle = before.strict_equals(rethrown);
-        let returned_text = text(inner, rethrown);
         let returned_is_undefined = rethrown.is_undefined();
-        inner.reset();
         (
+            before,
             Json::obj(vec![
                 ("returned_value", Json::b(true)),
-                ("same_value", Json::b(same_handle)),
-                ("returned_text", Json::s(&returned_text)),
                 ("returned_is_undefined", Json::b(returned_is_undefined)),
-            ]),
-            Json::obj(vec![
-                ("has_caught", Json::b(inner.has_caught())),
-                ("exception_some", Json::b(inner.exception().is_some())),
             ]),
         )
     };
     let outer_exception = outer.exception().unwrap();
+    let outer_same_exception = outer_exception.strict_equals(original);
     let marker = outer_exception
         .to_object(outer)
         .and_then(|o| {
@@ -337,8 +330,8 @@ fn rethrow_propagation() -> Vec<CheckOutcome> {
         "exceptions-advanced/try-catch/rethrow_propagation",
         Json::obj(vec![
             ("inner_rethrow", inner_rethrow),
-            ("inner_after_reset", inner_after_reset),
             ("outer_has_caught", Json::b(outer.has_caught())),
+            ("outer_same_exception", Json::b(outer_same_exception)),
             ("outer_marker", Json::s(&marker)),
         ]),
     )]

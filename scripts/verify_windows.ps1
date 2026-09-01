@@ -52,11 +52,13 @@ $ConformancePackages = @(
     './conformance-core-advanced',
     './conformance-context-residual',
     './conformance-context-scopes-advanced',
+    './conformance-create-params-snapshot',
     './conformance-exceptions-advanced',
     './conformance-exception-constructors',
     './conformance-exception-string-local',
     './conformance-external-references',
     './conformance-functions-advanced',
+    './conformance-inspector-transport',
     './conformance-fixed-primitive-arrays',
     './conformance-handles-residual',
     './conformance-host-promises',
@@ -82,7 +84,9 @@ $ConformancePackages = @(
     './conformance-strings-bigint',
     './conformance-template-advanced',
     './conformance-typed-arrays',
+    './conformance-trycatch-listener-residual',
     './conformance-wasm',
+    './conformance-wasm-policy-callbacks',
     './conformance-wasm-streaming'
 )
 
