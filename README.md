@@ -173,4 +173,4 @@ include dynamic-import `kDefer` delivery, residual unsafe CreateParams
 options, the residual generic/custom-heap cppgc object model, and the remaining Fast API
 type/adaptor surface. The
 authoritative gaps and intentional API-shape differences are tracked in
-`PARITY.md`.
+`PARITY.md`; `API_AUDIT.md` provides the 1,858-declaration denominator.
