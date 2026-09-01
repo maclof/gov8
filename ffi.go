@@ -13,7 +13,7 @@ import (
 )
 
 // shimABIVersion must match gov8_abi_version in internal/shim/shim.cc.
-const shimABIVersion = 22
+const shimABIVersion = 23
 
 var (
 	shimOnce sync.Once

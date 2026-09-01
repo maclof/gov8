@@ -48,8 +48,8 @@ void v8__TracedReference__CONSTRUCT(void* self);
 void v8__TracedReference__DESTRUCT(void* self);
 void v8__TracedReference__Reset(void* self, v8::Isolate* isolate,
                                 const v8::Data* other);
-const v8::Data* v8__TracedReference__Get(void* self,
-                                         v8::Isolate* isolate);
+const v8::Data* v8__TracedReference__Get(
+    v8::TracedReference<v8::Data>* self, v8::Isolate* isolate);
 void v8__Eternal__CONSTRUCT(void* self);
 void v8__Eternal__DESTRUCT(void* self);
 void v8__Eternal__Clear(void* self);
@@ -241,7 +241,8 @@ __declspec(dllexport) int64_t gov8_hr_traced_get(v8::Isolate* iso,
   }
   try {
     Gov8IsolateScope isolate_scope(iso);
-    *out = const_cast<v8::Data*>(v8__TracedReference__Get(w->storage, iso));
+    *out = const_cast<v8::Data*>(v8__TracedReference__Get(
+        reinterpret_cast<v8::TracedReference<v8::Data>*>(w->storage), iso));
     return kOk;
   } catch (...) {
     SetErr("C++ exception getting TracedReference");

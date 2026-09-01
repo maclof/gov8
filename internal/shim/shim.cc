@@ -77,13 +77,14 @@ void v8__MicrotaskQueue__PerformCheckpoint(v8::Isolate* isolate,
 void v8__MicrotaskQueue__EnqueueMicrotask(v8::Isolate* isolate,
                                           v8::MicrotaskQueue* self,
                                           v8::Function* callback);
+void cppgc__shutdown_process();
 }
 
 // --- Fail-loud stubs for artifact symbols implemented on the Rust side ------
 //
 // The pinned artifact's binding.obj references callback implementations that
 // the pinned Rust crate normally supplies (serializer/deserializer delegates,
-// inspector clients, custom platform hooks, cppgc RustObj glue). None of them
+// inspector clients and custom platform hooks). None of them
 // are reachable through this shim's API surface: the shim never creates a
 // ValueSerializer/ValueDeserializer delegate, never instantiates an inspector,
 // and never registers a custom platform. They exist purely to close the
@@ -100,9 +101,6 @@ namespace gov8_stub {
     gov8_stub::Unreachable(#name);              \
   }
 
-GOV8_STUB(rusty_v8_RustObj_drop)
-GOV8_STUB(rusty_v8_RustObj_get_name)
-GOV8_STUB(rusty_v8_RustObj_trace)
 GOV8_STUB(v8__ValueDeserializer__Delegate__GetSharedArrayBufferFromId)
 GOV8_STUB(v8__ValueDeserializer__Delegate__GetWasmModuleFromId)
 GOV8_STUB(v8__ValueDeserializer__Delegate__ReadHostObject)
@@ -401,7 +399,7 @@ extern "C" {
 
 __declspec(dllexport) int64_t gov8_abi_version(void) {
   ClearErr();
-  return 22;
+  return 23;
 }
 
 // --- platform / process lifecycle -------------------------------------------
@@ -453,6 +451,7 @@ __declspec(dllexport) int64_t gov8_v8_dispose(void) {
       return kErrState;
     }
     const bool disposed = v8::V8::Dispose();
+    cppgc__shutdown_process();
     g_allocator.reset();
     return disposed ? 1 : 0;
   } catch (...) {
@@ -1693,6 +1692,7 @@ __declspec(dllexport) int64_t gov8_last_error(char* buf, int64_t cap) {
 #include "features/object_ops.inc"
 #include "features/object_callback_retention.inc"
 #include "features/object_residual.inc"
+#include "features/cppgc_object_wrapping.inc"
 #include "features/strings_bigint.inc"
 #include "features/typed_arrays.inc"
 #include "features/fixed_primitive_arrays.inc"
