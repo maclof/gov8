@@ -65,6 +65,103 @@ extern "C" {
 
 using namespace gov8_simdutf_impl;
 
+// Fixed-purpose entry points keep the hottest operations to one compact ABI
+// call. The generic exports below remain the complete public substrate.
+__declspec(dllexport) int64_t gov8_simdutf_validate_utf8_fast(
+    const char* input, size_t length) {
+  ClearErr();
+  if (input == nullptr && length != 0) {
+    SetErr("invalid UTF-8 validation argument");
+    return kErrBadArg;
+  }
+  const char empty = 0;
+  if (input == nullptr) input = &empty;
+  return simdutf__validate_utf8(input, length) ? 1 : 0;
+}
+
+__declspec(dllexport) int64_t gov8_simdutf_utf8_to_utf16le_fast(
+    const char* input, size_t length, char16_t* output,
+    size_t output_length) {
+  ClearErr();
+  if ((input == nullptr && length != 0) ||
+      (output == nullptr && output_length != 0) || output_length < length) {
+    SetErr("invalid UTF-8 to UTF-16LE conversion argument");
+    return kErrBadArg;
+  }
+  const char empty_input = 0;
+  char16_t empty_output = 0;
+  if (input == nullptr) input = &empty_input;
+  if (output == nullptr) output = &empty_output;
+  return static_cast<int64_t>(
+      simdutf__convert_utf8_to_utf16le(input, length, output));
+}
+
+__declspec(dllexport) int64_t gov8_simdutf_utf16le_to_utf8_fast(
+    const char16_t* input, size_t length, char* output,
+    size_t output_length) {
+  ClearErr();
+  if ((input == nullptr && length != 0) ||
+      (output == nullptr && output_length != 0) ||
+      length > SIZE_MAX / 3 || output_length < length * 3) {
+    SetErr("invalid UTF-16LE to UTF-8 conversion argument");
+    return kErrBadArg;
+  }
+  const char16_t empty_input = 0;
+  char empty_output = 0;
+  if (input == nullptr) input = &empty_input;
+  if (output == nullptr) output = &empty_output;
+  return static_cast<int64_t>(
+      simdutf__convert_utf16le_to_utf8(input, length, output));
+}
+
+__declspec(dllexport) int64_t gov8_simdutf_base64_decode_fast(
+    const char* input, size_t length, char* output, size_t output_length,
+    uint64_t options, uint64_t last_chunk, int32_t* out_error) {
+  ClearErr();
+  if ((input == nullptr && length != 0) ||
+      (output == nullptr && output_length != 0) || out_error == nullptr ||
+      options > 3 || last_chunk > 3) {
+    SetErr("invalid simdutf base64 decode argument");
+    return kErrBadArg;
+  }
+  const char empty_input = 0;
+  char empty_output = 0;
+  if (input == nullptr) input = &empty_input;
+  if (output == nullptr) output = &empty_output;
+  const size_t required =
+      simdutf__maximal_binary_length_from_base64(input, length);
+  if (output_length < required) {
+    SetErr("simdutf destination too small");
+    return kErrBadArg;
+  }
+  const auto result = simdutf__base64_to_binary(
+      input, length, output, options, last_chunk);
+  *out_error = result.error;
+  return static_cast<int64_t>(result.count);
+}
+
+__declspec(dllexport) int64_t gov8_simdutf_base64_encode_fast(
+    const char* input, size_t length, char* output, size_t output_length,
+    uint64_t options) {
+  ClearErr();
+  if ((input == nullptr && length != 0) ||
+      (output == nullptr && output_length != 0) || options > 3) {
+    SetErr("invalid simdutf base64 encode argument");
+    return kErrBadArg;
+  }
+  const char empty_input = 0;
+  char empty_output = 0;
+  if (input == nullptr) input = &empty_input;
+  if (output == nullptr) output = &empty_output;
+  const size_t required = simdutf__base64_length_from_binary(length, options);
+  if (output_length < required) {
+    SetErr("simdutf destination too small");
+    return kErrBadArg;
+  }
+  return static_cast<int64_t>(
+      simdutf__binary_to_base64(input, length, output, options));
+}
+
 __declspec(dllexport) int64_t gov8_simdutf_validate(
     int32_t kind, const void* input, size_t length, int32_t with_errors,
     int32_t* out_valid, int32_t* out_error, size_t* out_count) {

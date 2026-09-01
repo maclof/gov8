@@ -93,3 +93,23 @@ func BenchmarkSIMDUTFBase64DecodeStandard4K(b *testing.B) {
 		}
 	}
 }
+
+func BenchmarkSIMDUTFBase64EncodeStandard3K(b *testing.B) {
+	binary := make([]byte, 3072)
+	for i := range binary {
+		binary[i] = 0x5a
+	}
+	encodedLength, err := gov8.SIMDUTFBase64LengthFromBinary(uint64(len(binary)), gov8.SIMDUTFBase64Default)
+	if err != nil {
+		b.Fatal(err)
+	}
+	output := make([]byte, int(encodedLength))
+	b.SetBytes(int64(len(binary)))
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		written, err := gov8.SIMDUTFBinaryToBase64(binary, output, gov8.SIMDUTFBase64Default)
+		if err != nil || written != len(output) {
+			b.Fatalf("BinaryToBase64 = %d, %v", written, err)
+		}
+	}
+}

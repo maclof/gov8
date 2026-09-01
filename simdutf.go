@@ -6,15 +6,45 @@ import (
 	"errors"
 	"fmt"
 	"runtime"
+	"sync"
+	"syscall"
 	"unicode/utf8"
 	"unsafe"
 )
 
+var (
+	simdutfProcsOnce             sync.Once
+	simdutfValidateProc          *syscall.Proc
+	simdutfConvertProc           *syscall.Proc
+	simdutfMeasureProc           *syscall.Proc
+	simdutfBase64Proc            *syscall.Proc
+	simdutfValidateUTF8FastProc  *syscall.Proc
+	simdutfUTF8ToUTF16LEFastProc *syscall.Proc
+	simdutfUTF16LEToUTF8FastProc *syscall.Proc
+	simdutfBase64DecodeFastProc  *syscall.Proc
+	simdutfBase64EncodeFastProc  *syscall.Proc
+)
+
+func ensureSIMDUTFProcs() {
+	simdutfProcsOnce.Do(func() {
+		simdutfValidateProc = proc("gov8_simdutf_validate")
+		simdutfConvertProc = proc("gov8_simdutf_convert")
+		simdutfMeasureProc = proc("gov8_simdutf_measure")
+		simdutfBase64Proc = proc("gov8_simdutf_base64")
+		simdutfValidateUTF8FastProc = proc("gov8_simdutf_validate_utf8_fast")
+		simdutfUTF8ToUTF16LEFastProc = proc("gov8_simdutf_utf8_to_utf16le_fast")
+		simdutfUTF16LEToUTF8FastProc = proc("gov8_simdutf_utf16le_to_utf8_fast")
+		simdutfBase64DecodeFastProc = proc("gov8_simdutf_base64_decode_fast")
+		simdutfBase64EncodeFastProc = proc("gov8_simdutf_base64_encode_fast")
+	})
+}
+
 // The SIMDUTF-prefixed API maps rusty_v8's simdutf namespace into the gov8
 // package. Rust marks conversion destinations and valid-input fast paths
 // unsafe. Go instead checks every documented worst-case destination size and
-// validates the fast-path input, returning an error before native code on
-// misuse. SIMDUTFResult continues to represent simdutf data errors; the
+// validates the fast-path input. Destination sizes are checked either in Go
+// or by the shim before it invokes an unsafe simdutf primitive. SIMDUTFResult
+// continues to represent simdutf data errors; the
 // separate Go error reports wrapper/precondition failures.
 
 // SIMDUTFErrorCode is a pinned simdutf error category.
@@ -98,14 +128,25 @@ func slicePointer[T any](values []T) uintptr {
 	return uintptr(unsafe.Pointer(&values[0]))
 }
 
+// sliceUnsafePointer preserves pointer provenance until the syscall expression
+// converts it to uintptr. The fixed-arity Windows syscall helpers keep those
+// converted pointers alive without allowing a stack copy during the call.
+func sliceUnsafePointer[T any](values []T) unsafe.Pointer {
+	if len(values) == 0 {
+		return nil
+	}
+	return unsafe.Pointer(&values[0])
+}
+
 func simdutfValidate(kind int32, input uintptr, length int, withErrors bool) (bool, SIMDUTFResult, error) {
+	ensureSIMDUTFProcs()
 	var valid, code int32
 	var count uintptr
 	with := uintptr(0)
 	if withErrors {
 		with = 1
 	}
-	r1, _, _ := proc("gov8_simdutf_validate").Call(uintptr(kind), input, uintptr(length), with,
+	r1, _, _ := simdutfValidateProc.Call(uintptr(kind), input, uintptr(length), with,
 		uintptr(unsafe.Pointer(&valid)), uintptr(unsafe.Pointer(&code)), uintptr(unsafe.Pointer(&count)))
 	if int64(r1) < 0 {
 		return false, SIMDUTFResult{}, shimError("SIMDUTF.Validate", r1)
@@ -114,9 +155,14 @@ func simdutfValidate(kind int32, input uintptr, length int, withErrors bool) (bo
 }
 
 func SIMDUTFValidateUTF8(input []byte) (bool, error) {
-	v, _, e := simdutfValidate(0, slicePointer(input), len(input), false)
+	ensureSIMDUTFProcs()
+	r1, _, _ := syscall.Syscall(simdutfValidateUTF8FastProc.Addr(), 2,
+		uintptr(sliceUnsafePointer(input)), uintptr(len(input)), 0)
 	runtime.KeepAlive(input)
-	return v, e
+	if int64(r1) < 0 {
+		return false, shimError("SIMDUTF.ValidateUTF8", r1)
+	}
+	return r1 != 0, nil
 }
 func SIMDUTFValidateUTF8WithErrors(input []byte) (SIMDUTFResult, error) {
 	_, r, e := simdutfValidate(0, slicePointer(input), len(input), true)
@@ -175,9 +221,10 @@ func simdutfCapacity(outputLength, inputLength, multiplier int) error {
 }
 
 func simdutfConvert(kind int32, input uintptr, inputLength int, output uintptr, outputLength int) (SIMDUTFResult, error) {
+	ensureSIMDUTFProcs()
 	var code int32
 	var count uintptr
-	r1, _, _ := proc("gov8_simdutf_convert").Call(uintptr(kind), input, uintptr(inputLength), output, uintptr(outputLength),
+	r1, _, _ := simdutfConvertProc.Call(uintptr(kind), input, uintptr(inputLength), output, uintptr(outputLength),
 		uintptr(unsafe.Pointer(&code)), uintptr(unsafe.Pointer(&count)))
 	if int64(r1) < 0 {
 		return SIMDUTFResult{}, shimError("SIMDUTF.Convert", r1)
@@ -196,8 +243,19 @@ func simdutfConvertSlices[I, O any](kind int32, input []I, output []O, multiplie
 }
 
 func SIMDUTFConvertUTF8ToUTF16LE(input []byte, output []uint16) (int, error) {
-	r, e := simdutfConvertSlices(0, input, output, 1)
-	return r.Count, e
+	if err := simdutfCapacity(len(output), len(input), 1); err != nil {
+		return 0, err
+	}
+	ensureSIMDUTFProcs()
+	r1, _, _ := syscall.Syscall6(simdutfUTF8ToUTF16LEFastProc.Addr(), 4,
+		uintptr(sliceUnsafePointer(input)), uintptr(len(input)),
+		uintptr(sliceUnsafePointer(output)), uintptr(len(output)), 0, 0)
+	runtime.KeepAlive(input)
+	runtime.KeepAlive(output)
+	if int64(r1) < 0 {
+		return 0, shimError("SIMDUTF.ConvertUTF8ToUTF16LE", r1)
+	}
+	return int(r1), nil
 }
 func SIMDUTFConvertUTF8ToUTF16LEWithErrors(input []byte, output []uint16) (SIMDUTFResult, error) {
 	return simdutfConvertSlices(1, input, output, 1)
@@ -214,8 +272,19 @@ func SIMDUTFConvertValidUTF8ToUTF16LE(input []byte, output []uint16) (int, error
 	return r.Count, e
 }
 func SIMDUTFConvertUTF16LEToUTF8(input []uint16, output []byte) (int, error) {
-	r, e := simdutfConvertSlices(3, input, output, 3)
-	return r.Count, e
+	if err := simdutfCapacity(len(output), len(input), 3); err != nil {
+		return 0, err
+	}
+	ensureSIMDUTFProcs()
+	r1, _, _ := syscall.Syscall6(simdutfUTF16LEToUTF8FastProc.Addr(), 4,
+		uintptr(sliceUnsafePointer(input)), uintptr(len(input)),
+		uintptr(sliceUnsafePointer(output)), uintptr(len(output)), 0, 0)
+	runtime.KeepAlive(input)
+	runtime.KeepAlive(output)
+	if int64(r1) < 0 {
+		return 0, shimError("SIMDUTF.ConvertUTF16LEToUTF8", r1)
+	}
+	return int(r1), nil
 }
 func SIMDUTFConvertUTF16LEToUTF8WithErrors(input []uint16, output []byte) (SIMDUTFResult, error) {
 	return simdutfConvertSlices(4, input, output, 3)
@@ -285,8 +354,9 @@ func SIMDUTFConvertUTF32ToUTF8(input []uint32, output []byte) (int, error) {
 }
 
 func simdutfMeasure(kind int32, input uintptr, length int) (int, error) {
+	ensureSIMDUTFProcs()
 	var out uintptr
-	r1, _, _ := proc("gov8_simdutf_measure").Call(uintptr(kind), input, uintptr(length), uintptr(unsafe.Pointer(&out)))
+	r1, _, _ := simdutfMeasureProc.Call(uintptr(kind), input, uintptr(length), uintptr(unsafe.Pointer(&out)))
 	if int64(r1) < 0 {
 		return 0, shimError("SIMDUTF.Measure", r1)
 	}
@@ -324,9 +394,10 @@ func simdutfBase64(kind int32, input, output []byte, logicalLength int, options 
 	if !validBase64Options(options) || !validLastChunk(last) {
 		return SIMDUTFResult{}, errors.New("gov8: invalid simdutf base64 option")
 	}
+	ensureSIMDUTFProcs()
 	var code int32
 	var count uintptr
-	r1, _, _ := proc("gov8_simdutf_base64").Call(uintptr(kind), slicePointer(input), uintptr(logicalLength), slicePointer(output), uintptr(len(output)), uintptr(options), uintptr(last), uintptr(unsafe.Pointer(&code)), uintptr(unsafe.Pointer(&count)))
+	r1, _, _ := simdutfBase64Proc.Call(uintptr(kind), slicePointer(input), uintptr(logicalLength), slicePointer(output), uintptr(len(output)), uintptr(options), uintptr(last), uintptr(unsafe.Pointer(&code)), uintptr(unsafe.Pointer(&count)))
 	runtime.KeepAlive(input)
 	runtime.KeepAlive(output)
 	if int64(r1) < 0 {
@@ -339,14 +410,24 @@ func SIMDUTFMaximalBinaryLengthFromBase64(input []byte) (int, error) {
 	return r.Count, e
 }
 func SIMDUTFBase64ToBinary(input, output []byte, options SIMDUTFBase64Options, last SIMDUTFLastChunkHandling) (SIMDUTFResult, error) {
-	required, e := SIMDUTFMaximalBinaryLengthFromBase64(input)
-	if e != nil {
-		return SIMDUTFResult{}, e
+	// The shim computes the content-aware maximum and rejects a short output
+	// before calling simdutf. Keeping the check in the same boundary crossing
+	// avoids measuring the input twice on every decode.
+	if !validBase64Options(options) || !validLastChunk(last) {
+		return SIMDUTFResult{}, errors.New("gov8: invalid simdutf base64 option")
 	}
-	if len(output) < required {
-		return SIMDUTFResult{}, fmt.Errorf("gov8: simdutf destination capacity %d, need %d", len(output), required)
+	ensureSIMDUTFProcs()
+	var code int32
+	r1, _, _ := syscall.Syscall9(simdutfBase64DecodeFastProc.Addr(), 7,
+		uintptr(sliceUnsafePointer(input)), uintptr(len(input)),
+		uintptr(sliceUnsafePointer(output)), uintptr(len(output)),
+		uintptr(options), uintptr(last), uintptr(unsafe.Pointer(&code)), 0, 0)
+	runtime.KeepAlive(input)
+	runtime.KeepAlive(output)
+	if int64(r1) < 0 {
+		return SIMDUTFResult{}, shimError("SIMDUTF.Base64", r1)
 	}
-	return simdutfBase64(1, input, output, len(input), options, last)
+	return SIMDUTFResult{Error: simdutfErrorCode(code), Count: int(r1)}, nil
 }
 
 // SIMDUTFBase64LengthFromBinary accepts uint64 so Windows amd64 callers can
@@ -355,9 +436,10 @@ func SIMDUTFBase64LengthFromBinary(length uint64, options SIMDUTFBase64Options) 
 	if !validBase64Options(options) {
 		return 0, errors.New("gov8: invalid simdutf base64 option")
 	}
+	ensureSIMDUTFProcs()
 	var code int32
 	var count uintptr
-	r1, _, _ := proc("gov8_simdutf_base64").Call(2, 0, uintptr(length), 0, 0, uintptr(options),
+	r1, _, _ := simdutfBase64Proc.Call(2, 0, uintptr(length), 0, 0, uintptr(options),
 		uintptr(SIMDUTFLastChunkLoose), uintptr(unsafe.Pointer(&code)), uintptr(unsafe.Pointer(&count)))
 	if int64(r1) < 0 {
 		return 0, shimError("SIMDUTF.Base64LengthFromBinary", r1)
@@ -365,17 +447,19 @@ func SIMDUTFBase64LengthFromBinary(length uint64, options SIMDUTFBase64Options) 
 	return uint64(count), nil
 }
 func SIMDUTFBinaryToBase64(input, output []byte, options SIMDUTFBase64Options) (int, error) {
-	required64, e := SIMDUTFBase64LengthFromBinary(uint64(len(input)), options)
-	if e != nil {
-		return 0, e
+	// As with decoding, the shim combines the exact size check and conversion
+	// so encoding crosses the DLL boundary only once.
+	if !validBase64Options(options) {
+		return 0, errors.New("gov8: invalid simdutf base64 option")
 	}
-	if required64 > uint64(int(^uint(0)>>1)) {
-		return 0, errors.New("gov8: simdutf base64 output size overflows int")
+	ensureSIMDUTFProcs()
+	r1, _, _ := syscall.Syscall6(simdutfBase64EncodeFastProc.Addr(), 5,
+		uintptr(sliceUnsafePointer(input)), uintptr(len(input)),
+		uintptr(sliceUnsafePointer(output)), uintptr(len(output)), uintptr(options), 0)
+	runtime.KeepAlive(input)
+	runtime.KeepAlive(output)
+	if int64(r1) < 0 {
+		return 0, shimError("SIMDUTF.Base64", r1)
 	}
-	required := int(required64)
-	if len(output) < required {
-		return 0, fmt.Errorf("gov8: simdutf destination capacity %d, need %d", len(output), required)
-	}
-	r, e := simdutfBase64(3, input, output, len(input), options, SIMDUTFLastChunkLoose)
-	return r.Count, e
+	return int(r1), nil
 }

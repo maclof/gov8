@@ -103,6 +103,24 @@ fn base64_decode(c: &mut Criterion) {
         })
     });
     group.finish();
+
+    let mut encode_group = c.benchmark_group("simdutf/base64_encode");
+    encode_group.throughput(Throughput::Bytes(binary.len() as u64));
+    encode_group.bench_function("standard_3k", |b| {
+        common::banner();
+        b.iter(|| {
+            let written = unsafe {
+                v8::simdutf::binary_to_base64(
+                    black_box(&binary),
+                    &mut encoded,
+                    v8::simdutf::Base64Options::Default,
+                )
+            };
+            assert_eq!(written, encoded.len());
+            black_box(&encoded[..written]);
+        })
+    });
+    encode_group.finish();
 }
 
 criterion_group! {
