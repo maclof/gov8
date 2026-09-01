@@ -14,9 +14,10 @@ characterized but the Go implementation is not integrated; **missing** means no
 production Go implementation exists. A family is not promoted merely because a
 type or stub exists.
 
-The fixtures under `rust-oracle/tests/fixtures` currently contain 468 normalized
+The fixtures under `rust-oracle/tests/fixtures` currently contain 473 normalized
 checks. Go matches 461 byte-for-byte and two more after documented safety
-normalizations; five cppgc-persistent checks are currently oracle-only. Fatal and
+normalizations; ten cppgc-persistent and template-accessor Name-key checks are
+currently oracle-only. Fatal and
 panic-boundary subprocess tests are additional evidence and are not counted in
 that total.
 
@@ -36,7 +37,7 @@ that total.
 | TryCatch, exceptions, Message and StackTrace | `trycatch.go`, `message.go`, `trycatch_listener_residual.go`, advanced exception bindings, raw local getters and five native constructors accepting Go strings or exact V8 String locals | base checks, corrected 10-check advanced, 7-check constructor, 2-check String-local, 4-check message-local and 4-check residual listener/TryCatch fixtures; lifecycle/race/fatal tests | **complete** for the safe executable pinned declarations: structural nesting, identity, termination recovery and full listener Message fidelity are exact; safe `ReThrow` closes the inner catcher immediately, and raw fatal-handle misuse retains the documented normalization |
 | Microtask policy and queues | `microtask.go`, context-local hooks, queue-at-creation, running/depth observation and controls hooks | base, controls-hooks and context-scopes fixtures | **complete** for the pinned crate: queue handle ownership, enqueue/checkpoint, policy, attachment, running state, and scope depth are covered; the crate exposes no `MicrotasksScope` constructor |
 | Native functions, callbacks and accessors | `callback.go`, `template.go`, `function_advanced.go`, `fast_api.go`, Inspector-backed side-effect evaluation | host, all 6 Function checks and 4-check Fast API substrate fixture exact; cache/fatal subprocess tests; Rust/Go callback and Function benchmarks | **partial**: the characterized Function surface and safe Fast API descriptor/build path match; the broader Fast API surface is tracked separately |
-| Object/function templates and interceptors | `template.go`, `template_advanced.go`, `object_callback_retention.go`, `template_name_keys.go` | host, 14-check template-advanced, template-data portion of the 6-check callback-retention fixture, and 5-check arbitrary Name-key fixture exact in Go; negative/fatal/lifecycle/GC/thread/race tests; Go benchmarks | **partial**: shared `Template` Set/SetWithAttr/SetIntrinsicDataProperty behavior now accepts String and Symbol keys exactly; Name-key overloads for accessor-property/native-data conveniences remain string-only, while `build_fast` is tracked under Fast API |
+| Object/function templates and interceptors | `template.go`, `template_advanced.go`, `object_callback_retention.go`, `template_name_keys.go` | host, 14-check template-advanced, template-data portion of the 6-check callback-retention fixture, and 5-check arbitrary Name-key fixture exact in Go; 5-check template-accessor Name-key Rust oracle; negative/fatal/lifecycle/GC/thread/race tests; Go benchmarks | **oracle**: shared `Template` String/Symbol Set/SetWithAttr/SetIntrinsicDataProperty behavior is exact; accessor-property and native-data Name-key behavior is characterized for Go integration, while `build_fast` is tracked under Fast API |
 | Promises, resolvers and rejection hooks | `promise.go` | host fixture; lifecycle tests; Rust/Go benchmarks; handler/reject panic subprocess parity | **complete** for the characterized native promise slice; advanced embedder hooks remain elsewhere |
 | ArrayBuffer, SharedArrayBuffer and backing stores | `buffer.go` | 21-check buffer fixture; fatal-boundary/lifecycle/deleter tests; Go benchmarks | **complete** for the pinned buffer surface: owned/raw backing stores, sharing, detach, data and reference lifetimes are covered; the crate exposes no externalize method, while custom allocator selection is tracked under `Isolate` |
 | Typed arrays and DataView | `typed_arrays.go` | 14-check typed-array fixture; per-kind boundary/fatal tests; Go benchmarks | **complete** for all 12 pinned typed-array kinds and characterized geometry/data behavior |
@@ -149,10 +150,10 @@ that total.
 
 ## Verification state
 
-On 2026-09-01, the Rust fixtures contain 468 normalized checks. Go compares 461 checks
+On 2026-09-01, the Rust fixtures contain 473 normalized checks. Go compares 461 checks
 byte-for-byte; the advanced stack line and custom-platform inline-deadlock probe
-pass after the two narrow safety normalizations documented above. Five cppgc-persistent
-checks remain oracle-only. The Rust oracle suites pass formatting,
+pass after the two narrow safety normalizations documented above. Ten cppgc-persistent
+and template-accessor Name-key checks remain oracle-only. The Rust oracle suites pass formatting,
 strict Clippy and full tests; the Go suite passes
 `go test ./... -count=1`, `go vet ./...`, full race checks and benchmark smoke runs.
 `scripts/verify_windows.ps1` explicitly reruns every current conformance package.
