@@ -65,6 +65,8 @@ Controlled identical-build samples changed from 5290, 6456, 5917, 7872, and
 7086 ns/op to 1493, 1572, 2003, 1967, and 1945 ns/op. The median improved 69.9%
 from 6,456 to 1,945 ns/op, leaving about 1.73x versus the Rust 1,127.35 ns
 midpoint. Allocations remain 72 bytes/2 for the outer Go `Function.Call`.
-The ordinary Go callback fallback bypasses this native Fast API target and
-remains about 30.5x Rust; profiles localize that separate gap to generic
-callback dispatch and value conversion.
+The ordinary Go callback fallback bypasses this native Fast API target. A later
+fixed-arity/direct-conversion pass reduced its 256-call median from 164,758 to
+138,750 ns and allocations from 1,282 to 258, leaving about 18.5x Rust. The
+remaining separate gap is dominated by callback crossings and borrowed-scope
+lifetime enforcement.

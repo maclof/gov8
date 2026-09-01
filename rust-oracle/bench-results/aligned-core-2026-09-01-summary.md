@@ -44,3 +44,59 @@ not behavioral gaps or accepted performance parity.
 Raw Criterion estimates, samples, Tukey fences, and reports are stored in
 `criterion-aligned-core-2026-09-01/`. Environment metadata is in
 `env-2026-09-01-DESKTOP-VJI58KR.txt`.
+
+## ABI-38 callback follow-up
+
+Cached fixed-arity scalar conversions and setters remove generic variadic
+frames. Callback conversions that may execute JavaScript use a one-call native
+thread-local result slot, so nested Go re-entry cannot invalidate an output
+pointer on a moving Go stack. A regression reproduces that former failure and
+checks nested coercion, `MinInt64`, and `MaxUint32` under normal and race runs.
+
+Controlled 500 ms samples changed as follows:
+
+| Operation | Before median | After samples (ns/op) | After median | Current Rust ratio |
+|---|---:|---:|---:|---:|
+| callback/native_call_from_js | 3158 ns | 2722, 2613, 2485, 2562, 2325 | 2562 ns | 16.6x |
+| callback/native_call_from_host | 2995 ns | 2340, 2321, 2878, 4039, 4235 | 2878 ns | 20.8x |
+| callback/function_new_call | 4946 ns | 4687, 4279, 4287, 5763, 5729 | 4687 ns | 4.72x |
+
+The separate 256-call ordinary Fast API fallback improved from a 164,758 ns
+median and 41,032 bytes/1,282 allocations to 138,750 ns and 20,552 bytes/258
+allocations. Its remaining ratio is about 18.5x Rust. The callback crossing and
+the retained invocation object required to invalidate borrowed scopes remain.
+
+## ABI-38 Promise follow-up
+
+Five additive direct-return exports retain the original compatibility exports
+and error statuses while removing escaping Go output locals. Seven interleaved
+frozen-binary pairs produced these distributions:
+
+| Operation | Before samples (ns/op) | After samples (ns/op) | Allocation change | Current Rust ratio |
+|---|---:|---:|---:|---:|
+| promise/resolver_new_resolve | 1557, 1617, 1588, 1561, 1549, 1636, 1628 | 1147, 1097, 1132, 1071, 1102, 1093, 1066 | 344 B/15 to 152 B/6 | 8.77x |
+| promise/resolve_then_checkpoint | 2636, 2663, 2835, 2576, 2608, 2700, 2675 | 2069, 1962, 2068, 1996, 2050, 2141, 1963 | 440 B/18 to 216 B/8 | 4.99x |
+
+The medians improve 30.9% and 23.0%, respectively. Profiling leaves native
+crossings, thread-affinity checks, and the required microtask checkpoint as the
+dominant costs.
+
+## ABI-38 script and module follow-up
+
+Cached fixed-arity calls remove generic proc frames. Script/module calls that
+can synchronously re-enter Go use explicit `uintptrescapes` wrappers; module
+resolution copies its guaranteed String specifier directly into a stack-first
+buffer instead of routing through generic Value conversion.
+
+| Operation | Before median | After median | Allocation change | Current Rust ratio |
+|---|---:|---:|---:|---:|
+| script/compile_minimal | 1032 ns | 935.6 ns | 176 B/7 to 96 B/4 | 2.11x |
+| script/compile_workload | 1424 ns | 1158 ns | 176 B/7 to 96 B/4 | 1.54x |
+| script/compile_and_run_minimal | 2308 ns | 1863 ns | 288 B/11 to 160 B/7 | 2.95x |
+| script/run_precompiled_workload | 7271 ns | 6503 ns | 4304 B/9 to 4256 B/8 | 1.59x |
+| module/compile | 1659 ns | 1535 ns | 224 B/7 to 112 B/4 | 2.12x |
+| module/compile_instantiate | 9569 ns | 7182 ns | 4808 B/23 to 312 B/11 | 1.45x |
+| module/compile_instantiate_evaluate | 10685 ns | 8150 ns | 4872 B/26 to 320 B/12 | 1.65x |
+
+The controlled 300 ms three-sample medians improve 7.5-24.9%. The previously
+recorded large compile-and-run workload remains faster in Go.
