@@ -256,3 +256,43 @@ The JavaScript-origin control does not use the optimized outer
 in four of six pairs, leaving approximately 13.0x and 3.80x versus their
 pinned Rust midpoints. Allocations are unchanged; this pass removes redundant
 thread-affinity work rather than weakening lifetime enforcement.
+
+## ABI-41 callback argument-buffer follow-up
+
+The ordinary function trampoline now keeps its two most common argument wires
+in a fixed stack buffer and uses the existing heap allocation only above two
+arguments. The callback frame layout and exports are unchanged. Boundary tests
+cover 0, 1, 2, 3 and 64 arguments; repeated `Get` identity; both out-of-bounds
+directions; constructor calls; and nested stack/heap-path re-entry.
+
+The first candidate used eight inline slots. Six order-balanced 300,000-iteration
+pairs changed the JS median from 1942.5 to 1896.5 ns, but regressed host calls
+from 1926.5 to 1990 ns and Function create/call from 3592.5 to 3719 ns. In a
+two-second confirmation, Function create/call lost five of six pairs. That
+candidate was rejected; its 64-byte unconditional stack expansion was larger
+than the matched two-argument workload required.
+
+The accepted two-slot candidate was measured with byte-identical frozen test
+executables, baseline DLL SHA-256
+`0FBD464E2A21526067125465110DCB25C2BCBAD86C4B229809DE9E33A66CA6BF`, and
+candidate DLL SHA-256
+`4645ACCB14EDB83C5140B0EC439ED6A608823836BC61B7330B7D0F4AD13132AF`.
+Six order-balanced fixed-300,000-iteration pairs produced:
+
+| Workload | Baseline samples (ns/op) | Two-slot samples (ns/op) | Median change | B/op; allocs/op |
+|---|---:|---:|---:|---:|
+| callback/native_call_from_js | 2284, 2197, 2001, 1833, 2368, 1985 | 2085, 1954, 1741, 1748, 1852, 2018 | 2099 to 1903 (-9.3%) | 272; 5 |
+| callback/native_call_from_host | 2235, 1941, 1849, 1893, 2064, 1914 | 1942, 1865, 1745, 1759, 2110, 2042 | 1927.5 to 1903.5 (-1.2%) | 320; 8 |
+| callback/function_new_call | 3912, 3494, 3267, 3749, 3401, 3489 | 3664, 3433, 3164, 3167, 3792, 3420 | 3491.5 to 3426.5 (-1.9%) | 512; 9 |
+
+Six additional order-balanced two-second pairs confirmed the direction:
+
+| Workload | Baseline samples (ns/op) | Two-slot samples (ns/op) | Median change |
+|---|---:|---:|---:|
+| callback/native_call_from_js | 2340, 2307, 2622, 2255, 2184, 2372 | 2171, 2182, 2005, 1993, 2232, 2149 | 2323.5 to 2160 (-7.0%) |
+| callback/native_call_from_host | 2712, 2499, 2692, 2925, 2511, 3182 | 2545, 2166, 2643, 2599, 2622, 2564 | 2702 to 2581.5 (-4.5%) |
+| callback/function_new_call | 4735, 4538, 4758, 4494, 5133, 4839 | 4734, 4537, 4400, 4580, 4785, 4884 | 4746.5 to 4657 (-1.9%) |
+
+Go allocation counts do not include the removed native `new[]`/`delete[]` and
+therefore remain unchanged. The fixed-run candidate medians are approximately
+12.3x, 13.7x and 3.45x the corresponding pinned Rust midpoints.

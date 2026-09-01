@@ -265,6 +265,8 @@ void AbortBadCallbackStatus() {
 
 // --- static engine-callback trampolines -------------------------------------
 
+constexpr size_t kHostFunctionInlineArgc = 2;
+
 void HostFunctionTrampoline(const v8::FunctionCallbackInfo<v8::Value>& info) {
   v8::Isolate* iso = info.GetIsolate();
   // The isolate is already entered: the engine only invokes API callbacks
@@ -286,13 +288,18 @@ void HostFunctionTrampoline(const v8::FunctionCallbackInfo<v8::Value>& info) {
   frame.rv_word = *reinterpret_cast<uintptr_t*>(&rv);
   const int argc = info.Length();
   frame.argc = argc;
-  std::unique_ptr<void*[]> argv;
+  void* inline_argv[kHostFunctionInlineArgc];
+  std::unique_ptr<void*[]> heap_argv;
   if (argc > 0) {
-    argv.reset(new void*[static_cast<size_t>(argc)]);
-    for (int i = 0; i < argc; i++) {
-      argv[static_cast<size_t>(i)] = ToWire(info[i]);
+    void** argv = inline_argv;
+    if (static_cast<size_t>(argc) > kHostFunctionInlineArgc) {
+      heap_argv.reset(new void*[static_cast<size_t>(argc)]);
+      argv = heap_argv.get();
     }
-    frame.argv = argv.get();
+    for (int i = 0; i < argc; i++) {
+      argv[i] = ToWire(info[i]);
+    }
+    frame.argv = argv;
   }
   if (CallGoDispatcherWithScope(&frame) != 0) {
     AbortBadCallbackStatus();
