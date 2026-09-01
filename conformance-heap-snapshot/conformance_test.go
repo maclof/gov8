@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	gov8 "gov8"
+	gov8 "github.com/maclof/gov8"
 )
 
 const heapSnapshotChildEnv = "GOV8_HEAP_SNAPSHOT_CONFORMANCE_CHILD"

@@ -12,7 +12,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	gov8 "gov8"
+	gov8 "github.com/maclof/gov8"
 )
 
 const childEnv = "GOV8_CPPGC_PERSISTENT_CONFORMANCE_CHILD"

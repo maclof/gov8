@@ -6,7 +6,7 @@ import (
 	"bytes"
 	"testing"
 
-	gov8 "gov8"
+	gov8 "github.com/maclof/gov8"
 )
 
 // Nine buffer/serialization benchmark workloads covering the slice's

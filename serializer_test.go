@@ -6,7 +6,7 @@ import (
 	"bytes"
 	"testing"
 
-	gov8 "gov8"
+	gov8 "github.com/maclof/gov8"
 )
 
 // Serializer / deserializer behavior tests mirroring the pinned oracle's

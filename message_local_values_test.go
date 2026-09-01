@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	gov8 "gov8"
+	gov8 "github.com/maclof/gov8"
 )
 
 func requireRawString(v gov8.Value, ok bool, err error, want string) error {

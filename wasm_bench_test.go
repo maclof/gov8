@@ -6,7 +6,7 @@ import (
 	"runtime"
 	"testing"
 
-	gov8 "gov8"
+	gov8 "github.com/maclof/gov8"
 )
 
 func BenchmarkWasmSyncCompileAnswerModule(b *testing.B) {

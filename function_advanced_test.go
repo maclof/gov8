@@ -6,7 +6,7 @@ import (
 	"errors"
 	"testing"
 
-	gov8 "gov8"
+	gov8 "github.com/maclof/gov8"
 )
 
 func advancedNoop(*gov8.CallbackScope, gov8.FunctionCallbackArguments, gov8.ReturnValue) {}

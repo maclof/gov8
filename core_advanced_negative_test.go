@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	gov8 "gov8"
+	gov8 "github.com/maclof/gov8"
 )
 
 // Negative and fatal-misuse characterization for the core-advanced slice,

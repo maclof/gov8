@@ -11,7 +11,7 @@ package main
 import (
 	"testing"
 
-	gov8 "gov8"
+	gov8 "github.com/maclof/gov8"
 )
 
 // --- callbacks (mirroring rust-oracle/src/checks/host/callbacks.rs) ----------

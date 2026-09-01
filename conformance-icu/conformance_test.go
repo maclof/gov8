@@ -15,7 +15,7 @@ import (
 	"testing"
 	"unsafe"
 
-	gov8 "gov8"
+	gov8 "github.com/maclof/gov8"
 )
 
 const fixtureName = "conformance-icu-v8_152.2.0_x86_64-pc-windows-msvc.jsonl"

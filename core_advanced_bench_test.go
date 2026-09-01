@@ -5,7 +5,7 @@ package gov8_test
 import (
 	"testing"
 
-	gov8 "gov8"
+	gov8 "github.com/maclof/gov8"
 )
 
 // The eight core-advanced benchmarks specified by the pinned oracle's

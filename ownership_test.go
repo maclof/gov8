@@ -7,7 +7,7 @@ import (
 	"sync"
 	"testing"
 
-	gov8 "gov8"
+	gov8 "github.com/maclof/gov8"
 )
 
 // twoIsolates creates two live isolates on the calling goroutine, each with

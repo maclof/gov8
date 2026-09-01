@@ -5,7 +5,7 @@ package main
 import (
 	"testing"
 
-	gov8 "gov8"
+	gov8 "github.com/maclof/gov8"
 )
 
 // runtime is one isolate+context+scope triple, as used by every oracle

@@ -7,7 +7,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	gov8 "gov8"
+	gov8 "github.com/maclof/gov8"
 )
 
 func cppgcAPIWrapper(t *testing.T, iso *gov8.Isolate, ctx *gov8.Context, scope *gov8.Scope) *gov8.Object {

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	gov8 "gov8"
+	gov8 "github.com/maclof/gov8"
 )
 
 type stringValueExceptionConstructor func(*gov8.Scope, gov8.Value) (gov8.Value, error)

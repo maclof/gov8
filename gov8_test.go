@@ -7,7 +7,7 @@ import (
 	"math"
 	"testing"
 
-	gov8 "gov8"
+	gov8 "github.com/maclof/gov8"
 )
 
 // newTestRuntime returns an isolate+context+scope for one test. The returned

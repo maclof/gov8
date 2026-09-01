@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	gov8 "gov8"
+	gov8 "github.com/maclof/gov8"
 )
 
 // Termination tests, mirroring the pinned Rust oracle's

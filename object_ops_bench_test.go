@@ -6,7 +6,7 @@ import (
 	"math"
 	"testing"
 
-	gov8 "gov8"
+	gov8 "github.com/maclof/gov8"
 )
 
 // Benchmarks for the object-ops slice, following the workload spec in the

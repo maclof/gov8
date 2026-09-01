@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	gov8 "gov8"
+	gov8 "github.com/maclof/gov8"
 )
 
 func compileRunTryCatch(t *testing.T, c *gov8.Context, s *gov8.Scope, source string, origin *gov8.Origin, tc *gov8.TryCatch) bool {

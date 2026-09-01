@@ -11,7 +11,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	gov8 "gov8"
+	gov8 "github.com/maclof/gov8"
 )
 
 func heapSnapshotRuntime(t *testing.T) (*gov8.Isolate, *gov8.Context) {

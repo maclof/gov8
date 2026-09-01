@@ -11,7 +11,7 @@ import (
 	"testing"
 	"unsafe"
 
-	gov8 "gov8"
+	gov8 "github.com/maclof/gov8"
 )
 
 // Engine-fatal controls/hooks paths, characterized out-of-process exactly

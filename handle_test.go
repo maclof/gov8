@@ -5,7 +5,7 @@ package gov8_test
 import (
 	"testing"
 
-	gov8 "gov8"
+	gov8 "github.com/maclof/gov8"
 )
 
 // Public Global/Weak handle tests, mirroring the pinned Rust oracle's

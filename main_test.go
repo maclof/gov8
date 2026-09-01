@@ -6,7 +6,7 @@ import (
 	"os"
 	"testing"
 
-	gov8 "gov8"
+	gov8 "github.com/maclof/gov8"
 )
 
 // TestMain initializes V8 exactly once per test-binary process, mirroring the

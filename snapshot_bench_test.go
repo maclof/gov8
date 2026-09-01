@@ -5,7 +5,7 @@ package gov8_test
 import (
 	"testing"
 
-	gov8 "gov8"
+	gov8 "github.com/maclof/gov8"
 )
 
 // Snapshot and public-handle benchmarks. The startup shapes mirror

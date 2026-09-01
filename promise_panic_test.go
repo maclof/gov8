@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	gov8 "gov8"
+	gov8 "github.com/maclof/gov8"
 )
 
 // Promise callback panics mirror rusty_v8's non-unwinding extern-C

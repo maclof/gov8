@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"testing"
 
-	gov8 "gov8"
+	gov8 "github.com/maclof/gov8"
 )
 
 func TestModuleInstantiatePriorStatusErrorsAreExact(t *testing.T) {

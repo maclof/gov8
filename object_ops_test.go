@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	gov8 "gov8"
+	gov8 "github.com/maclof/gov8"
 )
 
 // Unit tests for the object-ops slice: receiver get/set, prototype,

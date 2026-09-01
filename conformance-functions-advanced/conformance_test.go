@@ -14,7 +14,7 @@ import (
 	"sync"
 	"testing"
 
-	gov8 "gov8"
+	gov8 "github.com/maclof/gov8"
 )
 
 func TestMain(m *testing.M) {

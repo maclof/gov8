@@ -8,7 +8,7 @@ package main
 import (
 	"strconv"
 
-	gov8 "gov8"
+	gov8 "github.com/maclof/gov8"
 )
 
 // typedArrayKey is the fixture's JSON key for a kind.

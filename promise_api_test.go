@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	gov8 "gov8"
+	gov8 "github.com/maclof/gov8"
 )
 
 // promiseRT is one isolate + context + scope triple under the Explicit

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	gov8 "gov8"
+	gov8 "github.com/maclof/gov8"
 )
 
 func exposeTemplateNameValue(t *testing.T, scope *gov8.Scope, ctx *gov8.Context, name string, value gov8.Value) {

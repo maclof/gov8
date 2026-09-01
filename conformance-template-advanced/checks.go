@@ -17,7 +17,7 @@ import (
 	"strings"
 	"testing"
 
-	gov8 "gov8"
+	gov8 "github.com/maclof/gov8"
 )
 
 // advLogger is the per-check callback log plus the object-identity hash the

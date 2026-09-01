@@ -11,7 +11,7 @@ import (
 	"strings"
 	"sync"
 
-	gov8 "gov8"
+	gov8 "github.com/maclof/gov8"
 )
 
 // --- shared callback state (fixture callbacks only append small normalized

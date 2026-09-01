@@ -6,7 +6,7 @@
 package main
 
 import (
-	gov8 "gov8"
+	gov8 "github.com/maclof/gov8"
 )
 
 // obs packages one check's expectation/observation pair, mirroring

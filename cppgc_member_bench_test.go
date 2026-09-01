@@ -5,7 +5,7 @@ package gov8_test
 import (
 	"testing"
 
-	gov8 "gov8"
+	gov8 "github.com/maclof/gov8"
 )
 
 // BenchmarkCppGCMemberGraphSetGet measures the Member write barrier plus the

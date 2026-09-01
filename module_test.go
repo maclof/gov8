@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	gov8 "gov8"
+	gov8 "github.com/maclof/gov8"
 )
 
 func closeModuleRuntime(t *testing.T, modules []*gov8.Module, scope *gov8.Scope, ctx *gov8.Context, iso *gov8.Isolate) {

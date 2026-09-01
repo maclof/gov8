@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	gov8 "gov8"
+	gov8 "github.com/maclof/gov8"
 )
 
 const wasmCallbackAbortCode = 3221226505 // 0xC0000409

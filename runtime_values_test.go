@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	gov8 "gov8"
+	gov8 "github.com/maclof/gov8"
 )
 
 // Behavior tests for the runtime-values slice, mirroring the pinned oracle's

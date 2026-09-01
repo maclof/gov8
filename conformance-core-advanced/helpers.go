@@ -9,7 +9,7 @@ import (
 	"syscall"
 	"unsafe"
 
-	gov8 "gov8"
+	gov8 "github.com/maclof/gov8"
 )
 
 func newIsolate(t tester) *gov8.Isolate {

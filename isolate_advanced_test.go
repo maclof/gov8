@@ -8,7 +8,7 @@ import (
 	"sync"
 	"testing"
 
-	gov8 "gov8"
+	gov8 "github.com/maclof/gov8"
 )
 
 func newAdvancedRuntime(t *testing.T, params *gov8.CreateParams) (*gov8.Isolate, *gov8.Context, *gov8.Scope) {

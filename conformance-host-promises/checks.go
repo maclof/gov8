@@ -5,7 +5,7 @@ package main
 import (
 	"strconv"
 
-	gov8 "gov8"
+	gov8 "github.com/maclof/gov8"
 )
 
 // The three checks below are mechanical ports of

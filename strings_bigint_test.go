@@ -9,7 +9,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	gov8 "gov8"
+	gov8 "github.com/maclof/gov8"
 )
 
 // Unit tests for the advanced strings / external strings / BigInt slice,

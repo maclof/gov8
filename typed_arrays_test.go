@@ -7,7 +7,7 @@ import (
 	"sync"
 	"testing"
 
-	gov8 "gov8"
+	gov8 "github.com/maclof/gov8"
 )
 
 // Behavior tests for the typed-array slice, mirroring the pinned oracle's

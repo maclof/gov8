@@ -11,7 +11,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	gov8 "gov8"
+	gov8 "github.com/maclof/gov8"
 )
 
 func syntheticInt(e *gov8.SyntheticModuleEvaluation, value int32) gov8.Value {

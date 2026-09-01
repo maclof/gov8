@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	gov8 "gov8"
+	gov8 "github.com/maclof/gov8"
 )
 
 func wrapCppGCPersistentTestObject(t *testing.T, iso *gov8.Isolate, ctx *gov8.Context, scope *gov8.Scope, id int32, drops *atomic.Int32) (*gov8.CppGCObject, *gov8.Object) {

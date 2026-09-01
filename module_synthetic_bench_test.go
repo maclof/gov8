@@ -5,7 +5,7 @@ package gov8_test
 import (
 	"testing"
 
-	gov8 "gov8"
+	gov8 "github.com/maclof/gov8"
 )
 
 func syntheticBenchmarkRuntime(b *testing.B) (*gov8.Isolate, *gov8.Context) {

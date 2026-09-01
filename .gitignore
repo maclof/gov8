@@ -9,3 +9,7 @@
 *.lib
 *.obj
 *.pdb
+*.out
+*.prof
+*.pprof
+*.trace

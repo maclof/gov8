@@ -1,183 +1,333 @@
 # gov8
 
-`gov8` is a project to create a production-quality Go module with feature,
-behavioral, and performance parity with the Rust [`v8`](https://crates.io/crates/v8)
-crate (`rusty_v8`). The Rust crate and its pinned V8 build provide the executable
-reference; a dedicated Rust project will characterize that reference and produce
-fixtures and benchmarks that the Go implementation must match.
+`gov8` embeds the V8 JavaScript engine in Go. It offers an explicit, typed Go
+API for isolates, contexts, handle scopes, scripts, callbacks, promises,
+modules, WebAssembly, snapshots, Inspector, and the other safe surfaces covered
+by the pinned Rust [`v8`](https://crates.io/crates/v8) crate.
 
-## Supported Platform
+The project uses `rusty_v8` as an executable reference: Go and Rust run the same
+fixtures and matched benchmarks so behavior and performance claims can be
+checked rather than assumed.
 
-`gov8` intentionally supports **Windows amd64 only**. The reference target is
-`x86_64-pc-windows-msvc`; other operating systems, architectures, and Windows
-GNU targets are out of scope. This lets both implementations consume the same
-SHA-256-pinned rusty_v8 binary rather than merely using similar V8 builds.
+## Requirements
 
-## Quick Start
+`gov8` currently supports **Windows amd64 only**. It uses the same pinned MSVC
+V8 artifact as the Rust reference; Windows arm64, MinGW, macOS, and Linux are
+not supported.
 
-Prerequisites are Go 1.24 or newer, Rust 1.98, and Visual Studio with the MSVC
-C++ x64 build tools. From Windows PowerShell:
+You need:
+
+- Go 1.24 or newer
+- Rust 1.98 (used to build one pinned native dependency and the oracle)
+- Visual Studio with the MSVC C++ x64 build tools
+- PowerShell
+
+The current engine is V8 `15.2.124.1-rusty`, from Rust `v8 = 152.2.0`.
+
+## Install and build
+
+Clone the repository and build the verified native shim:
 
 ```powershell
+git clone https://github.com/maclof/gov8.git
+Set-Location gov8
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\setup_windows.ps1
-go test ./...
+go run ./examples/basic
+```
+
+The setup script downloads or reuses the pinned inputs, verifies their SHA-256
+digests, and writes `build\shim\gov8_shim.dll`. Generated native binaries are
+not committed.
+
+To use `gov8` from another Go module:
+
+```powershell
+go get github.com/maclof/gov8@latest
+$env:GOV8_SHIM_DLL = 'C:\path\to\gov8\build\shim\gov8_shim.dll'
+go run .
+```
+
+If `GOV8_SHIM_DLL` is unset, `gov8` searches parent directories for
+`build\shim\gov8_shim.dll`. The DLL ABI must exactly match the Go module; rerun
+the setup script after upgrading.
+
+## Run JavaScript
+
+An isolate is the closest V8 equivalent to a standalone VM. A context supplies
+its global environment, and a scope owns temporary V8 values:
+
+```go
+package main
+
+import (
+	"fmt"
+	"log"
+
+	gov8 "github.com/maclof/gov8"
+)
+
+func run() error {
+	if err := gov8.Initialize(); err != nil {
+		return err
+	}
+	defer gov8.Shutdown()
+
+	iso, err := gov8.NewIsolate()
+	if err != nil {
+		return err
+	}
+	defer iso.Close()
+	defer gov8.ReleaseIsolateHostState(iso)
+
+	ctx, err := iso.NewContext()
+	if err != nil {
+		return err
+	}
+	defer ctx.Close()
+
+	scope, err := iso.NewScope()
+	if err != nil {
+		return err
+	}
+	defer scope.Close()
+
+	script, err := ctx.Compile(scope, `21 * 2`, nil)
+	if err != nil {
+		return err
+	}
+	defer script.Close()
+
+	result, err := script.Run(scope, nil)
+	if err != nil {
+		return err
+	}
+	n, ok, err := result.IntegerValue(ctx)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("JavaScript result is not an integer")
+	}
+	fmt.Println(n) // 42
+	return nil
+}
+
+func main() {
+	if err := run(); err != nil {
+		log.Fatal(err)
+	}
+}
+```
+
+The same program lives in [`examples/basic/main.go`](examples/basic/main.go).
+
+## Call Go from JavaScript
+
+Create a V8 function backed by a Go callback, then put it on the context's
+global object. This snippet assumes the `iso`, `ctx`, and `scope` from the
+previous example:
+
+```go
+add, err := iso.NewFunction(scope, ctx,
+	func(cs *gov8.CallbackScope, args gov8.FunctionCallbackArguments, rv gov8.ReturnValue) {
+		if args.Length() < 2 {
+			return // an unset return slot becomes JavaScript undefined
+		}
+		a, err := args.Get(0)
+		if err != nil {
+			return
+		}
+		b, err := args.Get(1)
+		if err != nil {
+			return
+		}
+		av, aok, err := cs.IntegerValue(a)
+		if err != nil || !aok {
+			return
+		}
+		bv, bok, err := cs.IntegerValue(b)
+		if err != nil || !bok {
+			return
+		}
+		_ = rv.SetInt32(int32(av + bv))
+	}, nil)
+if err != nil {
+	return err
+}
+
+global, err := ctx.GlobalObject(scope)
+if err != nil {
+	return err
+}
+set, err := global.SetByName(scope, ctx, "add", add.Value)
+if err != nil {
+	return err
+}
+if !set {
+	return fmt.Errorf("could not define global add")
+}
+
+script, err := ctx.Compile(scope, `add(20, 22)`, nil)
+if err != nil {
+	return err
+}
+defer script.Close()
+sum, err := script.Run(scope, nil)
+if err != nil {
+	return err
+}
+sumText, err := sum.ToString(ctx)
+if err != nil {
+	return err
+}
+fmt.Println(sumText) // 42
+```
+
+Callback arguments, return values, and values created through `CallbackScope`
+are borrowed views valid only during that callback. Do not retain them. To turn
+a callback failure into a JavaScript exception, create an error with
+`cs.NewError` and pass it to `cs.ThrowException`.
+
+## Call JavaScript from Go
+
+Evaluate a function, check its type, and call it with a receiver and arguments:
+
+```go
+script, err := ctx.Compile(scope,
+	`(function (name) { return "Hello, " + name + "!" })`, nil)
+if err != nil {
+	return err
+}
+defer script.Close()
+
+value, err := script.Run(scope, nil)
+if err != nil {
+	return err
+}
+fn, ok, err := gov8.AsFunction(value, ctx)
+if err != nil {
+	return err
+}
+if !ok {
+	return fmt.Errorf("script did not return a function")
+}
+
+receiver, err := scope.Undefined()
+if err != nil {
+	return err
+}
+name, err := scope.NewString("Go")
+if err != nil {
+	return err
+}
+greeting, called, err := fn.Call(scope, receiver, name)
+if err != nil {
+	return err
+}
+if !called {
+	return fmt.Errorf("JavaScript function threw")
+}
+text, err := greeting.ToString(ctx) // "Hello, Go!"
+if err != nil {
+	return err
+}
+fmt.Println(text)
+```
+
+## Exceptions and errors
+
+Ordinary misuse, lifecycle failures, and uncaught JavaScript exceptions are
+returned as Go errors. APIs such as `Compile` and `Run` take an optional
+`*gov8.TryCatch`: pass `nil` when the error is enough, or pass a catcher when
+you need the JavaScript exception or message.
+
+```go
+tc, err := iso.NewTryCatch()
+if err != nil {
+	return err
+}
+defer tc.Close()
+
+script, err := ctx.Compile(scope, `throw new Error("boom")`, tc)
+if err != nil {
+	return err
+}
+defer script.Close()
+
+if _, err := script.Run(scope, tc); err != nil {
+	caught, catchErr := tc.HasCaught()
+	if catchErr != nil {
+		return catchErr
+	}
+	if caught {
+		message, catchErr := tc.ExceptionText(scope, ctx)
+		if catchErr != nil {
+			return catchErr
+		}
+		fmt.Println(message) // Error: boom
+	}
+}
+```
+
+## Lifetimes and threads
+
+V8's ownership rules are visible in the API:
+
+- Call `Initialize` once before creating isolates, then call `Shutdown` only
+  after every isolate is closed.
+- `NewIsolate` locks the creating goroutine to its OS thread. Use the isolate
+  and close it from that same goroutine; a different isolate can run on its own
+  goroutine.
+- Close resources in dependency order: scripts and scopes, contexts,
+  `ReleaseIsolateHostState`, isolate, then the global platform.
+- Scopes must nest. Closing a scope invalidates every local `Value` created in
+  it. Use persistent handles such as `Global` when a value must survive a scope.
+- Never retain callback-borrowed arguments, return slots, or callback-scope
+  values after the callback returns.
+- Check every `error`, and check accompanying `ok` booleans where an operation
+  can fail without a Go error or JavaScript can throw.
+
+## Verify and benchmark
+
+From the repository root:
+
+```powershell
+go test ./... -count=1
+go test -race ./... -count=1
+go vet ./...
+
+# One quick Go benchmark smoke run.
+go test . -run '^$' -bench '^BenchmarkScriptRunPrecompiledWorkload$' -benchtime=1x
+
+# Rust oracle and benchmark smoke run.
 Push-Location rust-oracle
-cargo test
+cargo test --locked
+cargo bench --locked --bench script -- --test
 Pop-Location
 ```
 
-The setup script downloads or reuses the exact pinned artifacts, verifies their
-hashes, and builds the untracked `build\shim\gov8_shim.dll` at shim ABI 42. The
-Go module rejects older or newer DLL ABI versions before resolving feature
-exports. No downloaded binary is committed. See `rust-oracle/README.md` for the
-authoritative version record and `PARITY.md` for implementation status.
+Matched benchmark reports and their environment metadata are kept in
+[`rust-oracle/bench-results`](rust-oracle/bench-results/).
 
-## Goals
+## Project status
 
-- Cover the public capabilities of the pinned Rust `v8` crate with equivalent
-  Go functionality.
-- Match observable success, error, exception, lifecycle, ordering, and
-  concurrency behavior.
-- Provide an idiomatic Go API without concealing V8 ownership, lifetime,
-  isolate-locking, or thread-affinity constraints.
-- Achieve performance comparable to or better than the Rust reference on
-  equivalent workloads and document any accepted exceptions.
-- Make correctness and performance claims reproducible from a clean checkout.
-- Support incremental, reviewed delivery through a maintained parity matrix.
+The safe executable surface audited for the pinned Rust crate is covered by
+524 normalized cross-language fixture checks: 522 are exact and 2 use
+documented safety normalizations. The declaration ledger records 1,696 direct
+matches, 10 safe Go-shape differences, and 151 intentionally unexposed
+raw/borrowed/generic Rust shapes.
 
-## Non-Goals
+This does not mean every Rust ownership or generic type has a literal Go
+spelling, and it is not a blanket performance parity claim: remaining unsafe
+shapes, intentional Go normalizations, and measured performance gaps are
+tracked openly.
 
-- Mechanical translation of Rust syntax or type names where that would produce
-  an unsafe or misleading Go API.
-- Claiming parity through unimplemented stubs, skipped tests, or compile-only
-  wrappers.
-- Comparing benchmarks that use different V8 versions, flags, workloads, build
-  modes, warm-up, or machine conditions.
-- Hiding unsupported behavior or known regressions.
+- [`PARITY.md`](PARITY.md) - feature coverage, behavior notes, and performance
+  evidence
+- [`API_AUDIT.md`](API_AUDIT.md) - declaration-level API audit
+- [`rust-oracle/README.md`](rust-oracle/README.md) - pinned versions, oracle
+  workflow, and reproducibility details
 
-## Required Deliverables
-
-The repository is expected to contain:
-
-- A versioned Go module implementing the V8 binding and public API.
-- A separately buildable Rust reference/test project pinned to an exact `v8`
-  crate and toolchain.
-- A parity matrix mapping Rust APIs and behaviors to Go APIs, conformance tests,
-  benchmark coverage, status, and documented deviations.
-- Shared deterministic fixtures or mechanically comparable normalized outputs.
-- Unit, integration, negative, lifecycle, and concurrency tests as applicable.
-- Comparative benchmark suites, raw results, and environment metadata.
-- Build, platform, dependency, safety, and usage documentation.
-- CI checks for formatting, static analysis, tests, and selected benchmarks or
-  benchmark smoke tests.
-
-## Parity Requirements
-
-A feature is complete only when all applicable requirements are met:
-
-1. The exact behavior of the pinned Rust reference is characterized by a test.
-2. The Go implementation produces the same normalized observable result.
-3. Error, exception, boundary, ownership, and lifecycle cases are covered.
-4. Concurrency and thread-affinity behavior is tested where relevant.
-5. Performance-sensitive paths have equivalent Rust and Go benchmarks.
-6. Intentional Go API differences preserve semantics and are documented.
-7. Formatting, static analysis, and test suites pass from a clean checkout.
-
-The initial inventory should include platform setup and teardown, isolates,
-lockers, handle scopes, contexts, values and conversions, strings, objects,
-templates, scripts, exceptions, callbacks, promises, microtasks, modules,
-snapshots, serialization, backing stores, external data, weak handles and
-garbage-collection integration, threading, and inspector/debugging facilities.
-The pinned crate source is authoritative for the final inventory.
-
-## Performance Requirements
-
-Comparisons must use the same V8 revision and configuration wherever technically
-possible. Each benchmark report must identify CPU, operating system, toolchain,
-build mode, V8 flags, warm-up policy, workload, sample count, and memory method.
-At minimum, measure:
-
-- Platform and isolate startup/shutdown.
-- Context creation and disposal.
-- Script compilation and execution.
-- Repeated function calls and host callbacks.
-- Value conversion and cross-language boundary overhead.
-- Promises, microtasks, modules, snapshots, and serialization where supported.
-- Allocations, retained memory, and steady-state process memory.
-
-Performance parity is evaluated per workload, not by a single aggregate score.
-Regressions require investigation and a documented cause; accepted regressions
-must include impact and follow-up work.
-
-## Agent Workflow
-
-The project `opencode.json` selects `coordinator` as the default and disables
-the built-in `build` and `plan` primaries. Definitions under
-`.opencode/agents/` establish three roles:
-
-- `coordinator`: the only primary agent; plans work, delegates parallel slices,
-  reviews evidence and changes, integrates, verifies, commits, and pushes.
-- `go-v8-expert`: implements, tests, profiles, and optimizes the Go module.
-- `rust-v8-expert`: maintains the Rust oracle, conformance fixtures, and
-  reference benchmarks.
-
-Specialists do not commit or push. The coordinator assigns non-overlapping file
-ownership, reviews every result, runs integration checks, and owns Git history.
-Parallel work is preferred whenever tasks do not share mutable files or depend
-on unfinished results.
-
-## Delivery Rules
-
-- Pin external versions and record upgrades explicitly.
-- Keep commits small, coherent, reviewed, and independently testable.
-- Never include credentials, generated secrets, or unrelated work in commits.
-- Never force-push or bypass failing hooks.
-- Report unsupported platforms, APIs, flaky tests, and benchmark variance
-  directly.
-- A milestone is complete only when its parity entries and evidence are current.
-
-## Current Status
-
-The executable reference is pinned to Rust `v8 =152.2.0`, V8
-`15.2.124.1-rusty`, and the Windows MSVC artifact identified in
-`rust-oracle/README.md`. The Go binding uses a pure-Go Windows DLL call layer and
-an MSVC C ABI shim, avoiding unsafe MinGW/MSVC C++ ABI interoperation.
-
-The current implementation includes lifecycle and advanced isolate controls,
-Locker and handle variants, context options and execution scopes, values and
-collections (including fixed and primitive arrays), scripts and function/module
-code caches, source-text and synthetic modules, synchronous and streaming Wasm
-compilation, movable asynchronous compilation and compiled-module restoration,
-Go-string and exact V8 String-local exception constructors, and raw message/stack
-handles, callbacks/templates/interceptors, native promises, buffers and all
-typed-array kinds, structured clone delegates, snapshots, and the complete
-pinned simdutf and ICU surfaces. External-reference tables and snapshot remaps,
-the audited String/BigInt surface, and all safe specialized runtime values are
-also covered, together with the full safe ScriptCompiler surface and custom
-platform/task dispatch, configured/lazy object callbacks, attributed template
-Data, advanced module embedding hooks, snapshot-aware CreateParams, initial
-Inspector transport/evaluation, isolate Wasm policy callbacks, and complete
-serializer Wasm/legacy behavior, the safe native-descriptor substrate for Fast
-API calls, Inspector remote-object wrapping/unwrapping, `$0`–`$4`
-inspected-object history, Inspector idle/async-task lifecycle, owned Inspector
-stack traces, exception reporting, Inspector client callbacks, CRDTP core
-values, serialization and synchronous dispatch, ArrayBuffer allocator
-ownership, cppgc object wrapping with traced targets, strong/weak cppgc
-persistent handles, custom cppgc heap ownership and process lifecycle, generic
-copied cells and owner-mediated member graphs, and snapshot composition with
-callback-backed ArrayBuffer allocators and custom cppgc heaps. The Rust fixtures
-contain 524 normalized checks: 522 compare byte-for-byte with Go and two have
-narrowly documented safety normalizations; none is oracle-only.
-Separate fatal and panic-boundary subprocess tests cover unsafe lifecycle and
-callback edges.
-
-All audited safe executable pinned behavior is covered, but this is not a claim
-of literal Rust API-shape parity. Ten callback-borrowed or generic cppgc
-declarations use intentional safe Go equivalents, and 151 raw, borrowed, or
-generic carrier shapes remain unexposed (the audit ledger groups these under
-its `unsafe` shape status even when the Rust method itself is safe). Nor is this
-a global performance-parity claim: several
-matched workloads still have measured Go overhead and remain optimization
-targets. The authoritative distinctions are tracked in
-`PARITY.md`; `API_AUDIT.md` provides the reproducible 1,857-declaration
-denominator.
+Contributions should include tests for success, failure, exception, lifetime,
+and concurrency behavior where applicable, plus matched benchmarks for hot
+paths.

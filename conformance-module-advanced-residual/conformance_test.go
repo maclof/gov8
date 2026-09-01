@@ -12,7 +12,7 @@ import (
 	"strings"
 	"testing"
 
-	gov8 "gov8"
+	gov8 "github.com/maclof/gov8"
 )
 
 func TestResolveSourcePanicBoundary(t *testing.T) {

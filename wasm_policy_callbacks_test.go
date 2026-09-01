@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	gov8 "gov8"
+	gov8 "github.com/maclof/gov8"
 )
 
 func wpcRuntime(t testing.TB, setup func(*gov8.Isolate) error) (*gov8.Isolate, *gov8.Context, *gov8.Scope) {

@@ -10,7 +10,7 @@ import (
 	"time"
 	"unsafe"
 
-	gov8 "gov8"
+	gov8 "github.com/maclof/gov8"
 )
 
 // Behavior tests for the buffers slice, mirroring the pinned oracle's

@@ -11,7 +11,7 @@ package main
 import (
 	"math"
 
-	gov8 "gov8"
+	gov8 "github.com/maclof/gov8"
 )
 
 // --- local helper closures over the runtime -------------------------------------

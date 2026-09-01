@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	gov8 "gov8"
+	gov8 "github.com/maclof/gov8"
 )
 
 // Safe negative characterization for the object-ops slice, mirroring the

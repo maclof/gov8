@@ -8,7 +8,7 @@ import (
 	"sync"
 	"testing"
 
-	gov8 "gov8"
+	gov8 "github.com/maclof/gov8"
 )
 
 func cpsSnapshotBlob(t testing.TB, marker int) *gov8.StartupData {

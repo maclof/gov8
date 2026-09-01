@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	gov8 "gov8"
+	gov8 "github.com/maclof/gov8"
 )
 
 const fixturePath = "../rust-oracle/tests/fixtures/conformance-runtime-values-residual-v8_152.2.0_x86_64-pc-windows-msvc.jsonl"
