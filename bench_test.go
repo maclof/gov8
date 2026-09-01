@@ -20,6 +20,8 @@ const (
 	benchMinimalSource  = "1 + 1"
 	benchWorkloadSource = "function fib(n) { return n < 2 ? n : fib(n - 1) + fib(n - 2); }" +
 		"fib(12) + '|' + (2 + 3) + '|' + String(1.5).toUpperCase()"
+	benchMinimalResult  = int32(2)
+	benchWorkloadResult = "144|5|1.5"
 )
 
 func benchNewIsolate(b *testing.B) *gov8.Isolate {
@@ -40,12 +42,25 @@ func benchNewContext(b *testing.B, iso *gov8.Isolate) *gov8.Context {
 	return ctx
 }
 
+type benchCloser interface {
+	Close() error
+}
+
+func benchClosePersistent(b *testing.B, name string, closer benchCloser) {
+	b.Helper()
+	if err := closer.Close(); err != nil {
+		b.Errorf("%s.Close: %v", name, err)
+	}
+}
+
 // BenchmarkStartupIsolateNewDispose mirrors startup/isolate_new_dispose.
 func BenchmarkStartupIsolateNewDispose(b *testing.B) {
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
 		iso := benchNewIsolate(b)
-		_ = iso.Close()
+		if err := iso.Close(); err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 
@@ -56,28 +71,36 @@ func BenchmarkStartupIsolateContextNewDispose(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		iso := benchNewIsolate(b)
 		ctx := benchNewContext(b, iso)
-		_ = ctx.Close()
-		_ = iso.Close()
+		if err := ctx.Close(); err != nil {
+			b.Fatal(err)
+		}
+		if err := iso.Close(); err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 
 // BenchmarkStartupContextNewDispose mirrors startup/context_new_dispose.
 func BenchmarkStartupContextNewDispose(b *testing.B) {
 	iso := benchNewIsolate(b)
-	defer func() { _ = iso.Close() }()
+	defer benchClosePersistent(b, "Isolate", iso)
+	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		ctx := benchNewContext(b, iso)
-		_ = ctx.Close()
+		if err := ctx.Close(); err != nil {
+			b.Fatal(err)
+		}
 	}
+	b.StopTimer()
 }
 
 // BenchmarkScriptCompileMinimal mirrors script/compile_minimal.
 func BenchmarkScriptCompileMinimal(b *testing.B) {
 	iso := benchNewIsolate(b)
-	defer func() { _ = iso.Close() }()
+	defer benchClosePersistent(b, "Isolate", iso)
 	ctx := benchNewContext(b, iso)
-	defer func() { _ = ctx.Close() }()
+	defer benchClosePersistent(b, "Context", ctx)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		scope, err := iso.NewScope()
@@ -88,17 +111,22 @@ func BenchmarkScriptCompileMinimal(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		_ = script.Close()
-		_ = scope.Close()
+		if err := script.Close(); err != nil {
+			b.Fatal(err)
+		}
+		if err := scope.Close(); err != nil {
+			b.Fatal(err)
+		}
 	}
+	b.StopTimer()
 }
 
 // BenchmarkScriptCompileWorkload mirrors script/compile_workload.
 func BenchmarkScriptCompileWorkload(b *testing.B) {
 	iso := benchNewIsolate(b)
-	defer func() { _ = iso.Close() }()
+	defer benchClosePersistent(b, "Isolate", iso)
 	ctx := benchNewContext(b, iso)
-	defer func() { _ = ctx.Close() }()
+	defer benchClosePersistent(b, "Context", ctx)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		scope, err := iso.NewScope()
@@ -109,17 +137,22 @@ func BenchmarkScriptCompileWorkload(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		_ = script.Close()
-		_ = scope.Close()
+		if err := script.Close(); err != nil {
+			b.Fatal(err)
+		}
+		if err := scope.Close(); err != nil {
+			b.Fatal(err)
+		}
 	}
+	b.StopTimer()
 }
 
 // BenchmarkScriptCompileAndRunMinimal mirrors script/compile_and_run_minimal.
 func BenchmarkScriptCompileAndRunMinimal(b *testing.B) {
 	iso := benchNewIsolate(b)
-	defer func() { _ = iso.Close() }()
+	defer benchClosePersistent(b, "Isolate", iso)
 	ctx := benchNewContext(b, iso)
-	defer func() { _ = ctx.Close() }()
+	defer benchClosePersistent(b, "Context", ctx)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		scope, err := iso.NewScope()
@@ -130,21 +163,34 @@ func BenchmarkScriptCompileAndRunMinimal(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		if _, err := script.Run(scope, nil); err != nil {
+		result, err := script.Run(scope, nil)
+		if err != nil {
 			b.Fatal(err)
 		}
-		_ = script.Close()
-		_ = scope.Close()
+		got, ok, err := result.Int32Value(ctx)
+		if err != nil {
+			b.Fatal(err)
+		}
+		if !ok || got != benchMinimalResult {
+			b.Fatalf("result = %d, %v; want %d, true", got, ok, benchMinimalResult)
+		}
+		if err := script.Close(); err != nil {
+			b.Fatal(err)
+		}
+		if err := scope.Close(); err != nil {
+			b.Fatal(err)
+		}
 	}
+	b.StopTimer()
 }
 
 // BenchmarkScriptCompileAndRunWorkload mirrors
 // script/compile_and_run_workload.
 func BenchmarkScriptCompileAndRunWorkload(b *testing.B) {
 	iso := benchNewIsolate(b)
-	defer func() { _ = iso.Close() }()
+	defer benchClosePersistent(b, "Isolate", iso)
 	ctx := benchNewContext(b, iso)
-	defer func() { _ = ctx.Close() }()
+	defer benchClosePersistent(b, "Context", ctx)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		scope, err := iso.NewScope()
@@ -155,12 +201,25 @@ func BenchmarkScriptCompileAndRunWorkload(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		if _, err := script.Run(scope, nil); err != nil {
+		result, err := script.Run(scope, nil)
+		if err != nil {
 			b.Fatal(err)
 		}
-		_ = script.Close()
-		_ = scope.Close()
+		got, err := result.ToString(ctx)
+		if err != nil {
+			b.Fatal(err)
+		}
+		if got != benchWorkloadResult {
+			b.Fatalf("result = %q; want %q", got, benchWorkloadResult)
+		}
+		if err := script.Close(); err != nil {
+			b.Fatal(err)
+		}
+		if err := scope.Close(); err != nil {
+			b.Fatal(err)
+		}
 	}
+	b.StopTimer()
 }
 
 // BenchmarkScriptRunPrecompiledWorkload mirrors
@@ -168,9 +227,9 @@ func BenchmarkScriptCompileAndRunWorkload(b *testing.B) {
 // a persistent handle; only execution is measured per iteration.
 func BenchmarkScriptRunPrecompiledWorkload(b *testing.B) {
 	iso := benchNewIsolate(b)
-	defer func() { _ = iso.Close() }()
+	defer benchClosePersistent(b, "Isolate", iso)
 	ctx := benchNewContext(b, iso)
-	defer func() { _ = ctx.Close() }()
+	defer benchClosePersistent(b, "Context", ctx)
 	scope, err := iso.NewScope()
 	if err != nil {
 		b.Fatal(err)
@@ -179,19 +238,32 @@ func BenchmarkScriptRunPrecompiledWorkload(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	_ = scope.Close()
-	defer func() { _ = script.Close() }()
+	if err := scope.Close(); err != nil {
+		b.Fatal(err)
+	}
+	defer benchClosePersistent(b, "Script", script)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		scope, err := iso.NewScope()
 		if err != nil {
 			b.Fatal(err)
 		}
-		if _, err := script.Run(scope, nil); err != nil {
+		result, err := script.Run(scope, nil)
+		if err != nil {
 			b.Fatal(err)
 		}
-		_ = scope.Close()
+		got, err := result.ToString(ctx)
+		if err != nil {
+			b.Fatal(err)
+		}
+		if got != benchWorkloadResult {
+			b.Fatalf("result = %q; want %q", got, benchWorkloadResult)
+		}
+		if err := scope.Close(); err != nil {
+			b.Fatal(err)
+		}
 	}
+	b.StopTimer()
 }
 
 // BenchmarkFFIStringRoundtrip measures one string construction plus a full

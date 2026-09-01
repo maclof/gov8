@@ -28,7 +28,9 @@ fn script_compile_minimal(c: &mut Criterion) {
         b.iter(|| {
             v8::scope!(let inner, scope);
             let source = v8::String::new(inner, MINIMAL_SOURCE).unwrap();
-            let _ = v8::Script::compile(inner, source, None);
+            let script =
+                v8::Script::compile(inner, source, None).expect("minimal source must compile");
+            std::hint::black_box(script);
         })
     });
 }
@@ -44,7 +46,9 @@ fn script_compile_workload(c: &mut Criterion) {
         b.iter(|| {
             v8::scope!(let inner, scope);
             let source = v8::String::new(inner, WORKLOAD_SOURCE).unwrap();
-            let _ = v8::Script::compile(inner, source, None);
+            let script =
+                v8::Script::compile(inner, source, None).expect("workload source must compile");
+            std::hint::black_box(script);
         })
     });
 }
@@ -61,7 +65,8 @@ fn script_compile_and_run_minimal(c: &mut Criterion) {
             v8::scope!(let inner, scope);
             let source = v8::String::new(inner, MINIMAL_SOURCE).unwrap();
             let script = v8::Script::compile(inner, source, None).unwrap();
-            let _ = script.run(inner);
+            let result = script.run(inner).expect("minimal script must run");
+            assert_eq!(result.int32_value(inner), Some(2));
         })
     });
 }
@@ -78,7 +83,8 @@ fn script_compile_and_run_workload(c: &mut Criterion) {
             v8::scope!(let inner, scope);
             let source = v8::String::new(inner, WORKLOAD_SOURCE).unwrap();
             let script = v8::Script::compile(inner, source, None).unwrap();
-            let _ = script.run(inner);
+            let result = script.run(inner).expect("workload script must run");
+            assert_eq!(result.to_rust_string_lossy(inner), "144|5|1.5");
         })
     });
 }
@@ -100,7 +106,8 @@ fn script_run_precompiled_workload(c: &mut Criterion) {
         b.iter(|| {
             v8::scope!(let inner, scope);
             let script = v8::Local::new(inner, &compiled);
-            let _ = script.run(inner);
+            let result = script.run(inner).expect("precompiled script must run");
+            assert_eq!(result.to_rust_string_lossy(inner), "144|5|1.5");
         })
     });
 }
