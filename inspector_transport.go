@@ -402,6 +402,9 @@ func (i *Inspector) ContextDestroyed(c *Context) error {
 	if _, ok := i.contexts[c]; !ok {
 		return errors.New("gov8: inspector context was not registered")
 	}
+	if inspectorClientCallbackActive(i) {
+		return errors.New("gov8: Inspector client callback is active")
+	}
 	if inspectorInspectableContextActive(i, c) {
 		return errors.New("gov8: Inspector Inspectable callback is active in this context")
 	}

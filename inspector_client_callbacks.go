@@ -66,6 +66,22 @@ func inspectorCallbackView(is8Word, dataWord, lengthWord uintptr) InspectorStrin
 	return NewInspectorStringView16(data)
 }
 
+func inspectorClientNativeBuffer(buffer *InspectorStringBuffer) uintptr {
+	if buffer == nil {
+		return 0
+	}
+	view := buffer.StringView()
+	is8, data, length := view.native()
+	var out uintptr
+	r, _, _ := proc("gov8_icc_string_buffer_create").Call(is8, data, length, uintptr(unsafe.Pointer(&out)))
+	runtime.KeepAlive(view)
+	runtime.KeepAlive(buffer)
+	if int64(r) < 0 || out == 0 {
+		fatalHostMisuse("creating Inspector client StringBuffer: %v", shimError("StringBuffer.Create", r))
+	}
+	return out
+}
+
 var inspectorExtendedClientDispatch = syscall.NewCallback(func(
 	idWord, kindWord, a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10 uintptr,
 ) uintptr {
@@ -108,16 +124,7 @@ var inspectorExtendedClientDispatch = syscall.NewCallback(func(
 			if buffer == nil {
 				return 0
 			}
-			view := buffer.StringView()
-			is8, data, length := view.native()
-			var out uintptr
-			r, _, _ := proc("gov8_icc_string_buffer_create").Call(is8, data, length, uintptr(unsafe.Pointer(&out)))
-			runtime.KeepAlive(view)
-			runtime.KeepAlive(buffer)
-			if int64(r) < 0 || out == 0 {
-				fatalHostMisuse("creating Inspector resource-name buffer: %v", shimError("StringBuffer.Create", r))
-			}
-			return out
+			return inspectorClientNativeBuffer(buffer)
 		}
 	case inspectorClientConsole:
 		if client, ok := entry.client.(InspectorConsoleMessageClient); ok {
@@ -126,6 +133,9 @@ var inspectorExtendedClientDispatch = syscall.NewCallback(func(
 				uint32(a8), uint32(a9), InspectorBorrowedStackTrace{present: a10 != 0})
 		}
 	default:
+		if result, handled := inspectorClientValueDispatch(entry, int(kindWord), a0, a1, a2); handled {
+			return result
+		}
 		fatalHostMisuse("invalid extended Inspector client callback kind %d", kindWord)
 	}
 	return 0

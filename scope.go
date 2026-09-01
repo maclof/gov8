@@ -137,6 +137,9 @@ func (s *Scope) Close() error {
 	if s.closed {
 		return fmt.Errorf("gov8: scope already closed")
 	}
+	if s.borrowed {
+		return fmt.Errorf("gov8: borrowed callback scope cannot be closed")
+	}
 	if len(s.javascriptExecutionGuards) != 0 {
 		return fmt.Errorf("gov8: scope has active JavaScript execution guards")
 	}

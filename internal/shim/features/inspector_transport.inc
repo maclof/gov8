@@ -32,6 +32,10 @@ uintptr_t gov8_icc_dispatch_client(uint64_t id, int32_t kind, uintptr_t a0,
                                    uintptr_t a4, uintptr_t a5, uintptr_t a6,
                                    uintptr_t a7, uintptr_t a8, uintptr_t a9,
                                    uintptr_t a10);
+v8_inspector::StringBuffer* gov8_icv_value_callback(
+    v8_inspector::V8InspectorClient*, int32_t, v8::Context*, v8::Value*);
+v8::Context* gov8_icv_default_context(v8_inspector::V8InspectorClient*,
+                                      int32_t);
 }
 
 namespace gov8_inspector_impl {
@@ -168,17 +172,21 @@ v8_inspector__V8InspectorClient__BASE__consoleAPIMessage(
 }
 __declspec(dllexport) v8_inspector::StringBuffer*
 v8_inspector__V8InspectorClient__BASE__valueSubtype(
-    v8_inspector::V8InspectorClient*, v8::Context*, v8::Value*) {
-  return nullptr;
+    v8_inspector::V8InspectorClient* self, v8::Context* context,
+    v8::Value* value) {
+  return gov8_icv_value_callback(self, 4, context, value);
 }
 __declspec(dllexport) v8_inspector::StringBuffer*
 v8_inspector__V8InspectorClient__BASE__descriptionForValueSubtype(
-    v8_inspector::V8InspectorClient*, v8::Context*, v8::Value*) {
-  return nullptr;
+    v8_inspector::V8InspectorClient* self, v8::Context* context,
+    v8::Value* value) {
+  return gov8_icv_value_callback(self, 5, context, value);
 }
 __declspec(dllexport) v8::Context*
 v8_inspector__V8InspectorClient__BASE__ensureDefaultContextInGroup(
-    v8_inspector::V8InspectorClient*, int) { return nullptr; }
+    v8_inspector::V8InspectorClient* self, int group) {
+  return gov8_icv_default_context(self, group);
+}
 __declspec(dllexport) v8_inspector::StringBuffer*
 v8_inspector__V8InspectorClient__BASE__resourceNameToUrl(
     v8_inspector::V8InspectorClient* self,

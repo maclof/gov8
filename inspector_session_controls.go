@@ -158,6 +158,13 @@ func inspectorClientCloseError(inspector *Inspector) error {
 	return nil
 }
 
+func inspectorClientCallbackActive(inspector *Inspector) bool {
+	inspectorClients.Lock()
+	defer inspectorClients.Unlock()
+	entry := inspectorClients.byID[inspectorClients.byInspector[inspector]]
+	return entry != nil && entry.active != 0
+}
+
 func dropInspectorClient(inspector *Inspector) {
 	inspectorClients.Lock()
 	id := inspectorClients.byInspector[inspector]
