@@ -403,6 +403,10 @@ Raw output lives in `bench-results/`:
   matched custom-allocator and Fast API execution workloads
 - `allocator-fastapi-2026-09-01-summary.md` — matching Go samples, Rust
   confidence intervals, counter assertions, and measured performance gaps
+- `criterion-aligned-core-2026-09-01/` — raw Criterion data for the 16 aligned
+  startup, script, callback, promise, and module workloads
+- `aligned-core-2026-09-01-summary.md` — matching Go samples, Rust confidence
+  intervals, exact workload boundaries, and measured ratios
 
 To record a new run (Windows PowerShell, from the `rust-oracle` directory):
 
@@ -424,7 +428,7 @@ Checked on this machine (2026-09-01, Rust toolchain 1.98.0, Go 1.26.2):
 - `cargo fmt --check` — clean
 - `cargo check` — clean (only the documented LNK4098 linker warning)
 - `cargo test --locked` — all unit, fixture, deterministic-process,
-  lifecycle, panic, and fatal-path tests pass; the fixture corpus contains 476
+  lifecycle, panic, and fatal-path tests pass; the fixture corpus contains 524
   normalized checks
 - `cargo clippy --all-targets -- -D warnings` — clean
 - `cargo bench --locked -- --test` — every benchmark smoke-runs successfully
@@ -437,6 +441,8 @@ Checked on this machine (2026-09-01, Rust toolchain 1.98.0, Go 1.26.2):
   repeated samples; raw data and the comparison summary are checked in
 - custom allocator and Fast API execution — matched Rust/Go workloads measured
   with repeated samples and exact callback-counter validation
+- startup, script, callback, promise, and source-module execution — all 16
+  workloads aligned and measured with repeated samples and exact result checks
 - Unsupported-target guard: `cargo check --target x86_64-pc-windows-gnu`
   (installed temporarily, then removed) fails immediately with the single
   "Supported platform" `compile_error!` and never downloads or builds the V8
