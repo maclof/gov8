@@ -3,6 +3,7 @@
 package gov8_test
 
 import (
+	"math"
 	"os"
 	"os/exec"
 	"strings"
@@ -10,6 +11,15 @@ import (
 
 	gov8 "gov8"
 )
+
+func growNestedCoercionStack(depth int) int {
+	var padding [1024]byte
+	padding[0] = byte(depth)
+	if depth == 0 {
+		return int(padding[0])
+	}
+	return int(padding[0]) + growNestedCoercionStack(depth-1)
+}
 
 // Native callback behavior tests, mirroring the pinned Rust host oracle's
 // callback checks (rust-oracle/src/checks/host/callbacks.rs). The panic
@@ -312,6 +322,70 @@ func TestCallbackNativeReentry(t *testing.T) {
 	if got, ok := evalText(t, ctx, scope,
 		"__callit((x) => __callit((y) => y + 1, x) * 2, 10)"); !ok || got != "22" {
 		t.Errorf("nested = %q (ok=%v); want 22", got, ok)
+	}
+}
+
+func TestCallbackNestedCoercionConversions(t *testing.T) {
+	iso, ctx, scope := newTestRuntime(t)
+	valueOfCalls := 0
+	lastInteger := int64(0)
+	valueOf, err := iso.NewFunction(scope, ctx, func(_ *gov8.CallbackScope, _ gov8.FunctionCallbackArguments, rv gov8.ReturnValue) {
+		_ = growNestedCoercionStack(64)
+		valueOfCalls++
+		_ = rv.SetUint32(41)
+	}, nil)
+	if err != nil {
+		t.Fatalf("NewFunction(valueOf): %v", err)
+	}
+	coerce, err := iso.NewFunction(scope, ctx, func(cs *gov8.CallbackScope, args gov8.FunctionCallbackArguments, rv gov8.ReturnValue) {
+		value, getErr := args.Get(0)
+		if getErr != nil {
+			return
+		}
+		number, ok, conversionErr := cs.IntegerValue(value)
+		if conversionErr == nil && ok {
+			lastInteger = number
+			_ = rv.SetInt32(int32(number + 1))
+		}
+	}, nil)
+	if err != nil {
+		t.Fatalf("NewFunction(coerce): %v", err)
+	}
+	if !seedGlobal(t, ctx, scope, "valueOfHost", valueOf.Value) ||
+		!seedGlobal(t, ctx, scope, "coerceHost", coerce.Value) {
+		t.Fatal("seeding nested-coercion functions failed")
+	}
+
+	if got, ok := evalText(t, ctx, scope, "coerceHost({valueOf: valueOfHost})"); !ok || got != "42" {
+		t.Fatalf("CallbackScope.IntegerValue nested coercion = %q, %v; want 42, true", got, ok)
+	}
+	if lastInteger != 41 {
+		t.Fatalf("CallbackScope.IntegerValue nested result = %d, want 41", lastInteger)
+	}
+	if _, ok := evalText(t, ctx, scope, "coerceHost(-9223372036854775808)"); !ok {
+		t.Fatal("CallbackScope.IntegerValue minimum int64 conversion failed")
+	}
+	if lastInteger != math.MinInt64 {
+		t.Fatalf("CallbackScope.IntegerValue minimum = %d, want %d", lastInteger, int64(math.MinInt64))
+	}
+	object, err := eval(t, ctx, scope, "({valueOf: valueOfHost})")
+	if err != nil {
+		t.Fatalf("create coercible object: %v", err)
+	}
+	got, ok, err := object.Uint32Value(ctx)
+	if err != nil || !ok || got != 41 {
+		t.Fatalf("Value.Uint32Value nested coercion = %d, %v, %v; want 41, true, nil", got, ok, err)
+	}
+	maximum, err := eval(t, ctx, scope, "4294967295")
+	if err != nil {
+		t.Fatalf("create maximum uint32: %v", err)
+	}
+	got, ok, err = maximum.Uint32Value(ctx)
+	if err != nil || !ok || got != math.MaxUint32 {
+		t.Fatalf("Value.Uint32Value maximum = %d, %v, %v; want %d, true, nil", got, ok, err, uint32(math.MaxUint32))
+	}
+	if valueOfCalls != 2 {
+		t.Fatalf("valueOf callback calls = %d, want 2", valueOfCalls)
 	}
 }
 

@@ -341,6 +341,30 @@ using namespace gov8_rv_impl;
     return kErrCpp;                                                            \
   }
 
+// Direct-return Uint32Value encoding: every uint32 result occupies
+// [0, 2^32), 2^32 means the Maybe conversion was empty, and negative int64
+// values retain the shim's error-status convention. No host stack pointer is
+// retained across a conversion that can re-enter JavaScript and Go callbacks.
+__declspec(dllexport) int64_t gov8_value_uint32_value_direct(
+    v8::Isolate* iso, void* ctxw, void* v) {
+  ClearErr();
+  CtxWrap* w = AsCtx(ctxw);
+  if (w == nullptr || v == nullptr || !OwnedBy(iso, w->iso)) {
+    SetErr("invalid argument");
+    return kErrBadArg;
+  }
+  try {
+    Gov8IsolateScope iso_scope(iso);
+    v8::Local<v8::Context> ctx = w->ctx->Get(iso);
+    v8::Context::Scope ctx_scope(ctx);
+    uint32_t value;
+    if (!FromWire<v8::Value>(v)->Uint32Value(ctx).To(&value)) {
+      return int64_t{1} << 32;
+    }
+    return static_cast<int64_t>(value);
+  } GOV8_RV_END_CATCH("value_uint32_value_direct")
+}
+
 // --- predicates --------------------------------------------------------------
 
 #define GOV8_RV_PREDICATE(name, artifact)                                      \

@@ -109,6 +109,12 @@ struct GoCallbackContext {
 
 std::mutex g_host_mu;
 std::set<GoCallbackContext*> g_live_contexts;
+// Direct-return IntegerValue uses a per-thread result slot because the full
+// int64 domain leaves no in-band value for conversion failure. The export
+// stores only after any nested JavaScript/Go re-entry has completed and returns
+// the native slot's address; Go reads it immediately on the locked owner thread.
+// Thus no pointer into the movable Go stack crosses a re-entrant engine call.
+thread_local int64_t g_wctx_integer_value_result = 0;
 
 GoCallbackContext* HostContextNew(v8::Isolate* iso, uint64_t handle,
                                   void* data_wire) {
@@ -1360,6 +1366,28 @@ GOV8_WCTX_CONV(gov8_wctx_integer_value, int64_t,
                FromWire<v8::Value>(v)->IntegerValue(ctx))
 
 #undef GOV8_WCTX_CONV
+
+__declspec(dllexport) int64_t gov8_wctx_integer_value_direct(
+    v8::Isolate* iso, void* ctx_wire, void* v) {
+  ClearErr();
+  if (ctx_wire == nullptr || v == nullptr) {
+    SetErr("invalid argument");
+    return kErrBadArg;
+  }
+  try {
+    Gov8IsolateScope iso_scope(iso);
+    v8::Local<v8::Context> ctx = FromWire<v8::Context>(ctx_wire);
+    v8::Context::Scope ctx_scope(ctx);
+    int64_t value;
+    if (!FromWire<v8::Value>(v)->IntegerValue(ctx).To(&value)) return 0;
+    g_wctx_integer_value_result = value;
+    return static_cast<int64_t>(
+        reinterpret_cast<intptr_t>(&g_wctx_integer_value_result));
+  } catch (...) {
+    SetErr("C++ exception in gov8_wctx_integer_value_direct");
+    return kErrCpp;
+  }
+}
 
 __declspec(dllexport) int64_t gov8_wctx_object_get(v8::Isolate* iso,
                                                    void* ctx_wire, void* scope,

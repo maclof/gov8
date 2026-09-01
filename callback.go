@@ -581,15 +581,27 @@ func (cs *CallbackScope) IntegerValue(v Value) (int64, bool, error) {
 	if err := cs.check(); err != nil {
 		return 0, false, err
 	}
-	var out int64
-	var okv int32
-	r1, _, _ := proc("gov8_wctx_integer_value").Call(
-		cs.iso.handle, cs.ctxWire, v.h,
-		uintptr(unsafe.Pointer(&out)), uintptr(unsafe.Pointer(&okv)))
-	if int64(r1) < 0 {
-		return 0, false, shimError("CallbackScope.IntegerValue", r1)
+	callbackScalarProcsOnce.Do(resolveCallbackScalarProcs)
+	result, _, _ := syscall.Syscall(callbackIntegerValueAddr, 3,
+		cs.iso.handle, cs.ctxWire, v.h)
+	if int64(result) < 0 {
+		return 0, false, shimError("CallbackScope.IntegerValue", result)
 	}
-	return out, okv == 1, nil
+	if result == 0 {
+		return 0, false, nil
+	}
+	// result addresses shim-owned thread-local storage, not Go memory. The
+	// conversion stores it only after nested JS/Go re-entry has completed, and
+	// callback execution remains pinned to the isolate's owning OS thread.
+	return callbackNativeInt64(result), true, nil
+}
+
+func callbackNativeInt64(address uintptr) int64 {
+	// address is allocated by the shim and remains valid for the lifetime of
+	// the DLL. Bit-copy the native address into pointer form so vet does not
+	// mistake it for a Go pointer that escaped through uintptr arithmetic.
+	pointer := *(*unsafe.Pointer)(unsafe.Pointer(&address))
+	return *(*int64)(pointer)
 }
 
 // NumberValue is Value::NumberValue in the callback's current context.
@@ -927,6 +939,19 @@ type ReturnValue struct {
 	word uintptr
 }
 
+var (
+	callbackScalarProcsOnce   sync.Once
+	callbackIntegerValueAddr  uintptr
+	returnValueInt32ProcAddr  uintptr
+	returnValueUint32ProcAddr uintptr
+)
+
+func resolveCallbackScalarProcs() {
+	callbackIntegerValueAddr = proc("gov8_wctx_integer_value_direct").Addr()
+	returnValueInt32ProcAddr = proc("gov8_rv_set_int32").Addr()
+	returnValueUint32ProcAddr = proc("gov8_rv_set_uint32").Addr()
+}
+
 func (rv ReturnValue) set(op string, args ...uintptr) error {
 	if err := rv.cs.sc.check(); err != nil {
 		return err
@@ -947,7 +972,9 @@ func (rv ReturnValue) SetInt32(v int32) error {
 	if err := rv.cs.sc.check(); err != nil {
 		return err
 	}
-	r1, _, _ := proc("gov8_rv_set_int32").Call(rv.word, uintptr(v))
+	callbackScalarProcsOnce.Do(resolveCallbackScalarProcs)
+	r1, _, _ := syscall.Syscall(returnValueInt32ProcAddr, 2,
+		rv.word, uintptr(v), 0)
 	if int64(r1) < 0 {
 		return shimError("gov8_rv_set_int32", r1)
 	}
@@ -956,7 +983,16 @@ func (rv ReturnValue) SetInt32(v int32) error {
 
 // SetUint32 stores a uint32 (surfacing as a JS number).
 func (rv ReturnValue) SetUint32(v uint32) error {
-	return rv.set("gov8_rv_set_uint32", uintptr(v))
+	if err := rv.cs.sc.check(); err != nil {
+		return err
+	}
+	callbackScalarProcsOnce.Do(resolveCallbackScalarProcs)
+	r1, _, _ := syscall.Syscall(returnValueUint32ProcAddr, 2,
+		rv.word, uintptr(v), 0)
+	if int64(r1) < 0 {
+		return shimError("gov8_rv_set_uint32", r1)
+	}
+	return nil
 }
 
 // SetFloat64 stores a float64 (surfacing as a JS number).

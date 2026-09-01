@@ -5,6 +5,8 @@ package gov8
 import (
 	"fmt"
 	"math"
+	"sync"
+	"syscall"
 	"unsafe"
 )
 
@@ -355,19 +357,30 @@ func (v Value) Int32Value(c *Context) (val int32, ok bool, err error) {
 	return out, okv == 1, nil
 }
 
+var (
+	valueUint32ProcOnce sync.Once
+	valueUint32ProcAddr uintptr
+)
+
+func resolveValueUint32Proc() {
+	valueUint32ProcAddr = proc("gov8_value_uint32_value_direct").Addr()
+}
+
 // Uint32Value returns v8 Value::Uint32Value (a context conversion to u32).
 func (v Value) Uint32Value(c *Context) (val uint32, ok bool, err error) {
 	if err := v.ctxHandle(c); err != nil {
 		return 0, false, err
 	}
-	var out uint32
-	var okv int32
-	r1, _, _ := proc("gov8_value_uint32_value").Call(
-		v.iso.handle, c.handle, v.h, uintptr(unsafe.Pointer(&out)), uintptr(unsafe.Pointer(&okv)))
+	valueUint32ProcOnce.Do(resolveValueUint32Proc)
+	r1, _, _ := syscall.Syscall(valueUint32ProcAddr, 3,
+		v.iso.handle, c.handle, v.h)
 	if int64(r1) < 0 {
 		return 0, false, shimError("Uint32Value", r1)
 	}
-	return out, okv == 1, nil
+	if uint64(r1) == uint64(1)<<32 {
+		return 0, false, nil
+	}
+	return uint32(r1), true, nil
 }
 
 // BigIntInt64 returns (value, lossless) for a BigInt via v8 BigInt::Int64Value.
