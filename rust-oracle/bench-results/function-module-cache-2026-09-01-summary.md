@@ -99,3 +99,20 @@ allocations per operation. The 1,712 ns median is about 4.9x the Rust
 346.29-356.47 ns confidence interval midpoint. This closes matched harness and
 measurement coverage for all 37 Rust workloads; it does not close the measured
 performance gap.
+
+## ABI-39 direct cache construction follow-up
+
+The cached compile shim now constructs `CachedData` and the compiler `Source`
+directly with automatic RAII lifetime, removing four internal rusty_v8 C-ABI
+calls while preserving `BufferNotOwned`, rejection reporting, and malformed
+cache behavior. Five paired 750 ms samples produced these medians:
+
+| Operation | ABI-38 median | ABI-39 median | Allocations | Current Rust ratio |
+|---|---:|---:|---:|---:|
+| scope-local consume | 1539 ns | 1370 ns | 64 B/3 | 3.90x |
+| persistent-global consume | 2033 ns | 1728 ns | 112 B/4 | 2.86x |
+
+The unchanged create control measured 4668 ns after the rebuild, about 2.12x
+the Rust midpoint, but its timing is not attributed to this consume-path edit.
+Profiles show the remaining three scope-local allocations are HandleScope
+lifecycle and 65-79% of sampled CPU is in native/DLL work.

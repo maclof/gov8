@@ -55,3 +55,16 @@ confidence interval with a 1194.4 ns point estimate. The post-change Go median
 therefore remains about 4.40x the Rust estimate. General scope, object, string,
 property-read, numeric-conversion, and DLL callback crossings now dominate the
 matched workload, so this remains a measured performance gap.
+
+## ABI-39 direct install-status follow-up
+
+An additive direct-status export now returns the lazy-property installation
+result without a Go output pointer, and the Go wrapper calls its cached address
+with a fixed nine-argument syscall. The compatibility export remains available.
+
+Seven paired 500 ms samples changed from 4601, 3995, 4985, 5290, 5854, 5724,
+and 5523 ns/op to 2990, 3045, 4043, 4502, 4223, 4288, and 3999 ns/op. The
+median fell from 5290 to 4043 ns/op (23.6%), while allocation cost fell from
+448 bytes/14 allocations to 360 bytes/12 allocations. Against the frozen Rust
+1194.4 ns point estimate, the conservative paired ratio is now about 3.38x.
+Focused lifecycle, callback-retention, conformance, race, and vet checks pass.

@@ -82,3 +82,16 @@ context entry, DLL transition, and V8 restoration therefore form a measured
 lower bound for the current safe architecture rather than removable wrapper
 work. Complete current Rust samples and reports are stored in
 `criterion-wasm-restore-fixed-2026-09-01/`.
+
+## ABI-39 restoration experiment
+
+Ten frozen A/B pairs tested a direct-return export. The public median regressed
+from 525.15 to 543.45 ns and the existing-scope median from 363.15 to 383.10 ns;
+allocations were unchanged. The native floor was neutral at 274.25 versus
+274.00 ns. A one-second confirmation likewise measured 580.10 versus 584.90
+ns publicly. The experiment was therefore fully reverted.
+
+These fresh retained-path measurements put the current public operation at
+about 3.51-3.91x the frozen Rust 149.43 ns midpoint and its native floor at
+about 1.84x. Native transitions account for roughly two thirds of sampled CPU;
+required affinity checks and HandleScope lifecycle dominate the remainder.
