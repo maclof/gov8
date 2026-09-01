@@ -3,7 +3,6 @@
 package gov8_test
 
 import (
-	"runtime"
 	"sync/atomic"
 	"testing"
 
@@ -58,12 +57,8 @@ func BenchmarkWasmModuleCompilationAnswerModule(b *testing.B) {
 			b.Fatal(err)
 		}
 		for calls.Load() == 0 {
-			ran, err := iso.PumpMessageLoop(false)
-			if err != nil {
+			if _, err := iso.PumpMessageLoop(false); err != nil {
 				b.Fatal(err)
-			}
-			if !ran {
-				runtime.Gosched()
 			}
 		}
 		if calls.Load() != 1 {
