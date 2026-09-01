@@ -190,9 +190,7 @@ func StringMaxLength() (int, error) {
 // EmptyString returns the canonical empty string (the engine's read-only
 // empty-string root, not a fresh allocation).
 func (s *Scope) EmptyString() (Value, error) {
-	return s.construct("EmptyString", func(h uintptr) (uintptr, error) {
-		return callHandle("EmptyString", proc("gov8_sb_string_empty"), h, s.handle)
-	})
+	return s.constructPrimitive("EmptyString", primitiveEmptyString, 0)
 }
 
 // NewStringFromUTF8 creates a string from UTF-8 bytes. Invalid sequences

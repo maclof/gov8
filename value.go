@@ -36,6 +36,7 @@ type primitiveConstructor uint8
 const (
 	primitiveUndefined primitiveConstructor = iota
 	primitiveNull
+	primitiveEmptyString
 	primitiveBoolean
 	primitiveInt32
 	primitiveUint32
@@ -53,6 +54,7 @@ func resolvePrimitiveConstructors() {
 	names := [...]string{
 		"gov8_undefined",
 		"gov8_null",
+		"gov8_sb_string_empty",
 		"gov8_boolean",
 		"gov8_integer_new",
 		"gov8_integer_new_unsigned",
@@ -79,7 +81,7 @@ func (s *Scope) constructPrimitive(op string, kind primitiveConstructor, value u
 	primitiveConstructorsOnce.Do(resolvePrimitiveConstructors)
 	address := primitiveConstructorAddrs[kind]
 	var raw uintptr
-	if kind <= primitiveNull {
+	if kind <= primitiveEmptyString {
 		raw, _, _ = syscall.Syscall(address, 2,
 			s.iso.handleAssumingCheck(), s.handle, 0)
 	} else {
@@ -175,20 +177,6 @@ func (s *Scope) newStringAssumingCheck(str string) (Value, error) {
 		return Value{}, shimError("NewString", r1)
 	}
 	return Value{iso: s.iso, sc: s, h: out}, nil
-}
-
-func (s *Scope) construct(op string, fn func(iso uintptr) (uintptr, error)) (Value, error) {
-	if err := s.check(); err != nil {
-		return Value{}, err
-	}
-	if err := requireInitialized(); err != nil {
-		return Value{}, err
-	}
-	raw, err := fn(s.iso.handleAssumingCheck())
-	if err != nil {
-		return Value{}, err
-	}
-	return Value{iso: s.iso, sc: s, h: raw}, nil
 }
 
 // --- predicates ---------------------------------------------------------------

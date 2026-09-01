@@ -28,4 +28,36 @@ func TestPrimitiveConstructorsSteadyStateAllocations(t *testing.T) {
 	if allocations != 0 {
 		t.Fatalf("steady-state Int32 allocations = %v, want zero", allocations)
 	}
+	emptyAllocations := testing.AllocsPerRun(1000, func() {
+		if _, err := scope.EmptyString(); err != nil {
+			panic(err)
+		}
+	})
+	if emptyAllocations != 0 {
+		t.Fatalf("steady-state EmptyString allocations = %v, want zero", emptyAllocations)
+	}
+}
+
+func BenchmarkPrimitiveEmptyString(b *testing.B) {
+	iso, err := NewIsolate()
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer iso.Close()
+	scope, err := iso.NewScope()
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer scope.Close()
+	if _, err := scope.EmptyString(); err != nil {
+		b.Fatal(err)
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		if _, err := scope.EmptyString(); err != nil {
+			b.Fatal(err)
+		}
+	}
 }
