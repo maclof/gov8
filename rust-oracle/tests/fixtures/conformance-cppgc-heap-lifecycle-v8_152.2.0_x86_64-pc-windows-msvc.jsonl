@@ -1,0 +1,7 @@
+{"check":"cppgc-heap-lifecycle/pin","ok":true,"value":{"crate":"v8=152.2.0","v8":"15.2.124.1-rusty","target":"x86_64-pc-windows-msvc"}}
+{"check":"cppgc-heap-lifecycle/create_params/default","ok":true,"value":{"marking_support":"IncrementalAndConcurrent","sweeping_support":"IncrementalAndConcurrent","public_marking_variants":["Atomic","Incremental","IncrementalAndConcurrent"],"public_sweeping_variants":["Atomic","Incremental","IncrementalAndConcurrent"]}}
+{"check":"cppgc-heap-lifecycle/detached/collection_and_terminate","ok":true,"value":{"drops_before_enable":0,"drops_after_enabled_gc":1,"drops_after_terminate":2,"drops_after_second_terminate":2,"terminate_idempotent":true}}
+{"check":"cppgc-heap-lifecycle/process/paired_reinitialize","ok":true,"value":{"second_initialize_succeeded":true,"atomic_heap_created":true,"heap_drop_terminates":true,"drops_after_heap_drop":1,"second_shutdown_succeeded":true}}
+{"check":"cppgc-heap-lifecycle/isolate/custom_heap_ownership","ok":true,"value":{"get_cpp_heap_some":true,"same_heap_address":true,"drops_after_attached_gc":1,"try_into_shared_error":"EmbedderCppHeap","drops_after_isolate_drop":2,"isolate_drop_owns_heap_termination":true}}
+{"check":"cppgc-heap-lifecycle/process/orderly_v8_shutdown","ok":true,"value":{"isolate_dropped_first":true,"v8_disposed":true,"cppgc_shutdown_after_heaps":true,"platform_disposed_last":true}}
+{"summary":{"total":6,"passed":6,"failed":0}}
