@@ -185,3 +185,28 @@ loaded medians were 1441.5 ns at 112 B/3 for resolver creation and 2403 ns at
 interleaved control measured about 7.73x and 4.51x, confirming that these small
 native-transition workloads remain load-sensitive. Removing another lifecycle
 check was neutral or slower and was reverted.
+
+## ABI-41 lock-free callback registry follow-up
+
+Callback entries are immutable after publication, and V8 invokes ordinary
+host callbacks synchronously on the isolate's owner thread. A chunked atomic
+directory now serves dispatch lookups without taking the global registration
+mutex. Registration and lifecycle enumeration retain the locked map; removal
+atomically unpublishes the fast slot before freeing its native context. Empty
+explicit release cycles reuse the directory from handle one, avoiding
+per-registration allocation or unbounded directory growth.
+
+Six order-balanced 300,000-iteration frozen-binary pairs measured these
+medians, with allocations unchanged throughout:
+
+| Workload | Locked registry | Atomic registry | Change | B/op; allocs/op |
+|---|---:|---:|---:|---:|
+| callback/native_call_from_js | 2028 ns | 2019.5 ns | -0.4% | 280; 6 |
+| callback/native_call_from_host | 2057 ns | 1948 ns | -5.3% | 320; 8 |
+| callback/function_new_call | 3735 ns | 3588 ns | -3.9% | 512; 9 |
+
+A separate six-pair two-second confirmation changed the host median from
+2371.5 to 2232 ns (-5.9%) and Function create/call from 5047 to 4817 ns
+(-4.6%). The independently run JS confirmation changed 2405 to 2360 ns
+(-1.9%). Concurrent lookup/removal race coverage verifies that readers observe
+only the exact immutable entry or its nil tombstone.

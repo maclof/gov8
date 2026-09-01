@@ -7,6 +7,7 @@ import (
 	"math"
 	"os"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"unsafe"
 )
@@ -153,11 +154,25 @@ type hostCallbackEntry struct {
 	idesc   IndexedPropertyDescriptorCallback
 }
 
+const hostCallbackFastChunkSize = 1024
+
+type hostCallbackFastChunk [hostCallbackFastChunkSize]atomic.Pointer[hostCallbackEntry]
+
+// hostCallbackFastTable is an immutable directory of stable chunks. The
+// registry mutex publishes a new directory only when a monotonically assigned
+// handle reaches a new chunk; individual entry publication/removal is atomic.
+// Callback dispatch therefore avoids the global registry mutex without
+// allocating on each registration.
+type hostCallbackFastTable struct {
+	chunks []*hostCallbackFastChunk
+}
+
 var hostCallbackRegistry = struct {
 	mu          sync.Mutex
 	next        uint64
 	entries     map[uint64]*hostCallbackEntry
 	lazyGetters map[lazyGetterCacheKey]uint64
+	fast        atomic.Pointer[hostCallbackFastTable]
 }{
 	entries:     make(map[uint64]*hostCallbackEntry),
 	lazyGetters: make(map[lazyGetterCacheKey]uint64),
@@ -253,8 +268,9 @@ func registerHostEntryAssumingIsolate(iso *Isolate, e *hostCallbackEntry, data V
 	e.iso = iso
 	e.ctx = ctx
 	hostCallbackRegistry.mu.Lock()
-	defer hostCallbackRegistry.mu.Unlock()
 	hostCallbackRegistry.entries[h] = e
+	publishFastHostCallbackLocked(h, e)
+	hostCallbackRegistry.mu.Unlock()
 	return h, nil
 }
 
@@ -347,12 +363,48 @@ func dropNewLazyGetter(handle uint64, key lazyGetterCacheKey) {
 }
 
 func lookupHostCallback(handle uint64) *hostCallbackEntry {
-	hostCallbackRegistry.mu.Lock()
-	defer hostCallbackRegistry.mu.Unlock()
-	return hostCallbackRegistry.entries[handle]
+	if handle == 0 {
+		return nil
+	}
+	index := handle - 1
+	table := hostCallbackRegistry.fast.Load()
+	chunkIndex := index / hostCallbackFastChunkSize
+	if table == nil || chunkIndex >= uint64(len(table.chunks)) {
+		return nil
+	}
+	return table.chunks[chunkIndex][index%hostCallbackFastChunkSize].Load()
+}
+
+func publishFastHostCallbackLocked(handle uint64, entry *hostCallbackEntry) {
+	index := handle - 1
+	chunkIndex := int(index / hostCallbackFastChunkSize)
+	table := hostCallbackRegistry.fast.Load()
+	if table == nil || chunkIndex >= len(table.chunks) {
+		chunks := make([]*hostCallbackFastChunk, chunkIndex+1)
+		if table != nil {
+			copy(chunks, table.chunks)
+		}
+		chunks[chunkIndex] = &hostCallbackFastChunk{}
+		table = &hostCallbackFastTable{chunks: chunks}
+		hostCallbackRegistry.fast.Store(table)
+	}
+	table.chunks[chunkIndex][index%hostCallbackFastChunkSize].Store(entry)
+}
+
+func dropFastHostCallback(handle uint64) {
+	if handle == 0 {
+		return
+	}
+	index := handle - 1
+	table := hostCallbackRegistry.fast.Load()
+	chunkIndex := index / hostCallbackFastChunkSize
+	if table != nil && chunkIndex < uint64(len(table.chunks)) {
+		table.chunks[chunkIndex][index%hostCallbackFastChunkSize].Store(nil)
+	}
 }
 
 func dropHostCallback(handle uint64) {
+	dropFastHostCallback(handle)
 	hostCallbackRegistry.mu.Lock()
 	entry := hostCallbackRegistry.entries[handle]
 	delete(hostCallbackRegistry.entries, handle)
@@ -1173,6 +1225,7 @@ func ReleaseIsolateHostState(i *Isolate) error {
 	}
 	for _, h := range handles {
 		delete(hostCallbackRegistry.entries, h)
+		dropFastHostCallback(h)
 	}
 	for key := range hostCallbackRegistry.lazyGetters {
 		if key.iso == i {
@@ -1190,6 +1243,15 @@ func ReleaseIsolateHostState(i *Isolate) error {
 			return err
 		}
 	}
+	// Once every native dispatch context has been released, no stale native
+	// handle can address a registry entry. Reuse the empty fast table from its
+	// first slot instead of growing its immutable chunk directory forever
+	// across explicit release/rebuild cycles.
+	hostCallbackRegistry.mu.Lock()
+	if len(hostCallbackRegistry.entries) == 0 {
+		hostCallbackRegistry.next = 0
+	}
+	hostCallbackRegistry.mu.Unlock()
 
 	releaseSlots(i)
 

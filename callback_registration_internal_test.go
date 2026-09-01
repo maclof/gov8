@@ -3,7 +3,10 @@
 package gov8
 
 import (
+	"runtime"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 )
 
@@ -59,5 +62,42 @@ func TestFunctionNewDirectNegativeAndRegistrationSafety(t *testing.T) {
 	}
 	if err := iso.Close(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestHostCallbackFastRegistryConcurrentRemoval(t *testing.T) {
+	entry := &hostCallbackEntry{}
+	hostCallbackRegistry.mu.Lock()
+	for {
+		hostCallbackRegistry.next++
+		if hostCallbackRegistry.next != 0 && hostCallbackRegistry.entries[hostCallbackRegistry.next] == nil {
+			break
+		}
+	}
+	handle := hostCallbackRegistry.next
+	hostCallbackRegistry.entries[handle] = entry
+	publishFastHostCallbackLocked(handle, entry)
+	hostCallbackRegistry.mu.Unlock()
+
+	var stop atomic.Bool
+	var readers sync.WaitGroup
+	for range 4 {
+		readers.Add(1)
+		go func() {
+			defer readers.Done()
+			for !stop.Load() {
+				if got := lookupHostCallback(handle); got != nil && got != entry {
+					t.Errorf("lookupHostCallback(%d) = %p, want %p or nil", handle, got, entry)
+					return
+				}
+				runtime.Gosched()
+			}
+		}()
+	}
+	dropHostCallback(handle)
+	stop.Store(true)
+	readers.Wait()
+	if got := lookupHostCallback(handle); got != nil {
+		t.Fatalf("lookupHostCallback(%d) after removal = %p, want nil", handle, got)
 	}
 }
