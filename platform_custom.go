@@ -117,6 +117,15 @@ type customPlatformEntry struct {
 
 type customPlatformWork interface{ closeFromPlatform() }
 
+// customPlatformRetention is allocated only when a callback returns without
+// consuming its transferred task. Keeping these cold lifecycle fields out of
+// Task and IdleTask makes the synchronous callback path's escaping wrapper
+// materially smaller without pooling user-visible task pointers.
+type customPlatformRetention struct {
+	entry  *customPlatformEntry
+	workID uint64
+}
+
 var customPlatformRegistry = struct {
 	sync.Mutex
 	next    uint64
@@ -261,7 +270,7 @@ func customPlatformDispatch(frame *customPlatformFrame) uintptr {
 			fatalHostMisuse("custom platform task dispatch received a null native handle")
 			return 0
 		}
-		task := newPlatformTask(entry, frame.id, isolate, frame.task)
+		task := newPlatformTask(isolate, frame.task)
 		switch frame.kind {
 		case platformDispatchTask:
 			entry.impl.PostTask(isolate, task)
@@ -272,15 +281,15 @@ func customPlatformDispatch(frame *customPlatformFrame) uintptr {
 		case platformDispatchNonNestableDelayed:
 			entry.impl.PostNonNestableDelayedTask(isolate, task, math.Float64frombits(frame.delay))
 		}
-		task.armFinalizer()
+		task.armFinalizer(entry)
 	case platformDispatchIdle:
 		if frame.isolate == 0 || frame.task == 0 {
 			fatalHostMisuse("custom platform idle dispatch received a null native handle")
 			return 0
 		}
-		task := newPlatformIdleTask(entry, frame.id, isolate, frame.task)
+		task := newPlatformIdleTask(isolate, frame.task)
 		entry.impl.PostIdleTask(isolate, task)
-		task.armFinalizer()
+		task.armFinalizer(entry)
 	case platformDispatchDrop:
 		dropCustomPlatformEntry(frame.id, entry)
 	default:
@@ -335,15 +344,14 @@ func dropCustomPlatformEntry(id uint64, entry *customPlatformEntry) {
 // mutually exclusive. Close may run on any thread; Run requires the owning
 // live Isolate and therefore cannot accidentally execute on a worker thread.
 type Task struct {
-	mu      sync.Mutex
-	handle  atomic.Uintptr
-	isolate PlatformIsolate
-	entry   *customPlatformEntry
-	workID  uint64
+	mu        sync.Mutex
+	handle    atomic.Uintptr
+	isolate   PlatformIsolate
+	retention *customPlatformRetention
 }
 
-func newPlatformTask(entry *customPlatformEntry, _ uint64, isolate PlatformIsolate, handle uintptr) *Task {
-	task := &Task{isolate: isolate, entry: entry}
+func newPlatformTask(isolate PlatformIsolate, handle uintptr) *Task {
+	task := &Task{isolate: isolate}
 	task.handle.Store(handle)
 	return task
 }
@@ -354,20 +362,20 @@ func newPlatformTask(entry *customPlatformEntry, _ uint64, isolate PlatformIsola
 // and armed before the dispatcher releases its local reference. entry.add
 // refuses registration after platform teardown has begun, in which case this
 // method destroys the still-owned native task itself.
-func (task *Task) armFinalizer() {
+func (task *Task) armFinalizer(entry *customPlatformEntry) {
 	if task.handle.Load() == 0 {
 		return
 	}
 	task.mu.Lock()
 	if task.handle.Load() != 0 {
-		workID, retained := task.entry.add(task)
+		workID, retained := entry.add(task)
 		if !retained {
 			handle := task.handle.Swap(0)
 			task.mu.Unlock()
 			_, _, _ = syscall.Syscall(customPlatformTaskDeleteAddr, 1, handle, 0, 0)
 			return
 		}
-		task.workID = workID
+		task.retention = &customPlatformRetention{entry: entry, workID: workID}
 		runtime.SetFinalizer(task, func(task *Task) { _ = task.Close() })
 	}
 	task.mu.Unlock()
@@ -383,12 +391,12 @@ func (task *Task) take() (uintptr, error) {
 		return 0, fmt.Errorf("gov8: Task already consumed")
 	}
 	handle := task.handle.Swap(0)
-	workID := task.workID
-	task.workID = 0
+	retention := task.retention
+	task.retention = nil
 	task.mu.Unlock()
-	if workID != 0 {
+	if retention != nil {
 		runtime.SetFinalizer(task, nil)
-		task.entry.remove(workID)
+		retention.entry.remove(retention.workID)
 	}
 	return handle, nil
 }
@@ -443,10 +451,10 @@ func (task *Task) closeFromPlatform() {
 		return
 	}
 	handle := task.handle.Swap(0)
-	workID := task.workID
-	task.workID = 0
+	retention := task.retention
+	task.retention = nil
 	task.mu.Unlock()
-	if workID != 0 {
+	if retention != nil {
 		runtime.SetFinalizer(task, nil)
 	}
 	_, _, _ = syscall.Syscall(customPlatformTaskDeleteAddr, 1, handle, 0, 0)
@@ -455,33 +463,32 @@ func (task *Task) closeFromPlatform() {
 // IdleTask is a transferred V8 idle task with the same one-shot ownership and
 // affinity contract as Task.
 type IdleTask struct {
-	mu      sync.Mutex
-	handle  atomic.Uintptr
-	isolate PlatformIsolate
-	entry   *customPlatformEntry
-	workID  uint64
+	mu        sync.Mutex
+	handle    atomic.Uintptr
+	isolate   PlatformIsolate
+	retention *customPlatformRetention
 }
 
-func newPlatformIdleTask(entry *customPlatformEntry, _ uint64, isolate PlatformIsolate, handle uintptr) *IdleTask {
-	task := &IdleTask{isolate: isolate, entry: entry}
+func newPlatformIdleTask(isolate PlatformIsolate, handle uintptr) *IdleTask {
+	task := &IdleTask{isolate: isolate}
 	task.handle.Store(handle)
 	return task
 }
 
-func (task *IdleTask) armFinalizer() {
+func (task *IdleTask) armFinalizer(entry *customPlatformEntry) {
 	if task.handle.Load() == 0 {
 		return
 	}
 	task.mu.Lock()
 	if task.handle.Load() != 0 {
-		workID, retained := task.entry.add(task)
+		workID, retained := entry.add(task)
 		if !retained {
 			handle := task.handle.Swap(0)
 			task.mu.Unlock()
 			_, _, _ = syscall.Syscall(customPlatformIdleTaskDeleteAddr, 1, handle, 0, 0)
 			return
 		}
-		task.workID = workID
+		task.retention = &customPlatformRetention{entry: entry, workID: workID}
 		runtime.SetFinalizer(task, func(task *IdleTask) { _ = task.Close() })
 	}
 	task.mu.Unlock()
@@ -497,12 +504,12 @@ func (task *IdleTask) take() (uintptr, error) {
 		return 0, fmt.Errorf("gov8: IdleTask already consumed")
 	}
 	handle := task.handle.Swap(0)
-	workID := task.workID
-	task.workID = 0
+	retention := task.retention
+	task.retention = nil
 	task.mu.Unlock()
-	if workID != 0 {
+	if retention != nil {
 		runtime.SetFinalizer(task, nil)
-		task.entry.remove(workID)
+		retention.entry.remove(retention.workID)
 	}
 	return handle, nil
 }
@@ -556,10 +563,10 @@ func (task *IdleTask) closeFromPlatform() {
 		return
 	}
 	handle := task.handle.Swap(0)
-	workID := task.workID
-	task.workID = 0
+	retention := task.retention
+	task.retention = nil
 	task.mu.Unlock()
-	if workID != 0 {
+	if retention != nil {
 		runtime.SetFinalizer(task, nil)
 	}
 	_, _, _ = syscall.Syscall(customPlatformIdleTaskDeleteAddr, 1, handle, 0, 0)

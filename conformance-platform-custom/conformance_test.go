@@ -8,6 +8,7 @@ import (
 	"math"
 	"os"
 	"os/exec"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -579,6 +580,10 @@ func lifecycleChild() {
 	if task == nil {
 		panic("timed out waiting for lifecycle task")
 	}
+	// Retained tasks stay registered across GC and are still drained exactly
+	// once during platform shutdown.
+	runtime.GC()
+	runtime.GC()
 	if err := r.close(); err != nil {
 		panic(err)
 	}
