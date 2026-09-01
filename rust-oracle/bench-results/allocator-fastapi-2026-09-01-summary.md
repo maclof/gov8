@@ -43,3 +43,28 @@ improved from 1,080 to 1,039.5 ns/op (3.8%), while allocations fell from 88
 bytes/5 allocations to 48 bytes/1 allocation. The remaining roughly 10.7x gap
 is dominated by two required native-to-Go allocator callbacks plus DLL/V8
 transitions rather than Go heap allocation.
+
+## Allocator registry-dispatch follow-up
+
+An atomic most-recently-used registry entry now removes mutex acquisition from
+the common single-allocator callback path, retaining the authoritative locked
+map for multiple allocators and removal. Interleaved frozen-binary A/B medians
+improved from 854.8 to 844.2 ns/op (about 1.2%); allocations remain 48 bytes/1.
+CPU profiling shows about 73% less time in the Go dispatcher itself. The small
+end-to-end change confirms that native-to-Go callback transitions, rather than
+registry contention, dominate the remaining roughly 9x result on this run.
+
+## Fast callback-options follow-up
+
+The native Fast API target now observes immutable callback-options data once
+per V8 data-object identity instead of repeating type/context checks on every
+steady-state call. The exact fast-call counter still advances on every call and
+reset clears the observation cache.
+
+Controlled identical-build samples changed from 5290, 6456, 5917, 7872, and
+7086 ns/op to 1493, 1572, 2003, 1967, and 1945 ns/op. The median improved 69.9%
+from 6,456 to 1,945 ns/op, leaving about 1.73x versus the Rust 1,127.35 ns
+midpoint. Allocations remain 72 bytes/2 for the outer Go `Function.Call`.
+The ordinary Go callback fallback bypasses this native Fast API target and
+remains about 30.5x Rust; profiles localize that separate gap to generic
+callback dispatch and value conversion.

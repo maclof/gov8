@@ -443,6 +443,8 @@ Checked on this machine (2026-09-01, Rust toolchain 1.98.0, Go 1.26.2):
   with repeated samples and exact callback-counter validation
 - startup, script, callback, promise, and source-module execution — all 16
   workloads aligned and measured with repeated samples and exact result checks
+- complete performance inventory — matched Go harnesses and archived repeated
+  comparisons now exist for all 37 pinned Rust benchmark workloads
 - Unsupported-target guard: `cargo check --target x86_64-pc-windows-gnu`
   (installed temporarily, then removed) fails immediately with the single
   "Supported platform" `compile_error!` and never downloads or builds the V8

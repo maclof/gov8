@@ -79,3 +79,23 @@ Creation drops from 4,880 bytes and 9 allocations to 736 bytes and 5
 allocations. Its 4,771 ns median is about 2.2x the Rust midpoint. Consumption
 remains allocation-stable with a 1,680 ns median, about 2.8x Rust. Timing phases
 on this host were visibly bimodal, so these ratios remain directional.
+
+## Scope-local cache-consumption coverage
+
+The final unmatched Rust inventory item was `module_cache/consume_compile`,
+whose compiled module remains local to a fresh scope instead of being promoted
+to a persistent global. A benchmark-only Go/native path now matches that exact
+lifetime while retaining the public persistent `Module` API unchanged. Both
+harnesses consume the same cache, check rejection, close the fresh scope each
+iteration, and perform an untimed `answer == 42` probe.
+
+```text
+go test . -run '^$' -bench '^BenchmarkModuleCacheConsumeCompile$' -benchmem -benchtime=1s -count=5
+cargo bench --locked --bench module_cache -- consume_compile
+```
+
+Go samples were 2348, 2141, 1712, 1370, and 1257 ns/op at 64 bytes and 3
+allocations per operation. The 1,712 ns median is about 4.9x the Rust
+346.29-356.47 ns confidence interval midpoint. This closes matched harness and
+measurement coverage for all 37 Rust workloads; it does not close the measured
+performance gap.
