@@ -149,6 +149,11 @@ func (c *Context) Close() error {
 	if c.closed {
 		return fmt.Errorf("gov8: context already closed")
 	}
+	// V8Inspector retains the registered context. It must be unregistered
+	// explicitly while both the context and isolate are still alive.
+	if err := inspectorContextCloseError(c); err != nil {
+		return err
+	}
 	if err := requireInitialized(); err != nil {
 		return err
 	}

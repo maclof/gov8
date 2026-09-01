@@ -90,12 +90,10 @@ import (
 //   - Deserializer input bytes are retained without copying until Close
 //     (the engine's real contract, pinned by the oracle).
 //
-// Wasm scope note (per coordinator): Wasm itself is out of scope. The
-// GetWasmModuleTransferID hook is fully delegated (observe, answer
-// None or an id), but this module has no Wasm API, so Go can never SUPPLY
-// a WasmModuleObject: an implemented GetWasmModuleFromID always completes
-// as the None-without-throw path (engine error). This is a tracked gap,
-// never a fake success.
+// Wasm transfer IDs are fully delegated in both directions. The original
+// GetWasmModuleFromIDHook remains observation-only for compatibility;
+// ResolveWasmModuleFromIDHook is the typed returning form and validates the
+// target isolate, callback scope, lifetime, and Wasm type before FFI.
 //
 // Integers only: the registry stores Go values under int64 handles; the
 // engine never observes a Go pointer.
@@ -137,9 +135,8 @@ type GetSharedArrayBufferIDHook interface {
 
 // GetWasmModuleTransferIDHook mirrors v8::ValueSerializerImpl::
 // get_wasm_module_transfer_id. module is the generic value view of the
-// WasmModuleObject (this module exposes no Wasm API). answered=false maps
-// to None: the module silently disappears from the wire and the enclosing
-// write succeeds.
+// WasmModuleObject. answered=false maps to None: the module silently
+// disappears from the wire and the enclosing write succeeds.
 type GetWasmModuleTransferIDHook interface {
 	GetWasmModuleTransferID(module Value) (id uint32, answered bool)
 }
@@ -170,15 +167,21 @@ type GetSharedArrayBufferFromIDHook interface {
 	GetSharedArrayBufferFromID(id uint32) (*SharedArrayBuffer, bool)
 }
 
-// GetWasmModuleFromIDHook mirrors v8::ValueDeserializerImpl::
-// get_wasm_module_from_id, reduced to observation semantics: this module
-// has no Wasm API, so a Go delegate can never supply a module. Implementing
-// the hook switches the read from the trait-default "Deno deserializer:
-// get_wasm_module_from_id not implemented" throw to the None-completion
-// path (engine error "Unable to deserialize cloned data."). Returning a
-// module is tracked future scope, not silently faked.
+// GetWasmModuleFromIDHook is the original observation-only shape for
+// v8::ValueDeserializerImpl::get_wasm_module_from_id. Implementing it switches
+// the read from the trait-default "not implemented" throw to the
+// None-completion path. Use ResolveWasmModuleFromIDHook to return a module.
 type GetWasmModuleFromIDHook interface {
 	GetWasmModuleFromID(id uint32)
+}
+
+// ResolveWasmModuleFromIDHook is the typed completion of
+// ValueDeserializerImpl::get_wasm_module_from_id. The returned module must
+// be a live WasmModuleObject created in r.Scope() for the target isolate.
+// found=false maps to None and V8's generic cloned-data error. The older
+// GetWasmModuleFromIDHook remains supported as an observation-only hook.
+type ResolveWasmModuleFromIDHook interface {
+	ResolveWasmModuleFromID(r *DelegateValueDeserializer, id uint32) (module *WasmModuleObject, found bool)
 }
 
 // --- registry and trampoline --------------------------------------------------
@@ -195,6 +198,7 @@ const (
 	serOpReadHostObject
 	serOpGetSABFromID
 	serOpGetWasmFromID
+	serOpResolveWasmFromID
 )
 
 // Implemented-hook mask bits (shim ABI contract). Serializer and
@@ -211,6 +215,7 @@ const (
 	deserHookReadHostObject = 1 << iota
 	deserHookGetSABFromID
 	deserHookGetWasmFromID
+	deserHookResolveWasmFromID
 )
 
 type serDelEntry struct {
@@ -230,13 +235,19 @@ var serDelRegistry = struct {
 	entries map[int64]*serDelEntry
 }{entries: make(map[int64]*serDelEntry)}
 
-func serDelRegister(e *serDelEntry) int64 {
+func serDelRegister(e *serDelEntry) (int64, error) {
 	serDelRegistry.mu.Lock()
 	defer serDelRegistry.mu.Unlock()
+	if serDelRegistry.next < 0 || serDelRegistry.next == int64(^uint64(0)>>1) {
+		return 0, errors.New("gov8: serializer delegate registry exhausted")
+	}
 	serDelRegistry.next++
 	id := serDelRegistry.next
+	if id == 0 {
+		return 0, errors.New("gov8: serializer delegate registry exhausted")
+	}
 	serDelRegistry.entries[id] = e
-	return id
+	return id, nil
 }
 
 func serDelUnregister(id int64) {
@@ -354,7 +365,29 @@ var goSerDelDispatch = syscall.NewCallback(func(id, op, a, b uintptr) uintptr {
 		if d, ok := entry.hook.(GetWasmModuleFromIDHook); ok {
 			d.GetWasmModuleFromID(uint32(a))
 		}
-		return 0 // cannot supply a module: documented gap, never faked
+		return 0 // preserved observation-only completion
+	case serOpResolveWasmFromID:
+		d, ok := entry.hook.(ResolveWasmModuleFromIDHook)
+		r, ok2 := entry.owner.(*DelegateValueDeserializer)
+		if !ok || !ok2 || r == nil {
+			return 0
+		}
+		module, found := d.ResolveWasmModuleFromID(r, uint32(a))
+		if !found || module == nil {
+			return 0
+		}
+		if module.iso != iso || module.sc != sc {
+			return rejectResolvedWasmModule(r, "resolved Wasm module must use the deserializer callback scope")
+		}
+		if err := module.check(); err != nil {
+			return rejectResolvedWasmModule(r, "resolved Wasm module is no longer live")
+		}
+		isModule, err := module.Value.IsWasmModuleObject()
+		if err != nil || !isModule {
+			return rejectResolvedWasmModule(r, "resolved value is not a WasmModuleObject")
+		}
+		*(*uintptr)(abiWordToPtr(b)) = module.h
+		return 1
 	default:
 		// Unknown op: report "did not handle" and keep the boundary inert.
 		fmt.Fprintf(os.Stderr, "gov8: unknown serializer delegate op %d\n", int64(op))
@@ -368,6 +401,14 @@ func installSerDelEntry() error {
 			proc("gov8_ser_delegate_set_entry"), goSerDelDispatch)
 	})
 	return serDelErr
+}
+
+func rejectResolvedWasmModule(r *DelegateValueDeserializer, message string) uintptr {
+	exception, err := r.NewError("gov8: " + message)
+	if err == nil {
+		_ = r.ThrowException(exception)
+	}
+	return 0
 }
 
 // serHookMask computes the implemented-hook bitmask for a serializer
@@ -408,6 +449,9 @@ func deserHookMask(d ValueDeserializerDelegate) uint32 {
 	}
 	if _, ok := d.(GetWasmModuleFromIDHook); ok {
 		mask |= deserHookGetWasmFromID
+	}
+	if _, ok := d.(ResolveWasmModuleFromIDHook); ok {
+		mask |= deserHookResolveWasmFromID
 	}
 	return mask
 }
@@ -455,7 +499,10 @@ func NewDelegateValueSerializer(s *Scope, c *Context, d ValueSerializerDelegate)
 		return nil, err
 	}
 	entry := &serDelEntry{iso: s.iso, sc: s, ctx: c, hook: d}
-	id := serDelRegister(entry)
+	id, err := serDelRegister(entry)
+	if err != nil {
+		return nil, err
+	}
 	w := &DelegateValueSerializer{iso: s.iso, sc: s, ctx: c, delegateID: id}
 	entry.owner = w // construction-time hooks (HasCustomHostObject) see it
 	var out uintptr
@@ -763,13 +810,14 @@ func (vs *DelegateValueSerializer) Close() error {
 // defaults (every read path throws the deterministic "not implemented"
 // error).
 type DelegateValueDeserializer struct {
-	iso        *Isolate
-	sc         *Scope
-	ctx        *Context
-	handle     uintptr
-	data       []byte // keeps the engine's input pointer valid until Close
-	delegateID int64
-	closed     bool
+	iso         *Isolate
+	sc          *Scope
+	ctx         *Context
+	handle      uintptr
+	data        []byte // keeps the engine's input pointer valid until Close
+	delegateID  int64
+	readStarted bool
+	closed      bool
 }
 
 // NewDelegateValueDeserializer creates a delegate-completed deserializer
@@ -796,7 +844,10 @@ func NewDelegateValueDeserializer(s *Scope, c *Context, data []byte, d ValueDese
 	if d != nil {
 		entry.hook = d
 	}
-	id := serDelRegister(entry)
+	id, err := serDelRegister(entry)
+	if err != nil {
+		return nil, err
+	}
 	w := &DelegateValueDeserializer{iso: s.iso, sc: s, ctx: c, delegateID: id, data: data}
 	entry.owner = w
 	var p uintptr
@@ -859,6 +910,7 @@ func (vd *DelegateValueDeserializer) ReadValue(c *Context, tc *TryCatch) (Value,
 	if err != nil {
 		return Value{}, err
 	}
+	vd.readStarted = true
 	var tcv uintptr
 	if tc != nil {
 		tcv = tc.handle
@@ -902,6 +954,7 @@ func (vd *DelegateValueDeserializer) ReadHeader(c *Context, tc *TryCatch) (ok bo
 	if err != nil {
 		return false, err
 	}
+	vd.readStarted = true
 	var tcv uintptr
 	if tc != nil {
 		tcv = tc.handle

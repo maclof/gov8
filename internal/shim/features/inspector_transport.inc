@@ -23,6 +23,10 @@ void v8_inspector__V8InspectorSession__DELETE(
 void v8_inspector__V8InspectorSession__dispatchProtocolMessage(
     v8_inspector::V8InspectorSession*, v8_inspector::StringView);
 void v8_inspector__StringBuffer__DELETE(v8_inspector::StringBuffer*);
+// Implemented by inspector_session_controls.inc, which is included after this
+// transport feature. Zero is success; non-zero is unrecoverable host misuse.
+int64_t gov8_isc_dispatch_client(uint64_t id, int32_t kind,
+                                 int32_t context_group_id);
 }
 
 namespace gov8_inspector_impl {
@@ -38,7 +42,7 @@ v8_inspector::StringView View(int32_t is8, const void* data, size_t len) {
                                         len);
 }
 struct ChannelRaw { void* vtable = nullptr; uint64_t id = 0; };
-struct ClientRaw { void* vtable = nullptr; };
+struct ClientRaw { void* vtable = nullptr; uint64_t id = 0; };
 struct InspectorWrap {
   uint64_t magic = kInspectorMagic;
   v8::Isolate* iso = nullptr;
@@ -104,10 +108,22 @@ v8_inspector__V8InspectorClient__BASE__generateUniqueId(
     v8_inspector::V8InspectorClient*) { return 0; }
 __declspec(dllexport) void
 v8_inspector__V8InspectorClient__BASE__runMessageLoopOnPause(
-    v8_inspector::V8InspectorClient*, int) {}
+    v8_inspector::V8InspectorClient* self, int context_group_id) {
+  auto* client = reinterpret_cast<ClientRaw*>(self);
+  if (client && client->id &&
+      gov8_isc_dispatch_client(client->id, 0, context_group_id) != 0) {
+    std::abort();
+  }
+}
 __declspec(dllexport) void
 v8_inspector__V8InspectorClient__BASE__quitMessageLoopOnPause(
-    v8_inspector::V8InspectorClient*) {}
+    v8_inspector::V8InspectorClient* self) {
+  auto* client = reinterpret_cast<ClientRaw*>(self);
+  if (client && client->id &&
+      gov8_isc_dispatch_client(client->id, 1, 0) != 0) {
+    std::abort();
+  }
+}
 __declspec(dllexport) void
 v8_inspector__V8InspectorClient__BASE__runIfWaitingForDebugger(
     v8_inspector::V8InspectorClient*, int) {}
@@ -170,6 +186,7 @@ __declspec(dllexport) int64_t gov8_inspector_dispose(void* raw) {
   try {
     Gov8IsolateScope enter(w->iso);
     v8_inspector__V8Inspector__DELETE(w->value);
+    w->client->id = 0;
     w->magic = 0;
     delete w;
     return kOk;

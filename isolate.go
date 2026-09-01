@@ -91,6 +91,13 @@ func (i *Isolate) Close() error {
 		i.mu.Unlock()
 		return err
 	}
+	// Inspector and session wrappers retain native objects that refer to this
+	// isolate. Reject before the native dispose; cleanup after disposal would
+	// have to dereference dead V8 state.
+	if err := inspectorIsolateCloseError(i); err != nil {
+		i.mu.Unlock()
+		return err
+	}
 	disposedHandle := i.handle
 	r1, _, _ := proc("gov8_isolate_dispose").Call(disposedHandle)
 	if i.advancedCounterHandle != 0 || i.advancedExternalReferences {

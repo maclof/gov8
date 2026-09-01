@@ -356,7 +356,11 @@ type ValueDeserializer struct {
 	sc     *Scope
 	handle uintptr
 	data   []byte // keeps the engine's input pointer valid until Close
-	closed bool
+	// readStarted makes SetSupportsLegacyWireFormat a deterministic Go error
+	// once ReadHeader or ReadValue has entered V8. The native precondition is
+	// stricter than an ordinary recoverable API failure.
+	readStarted bool
+	closed      bool
 }
 
 // NewValueDeserializer creates a deserializer over data (no copy) bound to
@@ -427,6 +431,7 @@ func (vd *ValueDeserializer) ReadValue(c *Context, tc *TryCatch) (Value, error) 
 	if err != nil {
 		return Value{}, err
 	}
+	vd.readStarted = true
 	var tcv uintptr
 	if tc != nil {
 		tcv = tc.handle
@@ -444,9 +449,11 @@ func (vd *ValueDeserializer) ReadValue(c *Context, tc *TryCatch) (Value, error) 
 }
 
 // ReadHeader reads and validates the wire-format header. Call it before
-// ReadValue when the data is expected to carry a version header; header-less
-// data is read as legacy version 0. ok is false when the header was absent
-// (not an error); an invalid header throws (IsException).
+// ReadValue. Header-less data is classified as legacy version 0 and, unless
+// legacy support is explicitly enabled with SetSupportsLegacyWireFormat, is
+// rejected by this pinned engine. Missing, truncated, and unsupported headers
+// therefore return an error satisfying IsException; current versioned data
+// returns true.
 func (vd *ValueDeserializer) ReadHeader(c *Context) (ok bool, err error) {
 	if err := vd.check(); err != nil {
 		return false, err
@@ -461,9 +468,10 @@ func (vd *ValueDeserializer) ReadHeader(c *Context) (ok bool, err error) {
 	if err != nil {
 		return false, err
 	}
+	vd.readStarted = true
 	var outOK int32
 	r1, _, _ := proc("gov8_value_deserializer_read_header").Call(
-		vd.handle, c.handle, sh, vd.sc.handle, uintptr(unsafe.Pointer(&outOK)))
+		vd.handle, c.handle, 0, sh, uintptr(unsafe.Pointer(&outOK)))
 	if int64(r1) < 0 {
 		return false, shimError("ValueDeserializer.ReadHeader", r1)
 	}

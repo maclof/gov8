@@ -870,6 +870,13 @@ func ReleaseIsolateHostState(i *Isolate) error {
 	if err := requireInitialized(); err != nil {
 		return err
 	}
+	// Inspector teardown invokes V8 and therefore cannot be synthesized by
+	// this host-registry cleanup. Refuse before mutating any registry so the
+	// caller can close sessions, unregister contexts, and close inspectors in
+	// that order while the isolate is still alive.
+	if err := inspectorIsolateCloseError(i); err != nil {
+		return err
+	}
 	// Wasm owns callbacks that may still target this isolate. Refuse release
 	// before mutating the other host registries when a stream or asynchronous
 	// compilation is still active; otherwise clear the native binding while

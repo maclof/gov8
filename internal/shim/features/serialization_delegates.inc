@@ -44,13 +44,10 @@
 //     is NOT a clean failure on this build: the engine throws its own
 //     "Unable to deserialize cloned data." Error. This shim returns an
 //     empty MaybeLocal and does not throw.
-//   - Wasm note (per coordinator): Wasm itself is out of scope. The wasm
-//     transfer-id hook is delegated (so delegates can observe the call and
-//     answer None, which silently drops the module from the wire), but Go
-//     can never SUPPLY a WasmModuleObject (no Wasm API in this module):
-//     an implemented get_wasm_module_from_id therefore always completes as
-//     the None-without-throw path. This is tracked as a documented gap,
-//     not a silent success.
+//   - The legacy observation-only Wasm resolver stays source compatible.
+//     A distinct typed resolver hook can now supply an actual, validated
+//     WasmModuleObject; Go performs isolate/scope/type validation before a
+//     handle reaches this native boundary.
 //
 // Delegate model. Exactly like the native-callback registries: delegates
 // live in an integer registry on the Go side; the engine only ever sees an
@@ -118,6 +115,7 @@ constexpr int64_t kOpGetWasmTransferId = 6;    // a=module wire -> id+1, 0=None
 constexpr int64_t kOpReadHostObject = 7;       // a=&out wire -> 1=Some, 0=None
 constexpr int64_t kOpGetSABFromId = 8;         // a=id b=&out wire -> 1/0
 constexpr int64_t kOpGetWasmFromId = 9;        // a=id -> always 0 (observe only)
+constexpr int64_t kOpResolveWasmFromId = 10;   // a=id b=&out module -> 1/0
 
 // Implemented-hook bitmask bits (Go ABI contract; keep in sync with
 // serializer_delegates.go). Serializer and deserializer masks are distinct
@@ -130,6 +128,7 @@ constexpr uint32_t kHookGetWasmModuleTransferId = 1u << 4;
 constexpr uint32_t kHookReadHostObject = 1u << 0;
 constexpr uint32_t kHookGetSharedArrayBufferFromId = 1u << 1;
 constexpr uint32_t kHookGetWasmModuleFromId = 1u << 2;
+constexpr uint32_t kHookResolveWasmModuleFromId = 1u << 3;
 
 void ThrowDenoDefaultSer(v8::Isolate* iso, const char* msg) {
   if (iso == nullptr) return;
@@ -346,15 +345,28 @@ class Gov8DeserDelX final : public v8::ValueDeserializer::Delegate {
 
   v8::MaybeLocal<v8::WasmModuleObject> GetWasmModuleFromId(
       v8::Isolate*, uint32_t transfer_id) override {
-    if (!(hooks_ & kHookGetWasmModuleFromId)) {
+    if (!(hooks_ & (kHookGetWasmModuleFromId |
+                    kHookResolveWasmModuleFromId))) {
       ThrowDenoDefaultSer(
           iso_, "Deno deserializer: get_wasm_module_from_id not implemented");
       return v8::MaybeLocal<v8::WasmModuleObject>();
     }
-    // Delegate observation only: this module has no Wasm API, so Go can
-    // never supply a WasmModuleObject. Completing as None-without-throw is
-    // the documented gap (engine error "Unable to deserialize cloned
-    // data."), never a fake success.
+    if (hooks_ & kHookResolveWasmModuleFromId) {
+      void* out = nullptr;
+      if (!CallReturnWire(kOpResolveWasmFromId,
+                          static_cast<uintptr_t>(transfer_id),
+                          reinterpret_cast<uintptr_t>(&out)) ||
+          out == nullptr) {
+        return v8::MaybeLocal<v8::WasmModuleObject>();
+      }
+      v8::Local<v8::Value> value = FromWire<v8::Value>(out);
+      if (value.IsEmpty() || !value->IsWasmModuleObject()) {
+        ThrowDenoDefaultSer(iso_, "gov8: resolved value is not a WasmModuleObject");
+        return v8::MaybeLocal<v8::WasmModuleObject>();
+      }
+      return value.As<v8::WasmModuleObject>();
+    }
+    // Preserve the original observation-only hook exactly.
     SerDelEntry entry = g_serdel_entry;
     if (entry != nullptr) {
       entry(id_, kOpGetWasmFromId, static_cast<uintptr_t>(transfer_id), 0);

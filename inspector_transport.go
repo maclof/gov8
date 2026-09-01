@@ -126,6 +126,113 @@ type InspectorSession struct {
 	active    int
 }
 
+// inspectorLifecycleRegistry is keyed by the Go isolate wrapper identity, not
+// its native address. Native addresses may be reused after disposal; wrapper
+// identity keeps a later isolate independent from stale accounting belonging
+// to an earlier isolate at the same address.
+type inspectorIsolateLifecycle struct {
+	inspectors int
+	sessions   int
+	contexts   map[*Context]int
+}
+
+var inspectorLifecycleRegistry = struct {
+	sync.Mutex
+	isolates map[*Isolate]*inspectorIsolateLifecycle
+}{isolates: make(map[*Isolate]*inspectorIsolateLifecycle)}
+
+func inspectorLifecycleForUpdate(iso *Isolate) *inspectorIsolateLifecycle {
+	state := inspectorLifecycleRegistry.isolates[iso]
+	if state == nil {
+		state = &inspectorIsolateLifecycle{contexts: make(map[*Context]int)}
+		inspectorLifecycleRegistry.isolates[iso] = state
+	}
+	return state
+}
+
+func pruneInspectorLifecycleLocked(iso *Isolate, state *inspectorIsolateLifecycle) {
+	if state.inspectors == 0 && state.sessions == 0 && len(state.contexts) == 0 {
+		delete(inspectorLifecycleRegistry.isolates, iso)
+	}
+}
+
+func registerInspectorLifecycle(iso *Isolate) {
+	inspectorLifecycleRegistry.Lock()
+	inspectorLifecycleForUpdate(iso).inspectors++
+	inspectorLifecycleRegistry.Unlock()
+}
+
+func unregisterInspectorLifecycle(iso *Isolate) {
+	inspectorLifecycleRegistry.Lock()
+	state := inspectorLifecycleRegistry.isolates[iso]
+	if state != nil && state.inspectors > 0 {
+		state.inspectors--
+		pruneInspectorLifecycleLocked(iso, state)
+	}
+	inspectorLifecycleRegistry.Unlock()
+}
+
+func registerInspectorSessionLifecycle(iso *Isolate) {
+	inspectorLifecycleRegistry.Lock()
+	inspectorLifecycleForUpdate(iso).sessions++
+	inspectorLifecycleRegistry.Unlock()
+}
+
+func unregisterInspectorSessionLifecycle(iso *Isolate) {
+	inspectorLifecycleRegistry.Lock()
+	state := inspectorLifecycleRegistry.isolates[iso]
+	if state != nil && state.sessions > 0 {
+		state.sessions--
+		pruneInspectorLifecycleLocked(iso, state)
+	}
+	inspectorLifecycleRegistry.Unlock()
+}
+
+func registerInspectorContextLifecycle(iso *Isolate, context *Context) {
+	inspectorLifecycleRegistry.Lock()
+	inspectorLifecycleForUpdate(iso).contexts[context]++
+	inspectorLifecycleRegistry.Unlock()
+}
+
+func unregisterInspectorContextLifecycle(iso *Isolate, context *Context) {
+	inspectorLifecycleRegistry.Lock()
+	state := inspectorLifecycleRegistry.isolates[iso]
+	if state != nil {
+		if state.contexts[context] <= 1 {
+			delete(state.contexts, context)
+		} else {
+			state.contexts[context]--
+		}
+		pruneInspectorLifecycleLocked(iso, state)
+	}
+	inspectorLifecycleRegistry.Unlock()
+}
+
+func inspectorContextCloseError(context *Context) error {
+	inspectorLifecycleRegistry.Lock()
+	defer inspectorLifecycleRegistry.Unlock()
+	state := inspectorLifecycleRegistry.isolates[context.iso]
+	if state != nil && state.contexts[context] != 0 {
+		return fmt.Errorf("gov8: context has %d active Inspector registration(s)", state.contexts[context])
+	}
+	return nil
+}
+
+func inspectorIsolateCloseError(iso *Isolate) error {
+	inspectorLifecycleRegistry.Lock()
+	defer inspectorLifecycleRegistry.Unlock()
+	state := inspectorLifecycleRegistry.isolates[iso]
+	if state == nil {
+		return nil
+	}
+	contextRegistrations := 0
+	for _, count := range state.contexts {
+		contextRegistrations += count
+	}
+	return fmt.Errorf("gov8: isolate has live Inspector state (inspectors=%d, sessions=%d, context registrations=%d)",
+		state.inspectors, state.sessions, contextRegistrations)
+}
+
 type inspectorChannelEntry struct {
 	iso     *Isolate
 	session *InspectorSession
@@ -233,7 +340,9 @@ func NewInspector(i *Isolate) (*Inspector, error) {
 	if int64(r) < 0 {
 		return nil, shimError("Inspector.New", r)
 	}
-	return &Inspector{iso: i, handle: out, contexts: make(map[*Context]struct{})}, nil
+	inspector := &Inspector{iso: i, handle: out, contexts: make(map[*Context]struct{})}
+	registerInspectorLifecycle(i)
+	return inspector, nil
 }
 func (i *Inspector) check() error {
 	if i == nil {
@@ -273,6 +382,7 @@ func (i *Inspector) ContextCreated(c *Context, group int32, name, aux InspectorS
 		return shimError("Inspector.ContextCreated", r)
 	}
 	i.contexts[c] = struct{}{}
+	registerInspectorContextLifecycle(i.iso, c)
 	return nil
 }
 func (i *Inspector) ContextDestroyed(c *Context) error {
@@ -293,6 +403,7 @@ func (i *Inspector) ContextDestroyed(c *Context) error {
 		return shimError("Inspector.ContextDestroyed", r)
 	}
 	delete(i.contexts, c)
+	unregisterInspectorContextLifecycle(i.iso, c)
 	return nil
 }
 
@@ -334,6 +445,7 @@ func (i *Inspector) Connect(group int32, channel InspectorChannel, state Inspect
 	entry.session = session
 	inspectorChannels.Unlock()
 	i.sessions++
+	registerInspectorSessionLifecycle(i.iso)
 	return session, nil
 }
 func (s *InspectorSession) check() error {
@@ -364,6 +476,9 @@ func (s *InspectorSession) Close() error {
 	if err := s.check(); err != nil {
 		return err
 	}
+	if err := inspectorClientCloseError(s.inspector); err != nil {
+		return err
+	}
 	inspectorChannels.Lock()
 	entry := inspectorChannels.entries[s.channelID]
 	if entry != nil && entry.active != 0 {
@@ -379,6 +494,7 @@ func (s *InspectorSession) Close() error {
 	delete(inspectorChannels.entries, s.channelID)
 	inspectorChannels.Unlock()
 	s.inspector.sessions--
+	unregisterInspectorSessionLifecycle(s.inspector.iso)
 	s.closed = true
 	s.handle = 0
 	return nil
@@ -393,11 +509,16 @@ func (i *Inspector) Close() error {
 	if len(i.contexts) != 0 {
 		return errors.New("gov8: inspector has registered contexts")
 	}
+	if err := inspectorClientCloseError(i); err != nil {
+		return err
+	}
 	r, _, _ := proc("gov8_inspector_dispose").Call(i.handle)
 	if int64(r) < 0 {
 		return shimError("Inspector.Close", r)
 	}
 	i.closed = true
 	i.handle = 0
+	dropInspectorClient(i)
+	unregisterInspectorLifecycle(i.iso)
 	return nil
 }
