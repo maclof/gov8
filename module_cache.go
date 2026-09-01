@@ -14,13 +14,17 @@ import (
 )
 
 var (
-	moduleCacheCompileProcOnce sync.Once
-	moduleCacheCompileProc     *syscall.Proc
+	moduleCacheProcsOnce      sync.Once
+	moduleCacheCompileAddr    uintptr
+	moduleCacheCreateAddr     uintptr
+	moduleCacheReadDeleteAddr uintptr
 )
 
-func ensureModuleCacheCompileProc() {
-	moduleCacheCompileProcOnce.Do(func() {
-		moduleCacheCompileProc = proc("gov8_module_cache_compile")
+func ensureModuleCacheProcs() {
+	moduleCacheProcsOnce.Do(func() {
+		moduleCacheCompileAddr = proc("gov8_module_cache_compile").Addr()
+		moduleCacheCreateAddr = proc("gov8_module_cache_create").Addr()
+		moduleCacheReadDeleteAddr = proc("gov8_module_cache_read_delete").Addr()
 	})
 }
 
@@ -28,10 +32,11 @@ func ensureModuleCacheCompileProc() {
 // SourceTextModule. It is isolate- and thread-affine, but remains valid after
 // the producing Module and its Context are closed.
 type UnboundModuleScript struct {
-	iso       *Isolate
-	handle    uintptr
-	closed    bool
-	cacheable bool
+	iso           *Isolate
+	handle        uintptr
+	closed        bool
+	cacheable     bool
+	cacheCapacity int
 }
 
 func (u *UnboundModuleScript) check() error {
@@ -187,27 +192,30 @@ func (u *UnboundModuleScript) CreateCodeCache() (*ModuleCodeCache, error) {
 	if err := u.check(); err != nil {
 		return nil, err
 	}
-	cacheHandle, err := callHandle("UnboundModuleScript.CreateCodeCache",
-		proc("gov8_module_cache_create"), u.handle)
-	if err != nil {
-		return nil, err
+	ensureModuleCacheProcs()
+	cacheHandle, _, _ := syscall.Syscall(moduleCacheCreateAddr, 1, u.handle, 0, 0)
+	if cacheHandle == 0 {
+		return nil, shimError("UnboundModuleScript.CreateCodeCache", 0)
 	}
-	capacity := 4096
+	capacity := u.cacheCapacity
+	if capacity <= 0 {
+		capacity = 4096
+	}
 	for attempt := 0; attempt < 2; attempt++ {
 		buffer := make([]byte, capacity)
 		var length int64
-		r1, _, _ := proc("gov8_module_cache_read_delete").Call(
-			cacheHandle, bytesArg(buffer), uintptr(capacity),
-			uintptr(unsafe.Pointer(&length)))
+		r1, _, _ := syscall.Syscall6(moduleCacheReadDeleteAddr, 4,
+			cacheHandle, uintptr(sliceUnsafePointer(buffer)), uintptr(capacity),
+			uintptr(unsafe.Pointer(&length)), 0, 0)
+		runtime.KeepAlive(buffer)
 		if int64(r1) == errNoMemory {
 			if length <= 0 || length > math.MaxInt32 {
 				return nil, shimError("UnboundModuleScript.CreateCodeCache", r1)
 			}
 			capacity = int(length)
-			cacheHandle, err = callHandle("UnboundModuleScript.CreateCodeCache",
-				proc("gov8_module_cache_create"), u.handle)
-			if err != nil {
-				return nil, err
+			cacheHandle, _, _ = syscall.Syscall(moduleCacheCreateAddr, 1, u.handle, 0, 0)
+			if cacheHandle == 0 {
+				return nil, shimError("UnboundModuleScript.CreateCodeCache", 0)
 			}
 			continue
 		}
@@ -217,9 +225,11 @@ func (u *UnboundModuleScript) CreateCodeCache() (*ModuleCodeCache, error) {
 		if length <= 0 || length > int64(len(buffer)) {
 			return nil, errors.New("gov8: invalid module code-cache length")
 		}
-		return &ModuleCodeCache{
-			data: append([]byte(nil), buffer[:length]...), provenance: true,
-		}, nil
+		u.cacheCapacity = int(length)
+		// buffer is already the Go-owned copy filled by the deleting native read.
+		// A full slice expression prevents callers inside this package from
+		// appending into unused capacity and retaining unrelated bytes.
+		return &ModuleCodeCache{data: buffer[:length:length], provenance: true}, nil
 	}
 	return nil, errors.New("gov8: module code-cache read failed")
 }
@@ -271,11 +281,11 @@ func (c *Context) CompileModuleCached(s *Scope, source string,
 	nameBytes := []byte(options.ResourceName)
 	var out uintptr
 	var rejectedInt int32
-	ensureModuleCacheCompileProc()
+	ensureModuleCacheProcs()
 	// Syscall15 is the fixed-arity form of SyscallN on Windows. Using it here
 	// avoids a heap-allocated variadic frame for this 15-argument hot path; its
 	// uintptrkeepalive contract also keeps the transient Go buffers live.
-	r1, _, _ := syscall.Syscall15(moduleCacheCompileProc.Addr(), 15,
+	r1, _, _ := syscall.Syscall15(moduleCacheCompileAddr, 15,
 		c.iso.handleAssumingCheck(), c.handle, scopeHandle, tryCatchHandle,
 		bytesArg(sourceBytes), uintptr(len(sourceBytes)),
 		bytesArg(nameBytes), uintptr(len(nameBytes)),

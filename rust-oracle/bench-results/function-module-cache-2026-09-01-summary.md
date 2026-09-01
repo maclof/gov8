@@ -62,3 +62,20 @@ bytes plus two allocations. The final Rust Criterion time interval was
 calls, scope lifecycle, persistent-wrapper registration and disposal. Complete
 Rust samples and reports are stored in
 `criterion-module-cache-fixed-2026-09-01/`.
+
+## Cache-buffer reuse follow-up
+
+Cache creation now caches all three native entry points, preserves pointer
+provenance through the fixed-arity read call, reuses the last exact cache
+capacity, and returns the already Go-owned read buffer instead of copying it.
+The same matched benchmark was rerun for ten 500 ms samples:
+
+| Operation | Go ns/op samples | Go B/op; allocs/op | Rust mean 95% CI |
+|---|---:|---:|---:|
+| create | 3602, 3555, 3593, 3655, 4969, 5282, 5134, 5144, 4706, 4836 | 736; 5 | 2.1954-2.2112 us |
+| consume persistent global | 1859, 1658, 1732, 1628, 1611, 1755, 1758, 1666, 1694, 1652 | 120; 5 | 569.85-636.49 ns |
+
+Creation drops from 4,880 bytes and 9 allocations to 736 bytes and 5
+allocations. Its 4,771 ns median is about 2.2x the Rust midpoint. Consumption
+remains allocation-stable with a 1,680 ns median, about 2.8x Rust. Timing phases
+on this host were visibly bimodal, so these ratios remain directional.
