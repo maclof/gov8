@@ -13,6 +13,10 @@ void DestroyTable(void* opaque) noexcept;
 void DropTable(v8::Isolate* isolate) noexcept;
 }  // namespace gov8_external_references_impl
 
+namespace gov8_cppgc_heap_impl {
+bool TakeForParams(void* wire, v8::CppHeap** heap, void** identity) noexcept;
+}
+
 namespace gov8_ia_impl {
 
 extern "C" {
@@ -111,14 +115,18 @@ __declspec(dllexport) void* gov8_ia_isolate_new(
     uint64_t max_old, uint64_t max_young, uint64_t code_range,
     uint64_t initial_old, uint64_t initial_young, int32_t allow_atomics_wait,
     int32_t use_external_references, const intptr_t* external_references,
-    size_t external_reference_count, void* counter_host_context) {
+    size_t external_reference_count, void* counter_host_context,
+    void* cpp_heap_wire, int32_t* cpp_heap_consumed, void** cpp_heap_identity) {
   ClearErr();
+  if (cpp_heap_consumed != nullptr) *cpp_heap_consumed = 0;
+  if (cpp_heap_identity != nullptr) *cpp_heap_identity = nullptr;
   if (g_platform == nullptr || (allow_atomics_wait != 0 && allow_atomics_wait != 1) ||
       (use_external_references != 0 && use_external_references != 1) ||
       (use_external_references == 0 &&
        (external_references != nullptr || external_reference_count != 0)) ||
       (use_external_references != 0 && external_references == nullptr &&
-       external_reference_count != 0)) {
+       external_reference_count != 0) || cpp_heap_consumed == nullptr ||
+      cpp_heap_identity == nullptr) {
     SetErr("invalid argument");
     return nullptr;
   }
@@ -156,6 +164,19 @@ __declspec(dllexport) void* gov8_ia_isolate_new(
       counter_state->host_context = counter_host_context;
       params.counter_lookup_callback = CounterLookup;
       pending_counter_state = counter_state.get();
+    }
+    if (cpp_heap_wire != nullptr) {
+      v8::CppHeap* cpp_heap = nullptr;
+      void* identity = nullptr;
+      if (!gov8_cppgc_heap_impl::TakeForParams(cpp_heap_wire, &cpp_heap,
+                                                &identity)) {
+        pending_counter_state = nullptr;
+        SetErr("custom cppgc heap is not transferable");
+        return nullptr;
+      }
+      params.cpp_heap = cpp_heap;
+      *cpp_heap_identity = identity;
+      *cpp_heap_consumed = 1;
     }
     v8::Isolate* isolate = v8::Isolate::New(params);
     pending_counter_state = nullptr;

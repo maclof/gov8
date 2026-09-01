@@ -54,6 +54,7 @@ $ConformancePackages = @(
     './conformance-context-scopes-advanced',
     './conformance-crdtp-core',
     './conformance-crdtp-dispatcher',
+    './conformance-cppgc-heap-lifecycle',
     './conformance-cppgc-object-wrapping',
     './conformance-cppgc-member',
     './conformance-cppgc-persistent',

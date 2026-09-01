@@ -189,6 +189,9 @@ func NewIsolateWithSnapshotParams(params *SnapshotCreateParams) (*Isolate, error
 	if configuration.stackLimit != 0 {
 		return nil, errors.New("gov8: CreateParams stack limit cannot safely reference a Go stack")
 	}
+	if configuration.cppGCHeap != nil {
+		return nil, errors.New("gov8: custom cppgc heaps are not supported with snapshot CreateParams")
+	}
 	if len(snapshotBytes) > math.MaxInt32 {
 		return nil, errors.New("gov8: startup blob exceeds V8's int32 size limit")
 	}

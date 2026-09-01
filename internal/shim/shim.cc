@@ -78,6 +78,7 @@ void v8__MicrotaskQueue__EnqueueMicrotask(v8::Isolate* isolate,
                                           v8::MicrotaskQueue* self,
                                           v8::Function* callback);
 void cppgc__shutdown_process();
+v8::Platform* gov8_cppgc_take_detached_platform();
 }
 
 // --- Fail-loud stubs for artifact symbols implemented on the Rust side ------
@@ -399,7 +400,7 @@ extern "C" {
 
 __declspec(dllexport) int64_t gov8_abi_version(void) {
   ClearErr();
-  return 29;
+  return 30;
 }
 
 // --- platform / process lifecycle -------------------------------------------
@@ -413,7 +414,10 @@ __declspec(dllexport) int64_t gov8_initialize_platform(void) {
     }
     // Pinned oracle configuration: new_default_platform(0, false) — default
     // worker count, no idle-task support.
-    v8::Platform* platform = v8__Platform__NewDefaultPlatform(0, 0);
+    v8::Platform* platform = gov8_cppgc_take_detached_platform();
+    if (platform == nullptr) {
+      platform = v8__Platform__NewDefaultPlatform(0, 0);
+    }
     if (platform == nullptr) {
       SetErr("NewDefaultPlatform failed");
       return kErrState;
@@ -1699,6 +1703,7 @@ __declspec(dllexport) int64_t gov8_last_error(char* buf, int64_t cap) {
 #include "features/cppgc_object_wrapping.inc"
 #include "features/cppgc_persistent.inc"
 #include "features/cppgc_member.inc"
+#include "features/cppgc_heap_lifecycle.inc"
 #include "features/strings_bigint.inc"
 #include "features/typed_arrays.inc"
 #include "features/fixed_primitive_arrays.inc"

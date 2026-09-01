@@ -80,6 +80,9 @@ func Initialize() error {
 	if loadPlatform() != stateUninitialized {
 		return fmt.Errorf("gov8: invalid global state: Initialize called in state %d", loadPlatform())
 	}
+	if err := cppgcBeforeV8Initialize(); err != nil {
+		return err
+	}
 	if err := initializeSelectedPlatform(); err != nil {
 		return err
 	}

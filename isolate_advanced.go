@@ -20,8 +20,8 @@ type CounterLookupCallback func(name string)
 
 // CreateParams is the safe Go counterpart of v8::CreateParams for the options
 // characterized by the pinned oracle. Custom allocators, raw stack limits at
-// isolate construction, snapshots and embedder CppHeap ownership are
-// intentionally not accepted here.
+// isolate construction and snapshots are composed by dedicated APIs. A custom
+// cppgc heap may be transferred exactly once with SetCppGCHeap.
 type CreateParams struct {
 	initialized             bool
 	maxOldGeneration        uint64
@@ -35,6 +35,31 @@ type CreateParams struct {
 	externalReferencesSet   bool
 	externalReferences      []ExternalReference
 	counterLookup           CounterLookupCallback
+	cppGCHeap               *CppGCHeap
+}
+
+// SetCppGCHeap selects a custom cppgc heap for one future isolate. The heap
+// is claimed immediately and ownership transfers when native construction
+// accepts it; it cannot be reused by another CreateParams or as detached.
+func (p *CreateParams) SetCppGCHeap(heap *CppGCHeap) error {
+	if p == nil || heap == nil {
+		return errors.New("gov8: nil CreateParams or cppgc heap")
+	}
+	p.initialize()
+	if p.cppGCHeap != nil {
+		return errors.New("gov8: CreateParams already has a cppgc heap")
+	}
+	heap.mu.Lock()
+	defer heap.mu.Unlock()
+	if err := heap.checkLocked(); err != nil {
+		return err
+	}
+	if heap.claimed || heap.detachedEnabled || heap.terminated {
+		return errors.New("gov8: cppgc heap is not transferable")
+	}
+	heap.claimed = true
+	p.cppGCHeap = heap
+	return nil
 }
 
 // NewCreateParams returns the Rust builder's defaults. The allocator flag is
@@ -239,6 +264,22 @@ func NewIsolateWithParams(params *CreateParams) (*Isolate, error) {
 	if configuration.stackLimit != 0 {
 		return nil, errors.New("gov8: CreateParams stack limit cannot safely reference a Go stack")
 	}
+	var cppHeap *CppGCHeap
+	if configuration.cppGCHeap != nil {
+		cppHeap = configuration.cppGCHeap
+		cppHeap.mu.Lock()
+		if err := cppHeap.checkLocked(); err != nil {
+			cppHeap.mu.Unlock()
+			return nil, err
+		}
+		if !cppHeap.claimed || cppHeap.detachedEnabled || cppHeap.terminated {
+			cppHeap.mu.Unlock()
+			return nil, errors.New("gov8: cppgc heap is not transferable")
+		}
+	}
+	if cppHeap != nil {
+		defer cppHeap.mu.Unlock()
+	}
 	counterHandle, err := registerIsolateCounter(configuration.counterLookup)
 	if err != nil {
 		return nil, err
@@ -263,12 +304,28 @@ func NewIsolateWithParams(params *CreateParams) (*Isolate, error) {
 	if len(referenceWords) != 0 {
 		referencePointer = uintptr(unsafe.Pointer(&referenceWords[0]))
 	}
+	var cppHeapHandle uintptr
+	if cppHeap != nil {
+		cppHeapHandle = cppHeap.handle
+	}
+	var cppHeapConsumed int32
+	var cppHeapIdentity uintptr
 	handle, err := callHandle("Isolate.NewWithParams", proc("gov8_ia_isolate_new"),
 		uintptr(configuration.maxOldGeneration), uintptr(configuration.maxYoungGeneration),
 		uintptr(configuration.codeRange), uintptr(configuration.initialOldGeneration),
 		uintptr(configuration.initialYoungGeneration), allowAtomics, referencesSet,
-		referencePointer, uintptr(len(referenceWords)), counterHandle)
+		referencePointer, uintptr(len(referenceWords)), counterHandle, cppHeapHandle,
+		uintptr(unsafe.Pointer(&cppHeapConsumed)), uintptr(unsafe.Pointer(&cppHeapIdentity)))
 	runtime.KeepAlive(referenceWords)
+	if cppHeapConsumed == 1 && cppHeap != nil {
+		cppHeap.handle = 0
+		cppHeap.identity = cppHeapIdentity
+		cppHeap.transferred = true
+		cppgcHeapLifecycle.Lock()
+		delete(cppgcHeapLifecycle.heaps, cppHeap)
+		cppgcHeapLifecycle.Unlock()
+		runtime.UnlockOSThread()
+	}
 	if err != nil {
 		abandonIsolateCreate()
 		dropIsolateCounter(counterHandle)
@@ -276,7 +333,8 @@ func NewIsolateWithParams(params *CreateParams) (*Isolate, error) {
 		return nil, err
 	}
 	isolate := &Isolate{handle: handle, tid: tid, advancedCounterHandle: counterHandle,
-		advancedExternalReferences: configuration.externalReferencesSet}
+		advancedExternalReferences: configuration.externalReferencesSet,
+		customCppGCHeap:            cppHeapConsumed == 1}
 	finishIsolateCreate(isolate)
 	return isolate, nil
 }

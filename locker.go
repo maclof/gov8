@@ -135,6 +135,9 @@ func (i *Isolate) TryIntoShared() (*SharedIsolate, error) {
 	if liveWeakCount(i) > 0 {
 		return nil, &IntoSharedError{Kind: KindLiveWeakHandlesOrPendingFinalizers, iso: i}
 	}
+	if i.customCppGCHeap {
+		return nil, &IntoSharedError{Kind: KindEmbedderCppHeap, iso: i}
+	}
 	// Isolate::GetCurrent must be this isolate: the creation Enter makes
 	// that true on the owning thread; any other isolate entered on top of
 	// it (or a foreign thread) fails the check without engine changes.

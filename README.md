@@ -161,17 +161,17 @@ API calls, Inspector remote-object wrapping/unwrapping, `$0`–`$4`
 inspected-object history, Inspector idle/async-task lifecycle, owned Inspector
 stack traces, exception reporting, Inspector client callbacks, CRDTP core
 values, serialization and synchronous dispatch, cppgc object wrapping with
-traced targets, and strong/weak cppgc persistent handles. The Rust fixtures
-contain 504 normalized checks: 483 compare byte-for-byte with Go and two have
-narrowly documented safety normalizations; five deferred-import, six cppgc
-custom-heap lifecycle, and eight Fast API residual checks await Go conformance
-coverage.
+traced targets, strong/weak cppgc persistent handles, and custom cppgc heap
+ownership and process lifecycle. The Rust fixtures contain 510 normalized
+checks: 489 compare byte-for-byte with Go and two have narrowly documented
+safety normalizations; five deferred-import, six ArrayBuffer allocator, and
+eight Fast API residual checks await Go conformance coverage.
 Separate fatal and panic-boundary subprocess tests cover unsafe lifecycle and
 callback edges.
 
 This is still not a feature-complete rusty_v8 binding. Major remaining families
-include dynamic-import `kDefer` delivery, residual unsafe CreateParams
-options, the residual generic/custom-heap cppgc object model, and the remaining Fast API
-type/adaptor surface. The
+include dynamic-import `kDefer` delivery, residual unsafe CreateParams and
+ArrayBuffer allocator options, the residual generic cppgc object model, and the
+remaining Fast API type/adaptor surface. The
 authoritative gaps and intentional API-shape differences are tracked in
 `PARITY.md`; `API_AUDIT.md` provides the 1,858-declaration denominator.

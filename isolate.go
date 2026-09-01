@@ -28,6 +28,7 @@ type Isolate struct {
 	contextsCreated            bool
 	advancedCounterHandle      uintptr
 	advancedExternalReferences bool
+	customCppGCHeap            bool
 }
 
 // NewIsolate creates a fresh isolate with a default ArrayBuffer allocator.
