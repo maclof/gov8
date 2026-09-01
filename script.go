@@ -38,7 +38,7 @@ type Script struct {
 	iso    *Isolate
 	ctx    *Context
 	handle uintptr
-	closed bool
+	state  uintptr // 0 while open; 1 after Close; temporary Run output during synchronous dispatch
 }
 
 // Compile compiles source in the context. If tc is non-nil, compile failures
@@ -101,7 +101,7 @@ func (sc *Script) check() error {
 	if err := sc.iso.check(); err != nil {
 		return err
 	}
-	if sc.closed {
+	if sc.state != 0 {
 		return fmt.Errorf("gov8: script used after Close")
 	}
 	return sc.ctx.checkAssumingIsolate()
@@ -149,15 +149,20 @@ func (sc *Script) Run(s *Scope, tc *TryCatch) (Value, error) {
 	if err != nil {
 		return Value{}, err
 	}
-	var out uintptr
 	var tcv uintptr
 	if tc != nil {
 		tcv = tc.handle
 	}
 	ensureScriptHotProcs()
+	// Script is heap-resident, so state is a stable output slot even when
+	// JavaScript re-enters Go and grows its stack. The shim writes it only
+	// after execution returns; a nested Run finishes and resets its result
+	// before the outer shim writes here, preserving strict LIFO behavior.
 	r1, _, _ := scriptEscapingSyscall6(scriptRunAddr, 6,
 		sc.iso.handleAssumingCheck(), sc.ctx.handle, sh, sc.handle, tcv,
-		uintptr(unsafe.Pointer(&out)))
+		uintptr(unsafe.Pointer(&sc.state)))
+	out := sc.state
+	sc.state = 0
 	if int64(r1) < 0 {
 		return Value{}, shimError("Run", r1)
 	}
@@ -169,7 +174,7 @@ func (sc *Script) Close() error {
 	if err := sc.iso.check(); err != nil {
 		return err
 	}
-	if sc.closed {
+	if sc.state != 0 {
 		return fmt.Errorf("gov8: script already closed")
 	}
 	if err := requireInitialized(); err != nil {
@@ -177,7 +182,7 @@ func (sc *Script) Close() error {
 	}
 	ensureScriptHotProcs()
 	r1, _, _ := syscall.Syscall(scriptDisposeAddr, 1, sc.handle, 0, 0)
-	sc.closed = true
+	sc.state = 1
 	if int64(r1) < 0 {
 		return shimError("Script.Close", r1)
 	}

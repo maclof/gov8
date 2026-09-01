@@ -210,3 +210,26 @@ A separate six-pair two-second confirmation changed the host median from
 (-4.6%). The independently run JS confirmation changed 2405 to 2360 ns
 (-1.9%). Concurrent lookup/removal race coverage verifies that readers observe
 only the exact immutable entry or its nil tombstone.
+
+## ABI-41 Script Run output-slot follow-up
+
+`Script.Run` now reuses the heap-resident script lifecycle word as its
+synchronous native output slot. This removes the dedicated escaping output
+allocation without growing the 32-byte `Script` wrapper. The shim writes the
+slot only after JavaScript returns; nested same-script execution therefore
+finishes and clears its result before the outer call writes its result.
+
+Six order-balanced, same-test-tree one-second pairs measured these medians:
+
+| Workload | Before | After | Allocation change |
+|---|---:|---:|---:|
+| script/compile_minimal | 905.7 ns | 885.9 ns | unchanged at 80 B/2 |
+| script/compile_workload | 1191.5 ns | 1175 ns | unchanged at 80 B/2 |
+| script/compile_and_run_minimal | 1809.5 ns | 1811 ns | 144 B/5 to 136 B/4 |
+| script/compile_and_run_workload | 53146 ns | 53150 ns | 4272 B/7 to 4264 B/6 |
+
+The compile-and-run timings are neutral while every Run path removes exactly
+8 bytes and one allocation. A separate ten-pair two-second precompiled-run
+confirmation improved the median from 5446 to 5373.5 ns (-1.3%), reducing
+4240 B/6 to 4232 B/5 (about 1.31x the pinned Rust midpoint). Same-script
+reentry and success/error/success TryCatch tests cover slot restoration.
