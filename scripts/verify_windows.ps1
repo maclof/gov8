@@ -94,6 +94,7 @@ $ConformancePackages = @(
     './conformance-snapshots',
     './conformance-strings-bigint',
     './conformance-template-advanced',
+    './conformance-template-accessor-name-keys',
     './conformance-template-name-keys',
     './conformance-typed-arrays',
     './conformance-trycatch-listener-residual',
