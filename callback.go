@@ -964,19 +964,53 @@ var (
 	callbackIntegerValueAddr  uintptr
 	returnValueInt32ProcAddr  uintptr
 	returnValueUint32ProcAddr uintptr
+	returnValueSetterAddrs    [returnValueEmptyString + 1]uintptr
+)
+
+type returnValueSetter uint8
+
+const (
+	returnValueArbitrary returnValueSetter = iota
+	returnValueDouble
+	returnValueBool
+	returnValueNull
+	returnValueUndefined
+	returnValueEmptyString
 )
 
 func resolveCallbackScalarProcs() {
 	callbackIntegerValueAddr = proc("gov8_wctx_integer_value_direct").Addr()
 	returnValueInt32ProcAddr = proc("gov8_rv_set_int32").Addr()
 	returnValueUint32ProcAddr = proc("gov8_rv_set_uint32").Addr()
+	names := [...]string{
+		"gov8_rv_set",
+		"gov8_rv_set_double",
+		"gov8_rv_set_bool",
+		"gov8_rv_set_null",
+		"gov8_rv_set_undefined",
+		"gov8_rv_set_empty_string",
+	}
+	for index, name := range names {
+		returnValueSetterAddrs[index] = proc(name).Addr()
+	}
 }
 
-func (rv ReturnValue) set(op string, args ...uintptr) error {
+func (rv ReturnValue) setFixed(op string, kind returnValueSetter, value uintptr) error {
 	if err := rv.cs.sc.check(); err != nil {
 		return err
 	}
-	return callErr(op, proc(op), append([]uintptr{rv.word}, args...)...)
+	callbackScalarProcsOnce.Do(resolveCallbackScalarProcs)
+	address := returnValueSetterAddrs[kind]
+	var r1 uintptr
+	if kind >= returnValueNull {
+		r1, _, _ = syscall.Syscall(address, 1, rv.word, 0, 0)
+	} else {
+		r1, _, _ = syscall.Syscall(address, 2, rv.word, value, 0)
+	}
+	if int64(r1) < 0 {
+		return shimError(op, r1)
+	}
+	return nil
 }
 
 // Set stores an arbitrary value as the callback result.
@@ -984,7 +1018,7 @@ func (rv ReturnValue) Set(v Value) error {
 	if err := v.check(); err != nil {
 		return err
 	}
-	return rv.set("gov8_rv_set", v.h)
+	return rv.setFixed("gov8_rv_set", returnValueArbitrary, v.h)
 }
 
 // SetInt32 stores an int32 (surfacing as a JS number).
@@ -1017,7 +1051,7 @@ func (rv ReturnValue) SetUint32(v uint32) error {
 
 // SetFloat64 stores a float64 (surfacing as a JS number).
 func (rv ReturnValue) SetFloat64(v float64) error {
-	return rv.set("gov8_rv_set_double", uintptr(math.Float64bits(v)))
+	return rv.setFixed("gov8_rv_set_double", returnValueDouble, uintptr(math.Float64bits(v)))
 }
 
 // SetBool stores a boolean.
@@ -1026,17 +1060,23 @@ func (rv ReturnValue) SetBool(v bool) error {
 	if v {
 		u = 1
 	}
-	return rv.set("gov8_rv_set_bool", u)
+	return rv.setFixed("gov8_rv_set_bool", returnValueBool, u)
 }
 
 // SetNull stores null.
-func (rv ReturnValue) SetNull() error { return rv.set("gov8_rv_set_null") }
+func (rv ReturnValue) SetNull() error {
+	return rv.setFixed("gov8_rv_set_null", returnValueNull, 0)
+}
 
 // SetUndefined stores undefined.
-func (rv ReturnValue) SetUndefined() error { return rv.set("gov8_rv_set_undefined") }
+func (rv ReturnValue) SetUndefined() error {
+	return rv.setFixed("gov8_rv_set_undefined", returnValueUndefined, 0)
+}
 
 // SetEmptyString stores the empty string.
-func (rv ReturnValue) SetEmptyString() error { return rv.set("gov8_rv_set_empty_string") }
+func (rv ReturnValue) SetEmptyString() error {
+	return rv.setFixed("gov8_rv_set_empty_string", returnValueEmptyString, 0)
+}
 
 // Get reads back the value currently held by the return value: undefined
 // when nothing was set, otherwise the last value stored by a setter
