@@ -4,8 +4,31 @@ package gov8
 
 import (
 	"fmt"
+	"runtime"
+	"sync"
+	"syscall"
 	"unsafe"
 )
+
+var (
+	scriptHotProcsOnce sync.Once
+	scriptCompileAddr  uintptr
+	scriptRunAddr      uintptr
+	scriptDisposeAddr  uintptr
+)
+
+func ensureScriptHotProcs() {
+	scriptHotProcsOnce.Do(func() {
+		scriptCompileAddr = proc("gov8_script_compile").Addr()
+		scriptRunAddr = proc("gov8_script_run").Addr()
+		scriptDisposeAddr = proc("gov8_script_dispose").Addr()
+	})
+}
+
+//go:uintptrescapes
+func scriptEscapingSyscall6(trap, nargs, a1, a2, a3, a4, a5, a6 uintptr) (uintptr, uintptr, syscall.Errno) {
+	return syscall.Syscall6(trap, nargs, a1, a2, a3, a4, a5, a6)
+}
 
 // Script is a compiled script, rooted as a persistent v8::Global<Script> so
 // it can be run repeatedly (e.g. benchmark workloads) and survives handle
@@ -59,8 +82,11 @@ func (c *Context) Compile(s *Scope, source string, tc *TryCatch) (*Script, error
 	if tc != nil {
 		tcv = tc.handle
 	}
-	r1, _, _ := proc("gov8_script_compile").Call(
-		c.iso.handleAssumingCheck(), c.handle, sh, tcv, p, uintptr(len(b)), uintptr(unsafe.Pointer(&out)))
+	ensureScriptHotProcs()
+	r1, _, _ := syscall.Syscall9(scriptCompileAddr, 7,
+		c.iso.handleAssumingCheck(), c.handle, sh, tcv, p, uintptr(len(b)),
+		uintptr(unsafe.Pointer(&out)), 0, 0)
+	runtime.KeepAlive(b)
 	if int64(r1) < 0 {
 		return nil, shimError("Compile", r1)
 	}
@@ -128,8 +154,10 @@ func (sc *Script) Run(s *Scope, tc *TryCatch) (Value, error) {
 	if tc != nil {
 		tcv = tc.handle
 	}
-	r1, _, _ := proc("gov8_script_run").Call(
-		sc.iso.handleAssumingCheck(), sc.ctx.handle, sh, sc.handle, tcv, uintptr(unsafe.Pointer(&out)))
+	ensureScriptHotProcs()
+	r1, _, _ := scriptEscapingSyscall6(scriptRunAddr, 6,
+		sc.iso.handleAssumingCheck(), sc.ctx.handle, sh, sc.handle, tcv,
+		uintptr(unsafe.Pointer(&out)))
 	if int64(r1) < 0 {
 		return Value{}, shimError("Run", r1)
 	}
@@ -147,7 +175,8 @@ func (sc *Script) Close() error {
 	if err := requireInitialized(); err != nil {
 		return err
 	}
-	r1, _, _ := proc("gov8_script_dispose").Call(sc.handle)
+	ensureScriptHotProcs()
+	r1, _, _ := syscall.Syscall(scriptDisposeAddr, 1, sc.handle, 0, 0)
 	sc.closed = true
 	if int64(r1) < 0 {
 		return shimError("Script.Close", r1)

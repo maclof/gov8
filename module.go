@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"runtime"
 	"sync"
 	"syscall"
 	"unsafe"
@@ -94,12 +95,44 @@ type Module struct {
 }
 
 var (
-	moduleRegMu       sync.Mutex
-	moduleByHandle    = map[uintptr]*Module{}
-	moduleResolveReg  = map[int64]*moduleResolveEntry{}
-	moduleResolveID   int64
-	moduleResolveOnce sync.Once
+	moduleRegMu                     sync.Mutex
+	moduleByHandle                  = map[uintptr]*Module{}
+	moduleResolveReg                = map[int64]*moduleResolveEntry{}
+	moduleResolveID                 int64
+	moduleResolveOnce               sync.Once
+	moduleHotProcsOnce              sync.Once
+	moduleCompileAddr               uintptr
+	moduleDisposeAddr               uintptr
+	moduleStatusAddr                uintptr
+	moduleInstantiateAddr           uintptr
+	moduleEvaluateAddr              uintptr
+	moduleResolveSpecifierAddr      uintptr
+	moduleResolveAttributeCountAddr uintptr
+	moduleResolveAttributeAddr      uintptr
 )
+
+func ensureModuleHotProcs() {
+	moduleHotProcsOnce.Do(func() {
+		moduleCompileAddr = proc("gov8_module_compile").Addr()
+		moduleDisposeAddr = proc("gov8_module_dispose").Addr()
+		moduleStatusAddr = proc("gov8_module_status").Addr()
+		moduleInstantiateAddr = proc("gov8_module_instantiate").Addr()
+		moduleEvaluateAddr = proc("gov8_module_evaluate").Addr()
+		moduleResolveSpecifierAddr = proc("gov8_module_resolve_specifier").Addr()
+		moduleResolveAttributeCountAddr = proc("gov8_module_resolve_attribute_count").Addr()
+		moduleResolveAttributeAddr = proc("gov8_module_resolve_attribute").Addr()
+	})
+}
+
+//go:uintptrescapes
+func moduleEscapingSyscall9(trap, nargs, a1, a2, a3, a4, a5, a6, a7, a8, a9 uintptr) (uintptr, uintptr, syscall.Errno) {
+	return syscall.Syscall9(trap, nargs, a1, a2, a3, a4, a5, a6, a7, a8, a9)
+}
+
+//go:uintptrescapes
+func moduleEscapingSyscall6(trap, nargs, a1, a2, a3, a4, a5, a6 uintptr) (uintptr, uintptr, syscall.Errno) {
+	return syscall.Syscall6(trap, nargs, a1, a2, a3, a4, a5, a6)
+}
 
 func (m *Module) check() error {
 	if m == nil {
@@ -107,6 +140,13 @@ func (m *Module) check() error {
 	}
 	if err := m.iso.check(); err != nil {
 		return err
+	}
+	return m.checkAssumingIsolate()
+}
+
+func (m *Module) checkAssumingIsolate() error {
+	if m == nil {
+		return errors.New("gov8: nil module")
 	}
 	if m.closed {
 		return errors.New("gov8: module used after Close")
@@ -155,11 +195,14 @@ func (c *Context) CompileModuleWithOptions(s *Scope, source string, options Modu
 	if tc != nil {
 		tcHandle = tc.handle
 	}
-	r1, _, _ := proc("gov8_module_compile").Call(
+	ensureModuleHotProcs()
+	r1, _, _ := syscall.Syscall12(moduleCompileAddr, 11,
 		c.iso.handleAssumingCheck(), c.handle, sh, tcHandle,
 		bytesPtr(src), uintptr(len(src)), bytesPtr(name), uintptr(len(name)),
 		uintptr(options.LineOffset), uintptr(options.ColumnOffset),
-		uintptr(unsafe.Pointer(&out)))
+		uintptr(unsafe.Pointer(&out)), 0)
+	runtime.KeepAlive(src)
+	runtime.KeepAlive(name)
 	if int64(r1) < 0 {
 		return nil, shimError("CompileModule", r1)
 	}
@@ -189,7 +232,8 @@ func (m *Module) Close() error {
 	if m.syntheticActive {
 		return errors.New("gov8: cannot close a synthetic module from its active evaluation callback")
 	}
-	r1, _, _ := proc("gov8_module_dispose").Call(m.handle)
+	ensureModuleHotProcs()
+	r1, _, _ := syscall.Syscall(moduleDisposeAddr, 1, m.handle, 0, 0)
 	if int64(r1) < 0 {
 		return shimError("Module.Close", r1)
 	}
@@ -214,7 +258,12 @@ func (m *Module) Status() (ModuleStatus, error) {
 	if err := m.check(); err != nil {
 		return 0, err
 	}
-	r1, _, _ := proc("gov8_module_status").Call(m.handle)
+	return m.statusAssumingChecked()
+}
+
+func (m *Module) statusAssumingChecked() (ModuleStatus, error) {
+	ensureModuleHotProcs()
+	r1, _, _ := syscall.Syscall(moduleStatusAddr, 1, m.handle, 0, 0)
 	if int64(r1) < 0 {
 		return 0, shimError("Module.Status", r1)
 	}
@@ -404,12 +453,17 @@ func moduleResolveDispatch(id, specifierWire, attributesWire, referrerHandle, ou
 	}()
 	moduleRegMu.Lock()
 	entry := moduleResolveReg[int64(id)]
-	referrer := moduleByHandle[referrerHandle]
+	var referrer *Module
+	if entry != nil && entry.module.handle == referrerHandle {
+		referrer = entry.module
+	} else {
+		referrer = moduleByHandle[referrerHandle]
+	}
 	moduleRegMu.Unlock()
 	if entry == nil || referrer == nil {
 		return 0
 	}
-	specifier, err := (Value{iso: entry.module.iso, sc: entry.scope, h: specifierWire}).ToString(entry.module.ctx)
+	specifier, err := moduleResolverSpecifier(entry.module.iso, specifierWire)
 	if err != nil {
 		entry.err = err
 		return 0
@@ -432,12 +486,16 @@ func moduleResolveDispatch(id, specifierWire, attributesWire, referrerHandle, ou
 		moduleThrowResolverError(entry.module.iso, entry.err.Error())
 		return 0
 	}
-	if err := resolved.check(); err != nil {
-		entry.err = err
+	if resolved.iso != entry.module.iso {
+		if err := resolved.check(); err != nil {
+			entry.err = err
+			return 0
+		}
+		entry.err = foreignIsolate("resolved module")
 		return 0
 	}
-	if resolved.iso != entry.module.iso {
-		entry.err = foreignIsolate("resolved module")
+	if err := resolved.checkAssumingIsolate(); err != nil {
+		entry.err = err
 		return 0
 	}
 	if resolved.ctx != entry.module.ctx {
@@ -448,28 +506,66 @@ func moduleResolveDispatch(id, specifierWire, attributesWire, referrerHandle, ou
 	return 1
 }
 
+func moduleResolverSpecifier(iso *Isolate, specifierWire uintptr) (string, error) {
+	var local [256]byte
+	var needed int64
+	r1, _, _ := syscall.Syscall6(moduleResolveSpecifierAddr, 5,
+		iso.handleAssumingCheck(), specifierWire, uintptr(unsafe.Pointer(&local[0])),
+		uintptr(len(local)), uintptr(unsafe.Pointer(&needed)), 0)
+	runtime.KeepAlive(&local)
+	if int64(r1) == errNoMemory {
+		if needed <= int64(len(local)) || needed > int64(^uint(0)>>1) {
+			return "", errors.New("gov8: invalid module specifier length")
+		}
+		buf := make([]byte, int(needed))
+		r1, _, _ = syscall.Syscall6(moduleResolveSpecifierAddr, 5,
+			iso.handleAssumingCheck(), specifierWire, bytesPtr(buf), uintptr(len(buf)),
+			uintptr(unsafe.Pointer(&needed)), 0)
+		runtime.KeepAlive(buf)
+		if int64(r1) < 0 {
+			return "", shimError("Module.Instantiate", r1)
+		}
+		if needed < 0 || needed > int64(len(buf)) {
+			return "", errors.New("gov8: invalid module specifier length")
+		}
+		return string(buf[:needed]), nil
+	}
+	if int64(r1) < 0 {
+		return "", shimError("Module.Instantiate", r1)
+	}
+	if needed < 0 || needed > int64(len(local)) {
+		return "", errors.New("gov8: invalid module specifier length")
+	}
+	return string(local[:needed]), nil
+}
+
 func moduleResolverAttributes(iso *Isolate, attributesWire uintptr) ([]ModuleImportAttribute, error) {
-	r1, _, _ := proc("gov8_module_resolve_attribute_count").Call(iso.handleAssumingCheck(), attributesWire)
+	ensureModuleHotProcs()
+	r1, _, _ := syscall.Syscall(moduleResolveAttributeCountAddr, 2,
+		iso.handleAssumingCheck(), attributesWire, 0)
 	if int64(r1) < 0 {
 		return nil, shimError("Module.Instantiate", r1)
 	}
 	attributes := make([]ModuleImportAttribute, int(r1))
-	p := proc("gov8_module_resolve_attribute")
 	for i := range attributes {
 		var keyLen, valueLen int64
 		var sourceOffset int32
-		r1, _, _ = p.Call(iso.handleAssumingCheck(), attributesWire, uintptr(i),
+		r1, _, _ = syscall.Syscall12(moduleResolveAttributeAddr, 10,
+			iso.handleAssumingCheck(), attributesWire, uintptr(i),
 			0, 0, uintptr(unsafe.Pointer(&keyLen)), 0, 0,
-			uintptr(unsafe.Pointer(&valueLen)), uintptr(unsafe.Pointer(&sourceOffset)))
+			uintptr(unsafe.Pointer(&valueLen)), uintptr(unsafe.Pointer(&sourceOffset)), 0, 0)
 		if int64(r1) != errNoMemory && int64(r1) < 0 {
 			return nil, shimError("Module.Instantiate", r1)
 		}
 		key := make([]byte, keyLen+1)
 		value := make([]byte, valueLen+1)
-		r1, _, _ = p.Call(iso.handleAssumingCheck(), attributesWire, uintptr(i),
+		r1, _, _ = syscall.Syscall12(moduleResolveAttributeAddr, 10,
+			iso.handleAssumingCheck(), attributesWire, uintptr(i),
 			uintptr(unsafe.Pointer(&key[0])), uintptr(keyLen), uintptr(unsafe.Pointer(&keyLen)),
 			uintptr(unsafe.Pointer(&value[0])), uintptr(valueLen), uintptr(unsafe.Pointer(&valueLen)),
-			uintptr(unsafe.Pointer(&sourceOffset)))
+			uintptr(unsafe.Pointer(&sourceOffset)), 0, 0)
+		runtime.KeepAlive(key)
+		runtime.KeepAlive(value)
 		if int64(r1) < 0 {
 			return nil, shimError("Module.Instantiate", r1)
 		}
@@ -500,7 +596,7 @@ func (m *Module) Instantiate(s *Scope, resolver ModuleResolver, tc *TryCatch) (b
 	if err != nil {
 		return false, err
 	}
-	status, err := m.Status()
+	status, err := m.statusAssumingChecked()
 	if err != nil {
 		return false, err
 	}
@@ -530,8 +626,10 @@ func (m *Module) Instantiate(s *Scope, resolver ModuleResolver, tc *TryCatch) (b
 		moduleRegMu.Unlock()
 	}()
 	var ok int32
-	r1, _, _ := proc("gov8_module_instantiate").Call(m.iso.handleAssumingCheck(), m.ctx.handle,
-		sh, m.handle, tcHandle, uintptr(id), 0, 0, uintptr(unsafe.Pointer(&ok)))
+	ensureModuleHotProcs()
+	r1, _, _ := moduleEscapingSyscall9(moduleInstantiateAddr, 9,
+		m.iso.handleAssumingCheck(), m.ctx.handle, sh, m.handle, tcHandle,
+		uintptr(id), 0, 0, uintptr(unsafe.Pointer(&ok)))
 	if entry.err != nil {
 		return false, entry.err
 	}
@@ -550,17 +648,14 @@ func (m *Module) Evaluate(s *Scope, tc *TryCatch) (Promise, error) {
 	if m.syntheticCallbackID != 0 {
 		return Promise{}, errors.New("gov8: synthetic module evaluation returns a general Value; use EvaluateValue")
 	}
-	value, err := m.evaluateValue(s, tc)
+	value, err := m.evaluateValueAssumingChecked(s, tc)
 	if err != nil {
 		return Promise{}, err
 	}
 	return Promise{value}, nil
 }
 
-func (m *Module) evaluateValue(s *Scope, tc *TryCatch) (Value, error) {
-	if err := m.check(); err != nil {
-		return Value{}, err
-	}
+func (m *Module) evaluateValueAssumingChecked(s *Scope, tc *TryCatch) (Value, error) {
 	if s == nil || s.iso != m.iso {
 		return Value{}, foreignIsolate("scope")
 	}
@@ -568,7 +663,7 @@ func (m *Module) evaluateValue(s *Scope, tc *TryCatch) (Value, error) {
 	if err != nil {
 		return Value{}, err
 	}
-	status, err := m.Status()
+	status, err := m.statusAssumingChecked()
 	if err != nil {
 		return Value{}, err
 	}
@@ -586,8 +681,10 @@ func (m *Module) evaluateValue(s *Scope, tc *TryCatch) (Value, error) {
 		tcHandle = tc.handle
 	}
 	var out uintptr
-	r1, _, _ := proc("gov8_module_evaluate").Call(m.iso.handleAssumingCheck(), m.ctx.handle,
-		sh, m.handle, tcHandle, uintptr(unsafe.Pointer(&out)))
+	ensureModuleHotProcs()
+	r1, _, _ := moduleEscapingSyscall6(moduleEvaluateAddr, 6,
+		m.iso.handleAssumingCheck(), m.ctx.handle, sh, m.handle, tcHandle,
+		uintptr(unsafe.Pointer(&out)))
 	if int64(r1) < 0 {
 		return Value{}, shimError("Module.Evaluate", r1)
 	}
@@ -606,7 +703,7 @@ func (m *Module) EvaluateValue(s *Scope, tc *TryCatch) (Value, error) {
 	if m.syntheticCallbackID != 0 {
 		return m.evaluateSyntheticValue(s, tc)
 	}
-	return m.evaluateValue(s, tc)
+	return m.evaluateValueAssumingChecked(s, tc)
 }
 
 // Namespace returns the module namespace once the graph has been instantiated.

@@ -233,6 +233,34 @@ v8::Local<v8::ModuleRequest> ModuleRequestAt(ModuleWrap* w, int32_t index) {
 
 extern "C" {
 
+__declspec(dllexport) int64_t gov8_module_resolve_specifier(
+    v8::Isolate* iso, void* specifier, char* output, int64_t capacity,
+    int64_t* out_length) {
+  ClearErr();
+  if (iso == nullptr || specifier == nullptr || out_length == nullptr ||
+      capacity < 0) {
+    SetErr("invalid argument");
+    return kErrBadArg;
+  }
+  try {
+    Gov8IsolateScope iso_scope(iso);
+    v8::HandleScope hs(iso);
+    v8::String::Utf8Value text(iso, FromWire<v8::String>(specifier));
+    *out_length = text.length();
+    if (output == nullptr || capacity < text.length()) {
+      SetErr("output buffer too small");
+      return kErrNoMemory;
+    }
+    if (text.length() > 0) {
+      std::memcpy(output, *text, static_cast<size_t>(text.length()));
+    }
+    return kOk;
+  } catch (...) {
+    SetErr("C++ exception in module_resolve_specifier");
+    return kErrCpp;
+  }
+}
+
 __declspec(dllexport) int64_t gov8_module_resolve_attribute_count(
     v8::Isolate* iso, void* attributes) {
   ClearErr();
