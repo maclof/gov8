@@ -58,7 +58,9 @@ func benchmarkFastAPIExecution(b *testing.B, useFast bool) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	fast, err := NewCFunction(fastResidualTestAddress(b, 0), info)
+	// Kind 6 matches the Rust benchmark target: CallbackOptions participates in
+	// the native ABI but is intentionally not inspected in the timed callback.
+	fast, err := NewCFunction(fastResidualTestAddress(b, 6), info)
 	if err != nil {
 		b.Fatal(err)
 	}

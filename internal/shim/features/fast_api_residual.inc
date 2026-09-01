@@ -89,6 +89,16 @@ uint32_t FastOptionsPointer(v8::Local<v8::Object>, uint32_t value,
   return value + 1;
 }
 
+// Benchmark counterpart to rust-oracle's fast_increment. The callback-options
+// parameter is part of the exercised Fast API ABI, but the timed Rust target
+// deliberately does not inspect it. Keep that workload separate from
+// FastOptionsPointer, whose observations are required by conformance tests.
+uint32_t FastOptionsBenchmark(v8::Local<v8::Object>, uint32_t value,
+                              v8::FastApiCallbackOptions*) {
+  g_options_fast.fetch_add(1, std::memory_order_seq_cst);
+  return value + 1;
+}
+
 uint32_t FastOptionsReference(v8::Local<v8::Object>, uint32_t value,
                               const v8::FastApiCallbackOptions& options) {
   g_options_fast.fetch_add(1, std::memory_order_seq_cst);
@@ -148,6 +158,8 @@ __declspec(dllexport) uintptr_t gov8_fast_api_residual_address(int32_t kind) {
       return reinterpret_cast<uintptr_t>(&FastRestricted);
     case 5:
       return reinterpret_cast<uintptr_t>(&FastAllowShared);
+    case 6:
+      return reinterpret_cast<uintptr_t>(&FastOptionsBenchmark);
     default:
       return 0;
   }

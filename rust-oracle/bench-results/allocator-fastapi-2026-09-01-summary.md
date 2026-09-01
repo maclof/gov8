@@ -71,6 +71,28 @@ fixed-arity/direct-conversion pass reduced its 256-call median from 164,758 to
 remaining separate gap is dominated by callback crossings and borrowed-scope
 lifetime enforcement.
 
+## Rust-matched native target follow-up
+
+The Go benchmark previously reused the callback-options conformance target,
+which checked the options data identity on every native call. The Rust target
+receives the same callback-options argument but deliberately does not inspect
+it. A separate native fixture target now matches that behavior while preserving
+the observing target for conformance coverage. Both targets retain the same
+sequentially consistent fast-call counter and `value + 1` result.
+
+Ten alternating-order frozen-binary pairs measured the old target at 1464,
+1521, 1544, 1504, 1749, 1675, 1548, 1470, 1480, and 1652 ns/op, versus 1403,
+1369, 1469, 1397, 1426, 1395, 1374, 1442, 1473, and 1529 ns/op for the matched
+target. Every pair improved; the median fell 7.7% from 1532.5 to 1414.5 ns/op.
+Allocations remained 72 bytes and 2 allocations, and every sample verified
+exactly 256 native fast calls and zero slow fallbacks per timed iteration. The
+new median is about 1.25x the Rust midpoint of 1127.35 ns.
+
+The candidate CPU profile attributes 95.6% cumulatively to the outer public
+`Function.Call`; the DLL transition is 82.3% flat in `runtime.cgocall`, while
+isolate and scope validation are 12.0% and 10.6% cumulative. Those checks and
+the single outer native crossing remain part of the public workload.
+
 ## Split allocator-callback experiment
 
 An ABI-40 experiment replaced the legacy allocator dispatcher with four
