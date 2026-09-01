@@ -417,15 +417,45 @@ func BenchmarkLazyDataPropertyFirstRead(b *testing.B) {
 	getter := func(_ *gov8.CallbackScope, _ gov8.PropertyCallbackArguments, rv gov8.ReturnValue) {
 		_ = rv.SetInt32(42)
 	}
+	// Validate the matched workload before timing it.
+	probe := e.mustObject()
+	probeKey := e.mustString("lazy")
+	if ok, err := probe.SetLazyDataProperty(e.scope, e.ctx, probeKey, getter); err != nil || !ok {
+		b.Fatalf("probe install: ok=%v err=%v", ok, err)
+	}
+	probeValue, err := probe.GetByKey(e.scope, e.ctx, probeKey)
+	if err != nil {
+		b.Fatalf("probe first read: %v", err)
+	}
+	if value, ok, err := probeValue.Int32Value(e.ctx); err != nil || !ok || value != 42 {
+		b.Fatalf("probe value: value=%d ok=%v err=%v", value, ok, err)
+	}
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		obj := e.mustObject()
-		key := e.mustString("lazy")
-		if ok, err := obj.SetLazyDataProperty(e.scope, e.ctx, key, getter); err != nil || !ok {
+		inner, err := e.iso.NewScope()
+		if err != nil {
 			b.Fatal(err)
 		}
-		if _, err := obj.GetByKey(e.scope, e.ctx, key); err != nil {
+		obj, err := inner.NewObject(e.ctx)
+		if err != nil {
+			b.Fatal(err)
+		}
+		key, err := inner.NewString("lazy")
+		if err != nil {
+			b.Fatal(err)
+		}
+		if ok, err := obj.SetLazyDataProperty(inner, e.ctx, key, getter); err != nil || !ok {
+			b.Fatalf("install: ok=%v err=%v", ok, err)
+		}
+		value, err := obj.GetByKey(inner, e.ctx, key)
+		if err != nil {
+			b.Fatal(err)
+		}
+		if got, ok, err := value.Int32Value(e.ctx); err != nil || !ok || got != 42 {
+			b.Fatalf("first read: value=%d ok=%v err=%v", got, ok, err)
+		}
+		if err := inner.Close(); err != nil {
 			b.Fatal(err)
 		}
 	}

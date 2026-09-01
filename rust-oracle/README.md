@@ -370,6 +370,8 @@ fixture; exact crate citations in the `src/checks/host/` module docs):
   resolve + `perform_microtask_checkpoint` under the Explicit policy
 - `crdtp_dispatcher/dispatch_success` — one reusable parsed request routed
   through a domain callback and synchronously serialized by the channel
+- `object/lazy_data_property_first_read` — fresh object and String key,
+  lazy-getter installation, first materializing read, and result validation
 
 Methodology: 1 s warm-up, 3 s measurement, 50 samples per benchmark (set in
 `benches/common/mod.rs`); fresh nested `HandleScope` per iteration; isolate
@@ -392,6 +394,10 @@ Raw output lives in `bench-results/`:
   matched synchronous CRDTP dispatcher workload
 - `crdtp-dispatcher-2026-09-01-summary.md` — matching Go samples, Rust
   confidence interval, workload boundary, and the measured performance gap
+- `criterion-object-lazy-2026-09-01/` — raw Criterion estimates, samples,
+  and Tukey fences for the matched lazy-property first-read workload
+- `object-lazy-2026-09-01-summary.md` — matching Go samples, Rust confidence
+  interval, workload boundary, and the measured performance gap
 
 To record a new run (Windows PowerShell, from the `rust-oracle` directory):
 
@@ -421,6 +427,8 @@ Checked on this machine (2026-09-01, Rust toolchain 1.98.0, Go 1.26.2):
   implementations with repeated samples; raw data and the comparison summary
   are committed under `bench-results/`
 - CRDTP synchronous dispatch — matched Rust/Go workload measured with
+  repeated samples; raw data and the comparison summary are checked in
+- lazy data-property first read — matched Rust/Go workload measured with
   repeated samples; raw data and the comparison summary are checked in
 - Unsupported-target guard: `cargo check --target x86_64-pc-windows-gnu`
   (installed temporarily, then removed) fails immediately with the single

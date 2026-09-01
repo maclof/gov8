@@ -101,6 +101,11 @@ name = "crdtp_dispatcher"
 path = "benches/crdtp_dispatcher.rs"
 harness = false
 
+[[bench]]
+name = "object"
+path = "benches/object.rs"
+harness = false
+
 [profile.dev.package.v8]
 # The V8 engine itself is always the prebuilt release static library on
 # Windows; optimizing the thin Rust binding layer only speeds up test and
