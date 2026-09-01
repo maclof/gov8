@@ -109,7 +109,6 @@ func takeCRDTPBytesSized(handle, length uintptr) (result []byte, err error) {
 	if handle == 0 {
 		return nil, errors.New("gov8: null CRDTP byte buffer")
 	}
-	ensureCRDTPCoreProcs()
 	owned := handle
 	defer func() {
 		if owned != 0 {
@@ -437,10 +436,12 @@ func (r *CRDTPDispatchResponse) Close() error {
 // CRDTPSerializable is an owned lazily serialized protocol artifact. Bytes
 // returns a fresh copy on every call. Passing it as params consumes it once.
 type CRDTPSerializable struct {
-	mu       sync.Mutex
-	handle   uintptr
-	closed   bool
-	consumed bool
+	mu              sync.Mutex
+	handle          uintptr
+	callbackView    uintptr
+	callbackViewLen uintptr
+	closed          bool
+	consumed        bool
 }
 
 func (s *CRDTPSerializable) withHandle() (uintptr, error) {
@@ -465,6 +466,18 @@ func (s *CRDTPSerializable) Bytes() ([]byte, error) {
 	handle, err := s.withHandle()
 	if err != nil {
 		return nil, err
+	}
+	if s.callbackView != 0 {
+		maxInt := uintptr(^uint(0) >> 1)
+		if s.callbackViewLen > maxInt {
+			return nil, errors.New("gov8: CRDTP Serializable length exceeds max int")
+		}
+		result := make([]byte, int(s.callbackViewLen))
+		if s.callbackViewLen != 0 {
+			copy(result, unsafe.Slice((*byte)(abiWordToPtr(s.callbackView)), int(s.callbackViewLen)))
+		}
+		runtime.KeepAlive(s)
+		return result, nil
 	}
 	ensureCRDTPCoreProcs()
 	var view [2]uintptr
@@ -491,6 +504,13 @@ func (s *CRDTPSerializable) Bytes() ([]byte, error) {
 	runtime.KeepAlive(result)
 	runtime.KeepAlive(s)
 	return result, nil
+}
+
+func (s *CRDTPSerializable) clearCallbackView() {
+	s.mu.Lock()
+	s.callbackView = 0
+	s.callbackViewLen = 0
+	s.mu.Unlock()
 }
 
 func (s *CRDTPSerializable) Close() error {

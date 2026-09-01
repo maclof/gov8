@@ -132,3 +132,10 @@ func BenchmarkCRDTPDispatcherDispatchSuccess(b *testing.B) {
 		b.Error(err)
 	}
 }
+
+func TestCRDTPDispatcherDispatchSuccessAllocations(t *testing.T) {
+	result := testing.Benchmark(BenchmarkCRDTPDispatcherDispatchSuccess)
+	if allocations := result.AllocsPerOp(); allocations > 5 {
+		t.Fatalf("dispatch success allocations = %d, want at most 5", allocations)
+	}
+}

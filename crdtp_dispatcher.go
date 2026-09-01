@@ -158,8 +158,8 @@ var crdtpDomainDispatcherCallback = syscall.NewCallback(func(
 	}
 	invocation.request.frame = &invocation.frame
 	invocation.responder.frame = &invocation.frame
-	invocation.frame.active.Store(true)
-	defer func() { invocation.frame.active.Store(false) }()
+	invocation.frame.state.Store(1)
+	defer func() { invocation.frame.state.Store(0) }()
 	if entry.handler.Dispatch(crdtpCopyDomainCommand(invocation, commandData, commandLen),
 		&invocation.request, &invocation.responder) {
 		return 1
@@ -237,7 +237,7 @@ var crdtpFallthroughDropCallback = syscall.NewCallback(func(idWord uintptr) uint
 })
 
 var crdtpChannelCallback = syscall.NewCallback(func(
-	idWord, kindWord, callIDWord, messageRaw uintptr,
+	idWord, kindWord, callIDWord, messageRaw, serializedData, serializedLen uintptr,
 ) uintptr {
 	defer func() {
 		if recovered := recover(); recovered != nil {
@@ -262,15 +262,23 @@ var crdtpChannelCallback = syscall.NewCallback(func(
 			fatalHostMisuse("CRDTP response callback received null message")
 			panic("unreachable after null CRDTP response")
 		}
-		entry.handler.SendProtocolResponse(int32(callIDWord), &CRDTPSerializable{handle: messageRaw})
+		message := &CRDTPSerializable{
+			handle: messageRaw, callbackView: serializedData, callbackViewLen: serializedLen,
+		}
+		defer message.clearCallbackView()
+		entry.handler.SendProtocolResponse(int32(callIDWord), message)
 	case 1:
 		if messageRaw == 0 {
 			fatalHostMisuse("CRDTP notification callback received null message")
 			panic("unreachable after null CRDTP notification")
 		}
-		entry.handler.SendProtocolNotification(&CRDTPSerializable{handle: messageRaw})
+		message := &CRDTPSerializable{
+			handle: messageRaw, callbackView: serializedData, callbackViewLen: serializedLen,
+		}
+		defer message.clearCallbackView()
+		entry.handler.SendProtocolNotification(message)
 	case 2:
-		if messageRaw != 0 {
+		if messageRaw != 0 || serializedData != 0 || serializedLen != 0 {
 			fatalHostMisuse("CRDTP flush callback received a message")
 			panic("unreachable after invalid CRDTP flush")
 		}
@@ -306,7 +314,7 @@ var crdtpChannelDropCallback = syscall.NewCallback(func(idWord uintptr) uintptr 
 func ensureCRDTPDispatchers() error {
 	crdtpDispatchersOnce.Do(func() {
 		crdtpDispatchersErr = callErr("CRDTPDispatcher.SetCallbacks",
-			proc("gov8_crdtp_dispatcher_set_callbacks"), crdtpDomainDispatcherCallback,
+			proc("gov8_crdtp_dispatcher_set_callbacks_v2"), crdtpDomainDispatcherCallback,
 			crdtpDomainDropCallback, crdtpFallthroughCallback,
 			crdtpFallthroughDropCallback, crdtpChannelCallback, crdtpChannelDropCallback)
 		if crdtpDispatchersErr == nil {
@@ -553,12 +561,13 @@ func (d *CRDTPUberDispatcher) Close() error {
 }
 
 type crdtpDomainFrame struct {
-	id        uint64
-	request   uintptr
-	tid       uint32
-	hasCallID bool
-	callID    int32
-	active    atomic.Bool
+	id           uint64
+	request      uintptr
+	tid          uint32
+	hasCallID    bool
+	callID       int32
+	state        atomic.Uint32 // 0=expired, 1=active, 2=active send in progress
+	sendConsumed [2]int32
 }
 
 type crdtpDomainInvocation struct {
@@ -569,7 +578,7 @@ type crdtpDomainInvocation struct {
 }
 
 func (f *crdtpDomainFrame) check() error {
-	if f == nil || !f.active.Load() || f.request == 0 {
+	if f == nil || f.state.Load() == 0 || f.request == 0 {
 		return errors.New("gov8: CRDTP domain callback value is no longer active")
 	}
 	if currentThreadID() != f.tid {
@@ -648,9 +657,17 @@ func (r *CRDTPDomainResponder) SendResponse(callID int32, response *CRDTPDispatc
 		result.handle = 0
 		result.mu.Unlock()
 	}
-	// Native delivery reenters Go before returning. Keep the ownership result
-	// on the heap so its address remains stable if the callback stack grows.
-	consumed := new([2]int32)
+	// Native delivery reenters Go before returning. The callback frame is
+	// already heap-stable, so its common-path ownership result remains valid if
+	// the Go stack grows. A nested send must not alias the outer native call's
+	// still-live outputs, so reentrant calls retain the independent heap slot.
+	consumed := &r.frame.sendConsumed
+	if !r.frame.state.CompareAndSwap(1, 2) {
+		consumed = new([2]int32)
+	} else {
+		r.frame.sendConsumed = [2]int32{}
+		defer func() { r.frame.state.Store(1) }()
+	}
 	status, _, _ := crdtpEscapingSyscall6(crdtpDomainSendResponseAddr, 6, uintptr(r.frame.id),
 		uintptr(callID), responseHandle, resultHandle,
 		uintptr(unsafe.Pointer(&consumed[0])), uintptr(unsafe.Pointer(&consumed[1])))

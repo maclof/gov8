@@ -193,6 +193,35 @@ SerializableWrap* WrapSerializable(v8_crdtp::Serializable* value) {
   return wrap.release();
 }
 
+int64_t SerializableView(SerializableWrap* wrap, const uint8_t** out,
+                         size_t* out_len) {
+  if (wrap == nullptr || wrap->value == nullptr || out == nullptr ||
+      out_len == nullptr) {
+    return kErrBadArg;
+  }
+  *out = nullptr;
+  *out_len = 0;
+  try {
+    if (wrap->serialized == nullptr) {
+      auto bytes = std::unique_ptr<std::vector<uint8_t>,
+                                   decltype(&crdtp__vec_u8__DELETE)>(
+          crdtp__vec_u8__new(), crdtp__vec_u8__DELETE);
+      if (!bytes) {
+        SetErr("CRDTP Serializable byte allocation failed");
+        return kErrCpp;
+      }
+      crdtp__Serializable__AppendSerialized(wrap->value, bytes.get());
+      wrap->serialized = bytes.release();
+    }
+    *out = StableData(*wrap->serialized);
+    *out_len = wrap->serialized->size();
+    return kOk;
+  } catch (...) {
+    SetErr("C++ exception");
+    return kErrCpp;
+  }
+}
+
 int64_t ConvertSized(bool json_to_cbor, const uint8_t* data, size_t len,
                      void** out, int64_t* out_len) {
   if (out == nullptr || out_len == nullptr ||
@@ -608,31 +637,7 @@ __declspec(dllexport) int64_t gov8_crdtp_serializable_view(
     void* raw, const uint8_t** out, size_t* out_len) {
   ClearErr();
   auto* wrap = gov8_crdtp_core_impl::AsSerializable(raw);
-  if (wrap == nullptr || wrap->value == nullptr || out == nullptr ||
-      out_len == nullptr) {
-    return kErrBadArg;
-  }
-  *out = nullptr;
-  *out_len = 0;
-  try {
-    if (wrap->serialized == nullptr) {
-      auto bytes = std::unique_ptr<std::vector<uint8_t>,
-                                   decltype(&crdtp__vec_u8__DELETE)>(
-          crdtp__vec_u8__new(), crdtp__vec_u8__DELETE);
-      if (!bytes) {
-        SetErr("CRDTP Serializable byte allocation failed");
-        return kErrCpp;
-      }
-      crdtp__Serializable__AppendSerialized(wrap->value, bytes.get());
-      wrap->serialized = bytes.release();
-    }
-    *out = gov8_crdtp_core_impl::StableData(*wrap->serialized);
-    *out_len = wrap->serialized->size();
-    return kOk;
-  } catch (...) {
-    SetErr("C++ exception");
-    return kErrCpp;
-  }
+  return gov8_crdtp_core_impl::SerializableView(wrap, out, out_len);
 }
 
 __declspec(dllexport) int64_t gov8_crdtp_serializable_delete(void* raw) {

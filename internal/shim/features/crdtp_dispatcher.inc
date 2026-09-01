@@ -47,12 +47,15 @@ using GoFallthrough = void (*)(uint64_t, int32_t, const uint8_t*, size_t,
                                size_t);
 using GoChannel = void (*)(uint64_t, int32_t, int32_t,
                            v8_crdtp::Serializable*);
+using GoChannelV2 = void (*)(uint64_t, int32_t, int32_t,
+                             v8_crdtp::Serializable*, const uint8_t*, size_t);
 
 GoDomainDispatch g_domain_dispatch = nullptr;
 GoDrop g_domain_drop = nullptr;
 GoFallthrough g_fallthrough = nullptr;
 GoDrop g_fallthrough_drop = nullptr;
 GoChannel g_channel = nullptr;
+GoChannelV2 g_channel_v2 = nullptr;
 GoDrop g_channel_drop = nullptr;
 
 // The flat FrontendChannel base is exactly one vtable pointer in the pinned
@@ -99,6 +102,52 @@ crdtp__DomainDispatcher__BASE* FindDomain(uint64_t id) {
   std::lock_guard<std::mutex> lock(g_domains_mu);
   auto found = g_domains.find(id);
   return found == g_domains.end() ? nullptr : found->second;
+}
+
+void DeliverChannelMessage(ChannelWrap* channel, int32_t kind, int32_t call_id,
+                           v8_crdtp::Serializable* message) {
+  auto callback = g_channel;
+  auto callback_v2 = g_channel_v2;
+  if (channel == nullptr || (callback == nullptr && callback_v2 == nullptr) ||
+      message == nullptr) {
+    std::abort();
+  }
+  auto* owned = gov8_crdtp_core_impl::WrapSerializable(message);
+  if (owned == nullptr) {
+    std::abort();
+  }
+  auto* owned_raw = reinterpret_cast<v8_crdtp::Serializable*>(owned);
+  if (callback_v2 != nullptr) {
+    const uint8_t* serialized = nullptr;
+    size_t serialized_len = 0;
+    if (gov8_crdtp_core_impl::SerializableView(
+            owned, &serialized, &serialized_len) != kOk) {
+      serialized = nullptr;
+      serialized_len = 0;
+    }
+    callback_v2(channel->id, kind, call_id, owned_raw, serialized,
+                serialized_len);
+    return;
+  }
+  callback(channel->id, kind, call_id, owned_raw);
+}
+
+int64_t SetCallbacks(uintptr_t domain_dispatch, uintptr_t domain_drop,
+                     uintptr_t fallthrough, uintptr_t fallthrough_drop,
+                     uintptr_t channel, uintptr_t channel_drop,
+                     bool channel_v2) {
+  if (domain_dispatch == 0 || domain_drop == 0 || fallthrough == 0 ||
+      fallthrough_drop == 0 || channel == 0 || channel_drop == 0) {
+    return kErrBadArg;
+  }
+  g_domain_dispatch = reinterpret_cast<GoDomainDispatch>(domain_dispatch);
+  g_domain_drop = reinterpret_cast<GoDrop>(domain_drop);
+  g_fallthrough = reinterpret_cast<GoFallthrough>(fallthrough);
+  g_fallthrough_drop = reinterpret_cast<GoDrop>(fallthrough_drop);
+  g_channel = channel_v2 ? nullptr : reinterpret_cast<GoChannel>(channel);
+  g_channel_v2 = channel_v2 ? reinterpret_cast<GoChannelV2>(channel) : nullptr;
+  g_channel_drop = reinterpret_cast<GoDrop>(channel_drop);
+  return kOk;
 }
 
 }  // namespace gov8_crdtp_dispatcher_impl
@@ -168,65 +217,47 @@ void crdtp__FrontendChannel__BASE__sendProtocolResponse(
     crdtp__FrontendChannel__BASE* self, int call_id,
     v8_crdtp::Serializable* message) {
   auto* channel = gov8_crdtp_dispatcher_impl::ChannelFromBase(self);
-  auto callback = gov8_crdtp_dispatcher_impl::g_channel;
-  if (channel == nullptr || callback == nullptr || message == nullptr) {
-    std::abort();
-  }
-  auto* owned = gov8_crdtp_core_impl::WrapSerializable(message);
-  if (owned == nullptr) {
-    std::abort();
-  }
-  callback(channel->id, 0, call_id,
-           reinterpret_cast<v8_crdtp::Serializable*>(owned));
+  gov8_crdtp_dispatcher_impl::DeliverChannelMessage(channel, 0, call_id,
+                                                     message);
 }
 
 void crdtp__FrontendChannel__BASE__sendProtocolNotification(
     crdtp__FrontendChannel__BASE* self, v8_crdtp::Serializable* message) {
   auto* channel = gov8_crdtp_dispatcher_impl::ChannelFromBase(self);
-  auto callback = gov8_crdtp_dispatcher_impl::g_channel;
-  if (channel == nullptr || callback == nullptr || message == nullptr) {
-    std::abort();
-  }
-  auto* owned = gov8_crdtp_core_impl::WrapSerializable(message);
-  if (owned == nullptr) {
-    std::abort();
-  }
-  callback(channel->id, 1, 0,
-           reinterpret_cast<v8_crdtp::Serializable*>(owned));
+  gov8_crdtp_dispatcher_impl::DeliverChannelMessage(channel, 1, 0, message);
 }
 
 void crdtp__FrontendChannel__BASE__flushProtocolNotifications(
     crdtp__FrontendChannel__BASE* self) {
   auto* channel = gov8_crdtp_dispatcher_impl::ChannelFromBase(self);
   auto callback = gov8_crdtp_dispatcher_impl::g_channel;
-  if (channel == nullptr || callback == nullptr) {
+  auto callback_v2 = gov8_crdtp_dispatcher_impl::g_channel_v2;
+  if (channel == nullptr || (callback == nullptr && callback_v2 == nullptr)) {
     std::abort();
   }
-  callback(channel->id, 2, 0, nullptr);
+  if (callback_v2 != nullptr) {
+    callback_v2(channel->id, 2, 0, nullptr, nullptr, 0);
+  } else {
+    callback(channel->id, 2, 0, nullptr);
+  }
 }
 
 __declspec(dllexport) int64_t gov8_crdtp_dispatcher_set_callbacks(
     uintptr_t domain_dispatch, uintptr_t domain_drop, uintptr_t fallthrough,
     uintptr_t fallthrough_drop, uintptr_t channel, uintptr_t channel_drop) {
   ClearErr();
-  if (domain_dispatch == 0 || domain_drop == 0 || fallthrough == 0 ||
-      fallthrough_drop == 0 || channel == 0 || channel_drop == 0) {
-    return kErrBadArg;
-  }
-  gov8_crdtp_dispatcher_impl::g_domain_dispatch =
-      reinterpret_cast<gov8_crdtp_dispatcher_impl::GoDomainDispatch>(
-          domain_dispatch);
-  gov8_crdtp_dispatcher_impl::g_domain_drop =
-      reinterpret_cast<gov8_crdtp_dispatcher_impl::GoDrop>(domain_drop);
-  gov8_crdtp_dispatcher_impl::g_fallthrough =
-      reinterpret_cast<gov8_crdtp_dispatcher_impl::GoFallthrough>(fallthrough);
-  gov8_crdtp_dispatcher_impl::g_fallthrough_drop =
-      reinterpret_cast<gov8_crdtp_dispatcher_impl::GoDrop>(fallthrough_drop);
-  gov8_crdtp_dispatcher_impl::g_channel =
-      reinterpret_cast<gov8_crdtp_dispatcher_impl::GoChannel>(channel);
-  gov8_crdtp_dispatcher_impl::g_channel_drop =
-      reinterpret_cast<gov8_crdtp_dispatcher_impl::GoDrop>(channel_drop);
-  return kOk;
+  return gov8_crdtp_dispatcher_impl::SetCallbacks(
+      domain_dispatch, domain_drop, fallthrough, fallthrough_drop, channel,
+      channel_drop, false);
+}
+
+__declspec(dllexport) int64_t gov8_crdtp_dispatcher_set_callbacks_v2(
+    uintptr_t domain_dispatch, uintptr_t domain_drop, uintptr_t fallthrough,
+    uintptr_t fallthrough_drop, uintptr_t channel, uintptr_t channel_drop) {
+  ClearErr();
+  return gov8_crdtp_dispatcher_impl::SetCallbacks(
+      domain_dispatch, domain_drop, fallthrough, fallthrough_drop, channel,
+      channel_drop, true);
 }
 
 __declspec(dllexport) int64_t gov8_crdtp_channel_new(uint64_t id,

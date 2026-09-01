@@ -31,6 +31,24 @@ func (c *crdtpRetainingChannel) SendProtocolNotification(message *CRDTPSerializa
 }
 func (*crdtpRetainingChannel) FlushProtocolNotifications() {}
 
+type crdtpViewRetainingChannel struct {
+	message       *CRDTPSerializable
+	first, second []byte
+	err           error
+}
+
+func (c *crdtpViewRetainingChannel) SendProtocolResponse(_ int32, message *CRDTPSerializable) {
+	c.message = message
+	c.first, c.err = message.Bytes()
+	if c.err == nil {
+		c.second, c.err = message.Bytes()
+	}
+}
+func (c *crdtpViewRetainingChannel) SendProtocolNotification(message *CRDTPSerializable) {
+	c.message = message
+}
+func (*crdtpViewRetainingChannel) FlushProtocolNotifications() {}
+
 type crdtpWrongThreadDomain struct {
 	requestErr   error
 	responderErr error
@@ -360,6 +378,49 @@ func TestCRDTPDispatcherOwnedChannelMessageAndWrongThreadBorrow(t *testing.T) {
 	if json, ok, err := CRDTPCBORToJSON(data); err != nil || !ok ||
 		string(json) != `{"id":1,"error":{"code":-32601,"message":"'Thread.run' wasn't found"}}` {
 		t.Fatalf("retained response=%q ok=%v err=%v", json, ok, err)
+	}
+	_ = handler.message.Close()
+	_ = message.Close()
+	_ = dispatcher.Close()
+	_ = channel.Close()
+}
+
+func TestCRDTPDispatcherCallbackViewClearsForRetainedMessage(t *testing.T) {
+	handler := &crdtpViewRetainingChannel{}
+	channel, err := NewCRDTPFrontendChannel(handler)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dispatcher, err := NewCRDTPUberDispatcher(channel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	domain := &crdtpTestDomain{}
+	if err := dispatcher.WireDomain("Test", domain); err != nil {
+		t.Fatal(err)
+	}
+	message, err := NewCRDTPDispatchable(mustCRDTPCBORT(t, `{"id":9,"method":"Test.run"}`), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := dispatcher.Dispatch(message); err != nil {
+		t.Fatal(err)
+	}
+	if handler.err != nil || handler.message == nil || !bytes.Equal(handler.first, handler.second) {
+		t.Fatalf("callback Bytes repeats: first=%x second=%x message=%v err=%v",
+			handler.first, handler.second, handler.message != nil, handler.err)
+	}
+	if handler.message.callbackView != 0 || handler.message.callbackViewLen != 0 {
+		t.Fatalf("retained message kept callback view %x/%d",
+			handler.message.callbackView, handler.message.callbackViewLen)
+	}
+	retained, err := handler.message.Bytes()
+	if err != nil || !bytes.Equal(retained, handler.first) {
+		t.Fatalf("retained Bytes=%x want=%x err=%v", retained, handler.first, err)
+	}
+	json, ok, err := CRDTPCBORToJSON(retained)
+	if err != nil || !ok || string(json) != `{"id":9,"result":{}}` {
+		t.Fatalf("retained JSON=%q ok=%v err=%v", json, ok, err)
 	}
 	_ = handler.message.Close()
 	_ = message.Close()
