@@ -145,19 +145,21 @@ an MSVC C ABI shim, avoiding unsafe MinGW/MSVC C++ ABI interoperation.
 The current implementation includes lifecycle and advanced isolate controls,
 Locker and handle variants, context options and execution scopes, values and
 collections (including fixed and primitive arrays), scripts and function/module
-code caches, source-text and synthetic modules, exception constructors and raw
-message/stack handles, callbacks/templates/interceptors, native promises,
-buffers and all typed-array kinds, structured clone delegates, snapshots, and
-the complete pinned simdutf surface. The Rust fixtures contain 328 normalized
-checks: 326 compare byte-for-byte with Go, one stack-frame check has a narrowly
-documented memory-safety normalization, and one Function
-side-effect observation remains oracle-only until Inspector is implemented.
+code caches, source-text and synthetic modules, synchronous Wasm compilation
+and compiled-module restoration, exception constructors and raw message/stack
+handles, callbacks/templates/interceptors, native promises, buffers and all
+typed-array kinds, structured clone delegates, snapshots, and the complete
+pinned simdutf surface. The Rust fixtures contain 335 normalized checks: 328
+compare byte-for-byte with Go, one stack-frame check has a narrowly documented
+memory-safety normalization, and six checks remain oracle-only (five Wasm
+streaming/async observations and one Inspector-dependent Function observation).
 Separate fatal and panic-boundary subprocess tests cover unsafe lifecycle and
 callback edges.
 
 This is still not a feature-complete rusty_v8 binding. Major remaining families
 include dynamic/source/deferred modules, residual unsafe CreateParams
-options, residual data/object/function APIs, Wasm, Inspector/CRDTP, cppgc,
-Fast API, custom platforms/tasks, ICU, and external references. The
+options, residual data/object/function APIs, Wasm streaming/async and cache
+callbacks, Inspector/CRDTP, cppgc, Fast API, custom platforms/tasks, ICU, and
+external references. The
 authoritative gaps and intentional API-shape differences are tracked in
 `PARITY.md`.

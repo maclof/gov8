@@ -511,11 +511,17 @@ func goCHDispatch(frame *chFrame) uintptr {
 		result, ok := entry.prepareStackTrace(scope,
 			Value{iso: entry.iso, sc: scope, h: frame.b},
 			Value{iso: entry.iso, sc: scope, h: frame.c})
-		if ok {
-			// frame.out is the address of the trampoline's returned Local;
-			// writing the wire (slot address) there re-slots it.
-			*(*uintptr)(frame.out) = result.h
+		if !ok {
+			fatalHostMisuse("invalid prepare stack trace callback result: callback returned no value")
+			return 0
 		}
+		if err := validatePrepareStackTraceResult(entry.iso, scope, result); err != nil {
+			fatalHostMisuse("invalid prepare stack trace callback result: %v", err)
+			return 0
+		}
+		// frame.out is the address of the trampoline's returned Local;
+		// writing the wire (slot address) there re-slots it.
+		*(*uintptr)(frame.out) = result.h
 		return 0
 	case chKindUseCounter:
 		entry.useCounter(uint32(frame.a))
@@ -570,6 +576,28 @@ func goCHDispatch(frame *chFrame) uintptr {
 	return 0
 }
 
+// validatePrepareStackTraceResult enforces the lifetime relationship that
+// rusty_v8 expresses through Local<'s, Value>: a successful callback result
+// must be a non-empty local allocated in this exact callback invocation's
+// scope. Go callbacks can capture arbitrary Values, so accepting a local from
+// another scope (even on the same isolate) would hand V8 a slot whose lifetime
+// is not owned by the trampoline that escapes it.
+func validatePrepareStackTraceResult(iso *Isolate, scope *Scope, result Value) error {
+	if result.h == 0 {
+		return errors.New("empty value")
+	}
+	if result.iso != iso {
+		return foreignIsolate("prepare stack trace result")
+	}
+	if result.sc != scope {
+		return errors.New("value is not owned by the callback scope")
+	}
+	if err := result.check(); err != nil {
+		return err
+	}
+	return nil
+}
+
 // cStr reads a NUL-terminated engine string into a Go string. The pointer is
 // transient engine memory; the read is bounded and nothing is retained.
 func cStr(p uintptr) string {
@@ -607,6 +635,21 @@ func replaceCHSlot(i *Isolate, kind int, e *chEntry) {
 	defer chRegistry.mu.Unlock()
 	e.iso = i
 	chRegistry.entries[chKey{kind: kind, engine: i.handle}] = e
+}
+
+// releaseCHIsolateEntries drops every Go callback retained for i. Match on
+// isolate identity, not only the native address: V8 may reuse a disposed
+// isolate's address, and releasing stale state must never remove a newer
+// isolate's registration at that address. Process-global entries have no
+// isolate and are deliberately preserved.
+func releaseCHIsolateEntries(i *Isolate) {
+	chRegistry.mu.Lock()
+	defer chRegistry.mu.Unlock()
+	for key, entry := range chRegistry.entries {
+		if entry != nil && entry.iso == i {
+			delete(chRegistry.entries, key)
+		}
+	}
 }
 
 // registerCHListener appends a message-listener registration. The engine
@@ -683,9 +726,10 @@ func (i *Isolate) SetPromiseHook(h PromiseHook) error {
 
 // PrepareStackTraceCallback replaces the `stack` VALUE for every error
 // whose stack is first accessed. It receives the error and the CallSite
-// array; the returned Value becomes the stack value (ok=false reports an
-// empty result, which surfaces as an unusable .stack — the engine has no
-// fallback once the native hook is installed). Installing the hook
+// array; the returned Value becomes the stack value. The ok result remains
+// for API compatibility, but false is invalid and fails fast: pinned V8
+// asserts on an empty MaybeLocal, and rusty_v8 therefore requires a Local.
+// Installing the hook
 // disables the JS Error.prepareStackTrace hook entirely. The callback runs
 // once per distinct error; the scope handed to it is owned by the engine
 // trampoline and values created through it remain valid until the callback

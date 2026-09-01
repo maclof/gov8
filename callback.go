@@ -393,6 +393,9 @@ func (cs *CallbackScope) wrap(wire uintptr) Value {
 }
 
 func (cs *CallbackScope) check() error {
+	if cs == nil || cs.iso == nil || cs.sc == nil {
+		return fmt.Errorf("gov8: invalid callback scope")
+	}
 	if cs.ctxWire == 0 {
 		return fmt.Errorf("gov8: callback has no current context")
 	}
@@ -585,11 +588,14 @@ func (cs *CallbackScope) NewArrayWithElements(elements []Value) (Value, error) {
 // callback returns (Scope::throw_exception in the oracle). The callback's
 // return value is ignored by the engine when an exception is scheduled.
 func (cs *CallbackScope) ThrowException(v Value) error {
+	if err := cs.check(); err != nil {
+		return err
+	}
 	if err := v.check(); err != nil {
 		return err
 	}
-	if err := cs.sc.check(); err != nil {
-		return err
+	if v.iso != cs.iso {
+		return foreignIsolate("exception")
 	}
 	return callErr("ThrowException", proc("gov8_isolate_throw_exception"),
 		cs.iso.handle, v.h)
@@ -850,9 +856,10 @@ func ReleaseIsolateHostState(i *Isolate) error {
 	if err := requireInitialized(); err != nil {
 		return err
 	}
-	// Drop the Go-side registrations and slot values first (the registry is
+	// Drop the Go-side registrations and slot values first (the registries are
 	// pure Go), then free the shim-side dispatch contexts (which resets
 	// their Global embedder-data handles while the isolate still lives).
+	releaseCHIsolateEntries(i)
 	hostCallbackRegistry.mu.Lock()
 	var handles []uint64
 	var contexts []uintptr

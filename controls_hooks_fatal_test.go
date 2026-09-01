@@ -126,6 +126,71 @@ func chRawAbortExit() {
 	addVEH.Call(1, filter)
 }
 
+// --- prepare-stack callback result validation ------------------------------------
+
+// TestPrepareStackTraceInvalidResultIsFatal proves that a Go callback cannot
+// hand V8 a Local slot captured from a different HandleScope. rusty_v8's
+// callback lifetime makes this shape unrepresentable; Go rejects it at the
+// synchronous host boundary and aborts rather than returning into V8.
+func TestPrepareStackTraceInvalidResultIsFatal(t *testing.T) {
+	for _, probe := range []struct {
+		name       string
+		diagnostic string
+	}{
+		{"TestProbePrepareStackTraceWrongScope", "value is not owned by the callback scope"},
+		{"TestProbePrepareStackTraceNoResult", "callback returned no value"},
+	} {
+		out, code := runCHProbe(t, probe.name)
+		if !strings.Contains(out, "MARK:before-stack-access") {
+			t.Fatalf("%s: marker missing; output:\n%s", probe.name, out)
+		}
+		if !strings.Contains(out, "invalid prepare stack trace callback result: "+probe.diagnostic) {
+			t.Fatalf("%s: validation diagnostic missing; output:\n%s", probe.name, out)
+		}
+		if strings.Contains(out, "MARK:after-stack-access") {
+			t.Fatalf("%s: invalid callback result returned into V8; output:\n%s", probe.name, out)
+		}
+		const callbackAbort = 3221226505 // 0xC0000409, gov8_host_panic_abort
+		if code != callbackAbort {
+			t.Fatalf("%s: exit code = %d, want %d (callback fail-fast); output:\n%s", probe.name, code, callbackAbort, out)
+		}
+	}
+}
+
+func TestProbePrepareStackTraceWrongScope(t *testing.T) {
+	if !chProbe(t, "TestProbePrepareStackTraceWrongScope") {
+		t.Skip("probe body")
+	}
+	r := newCHRuntime(t)
+	outer, err := r.scope.Int32(42)
+	if err != nil {
+		t.Fatalf("outer Int32: %v", err)
+	}
+	if err := r.iso.SetPrepareStackTraceCallback(func(*gov8.Scope, gov8.Value, gov8.Value) (gov8.Value, bool) {
+		return outer, true
+	}); err != nil {
+		t.Fatalf("SetPrepareStackTraceCallback: %v", err)
+	}
+	fmt.Fprintln(os.Stderr, "MARK:before-stack-access")
+	_, _ = r.eval("new Error('wrong-scope').stack")
+	fmt.Fprintln(os.Stderr, "MARK:after-stack-access")
+}
+
+func TestProbePrepareStackTraceNoResult(t *testing.T) {
+	if !chProbe(t, "TestProbePrepareStackTraceNoResult") {
+		t.Skip("probe body")
+	}
+	r := newCHRuntime(t)
+	if err := r.iso.SetPrepareStackTraceCallback(func(*gov8.Scope, gov8.Value, gov8.Value) (gov8.Value, bool) {
+		return gov8.Value{}, false
+	}); err != nil {
+		t.Fatalf("SetPrepareStackTraceCallback: %v", err)
+	}
+	fmt.Fprintln(os.Stderr, "MARK:before-stack-access")
+	_, _ = r.eval("new Error('no-result').stack")
+	fmt.Fprintln(os.Stderr, "MARK:after-stack-access")
+}
+
 // --- frozen flags ---------------------------------------------------------------
 
 // TestFrozenFlagsMutationIsFatal mirrors post_init_flag_value_change_is_fatal:

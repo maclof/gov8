@@ -70,7 +70,8 @@ $ConformancePackages = @(
     './conformance-snapshots',
     './conformance-strings-bigint',
     './conformance-template-advanced',
-    './conformance-typed-arrays'
+    './conformance-typed-arrays',
+    './conformance-wasm'
 )
 
 $script:RaceSupported = $null
