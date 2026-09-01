@@ -31,6 +31,67 @@ type Value struct {
 	h   uintptr
 }
 
+type primitiveConstructor uint8
+
+const (
+	primitiveUndefined primitiveConstructor = iota
+	primitiveNull
+	primitiveBoolean
+	primitiveInt32
+	primitiveUint32
+	primitiveNumber
+	primitiveBigIntInt64
+	primitiveBigIntUint64
+)
+
+var (
+	primitiveConstructorsOnce sync.Once
+	primitiveConstructorAddrs [primitiveBigIntUint64 + 1]uintptr
+)
+
+func resolvePrimitiveConstructors() {
+	names := [...]string{
+		"gov8_undefined",
+		"gov8_null",
+		"gov8_boolean",
+		"gov8_integer_new",
+		"gov8_integer_new_unsigned",
+		"gov8_number_new",
+		"gov8_bigint_new_i64",
+		"gov8_bigint_new_u64",
+	}
+	for index, name := range names {
+		primitiveConstructorAddrs[index] = proc(name).Addr()
+	}
+}
+
+// constructPrimitive keeps the public validation order while avoiding the
+// escaping closure and variadic argument frame formerly created by every
+// primitive constructor. All arguments are scalar native handles or values;
+// no Go pointer crosses the call.
+func (s *Scope) constructPrimitive(op string, kind primitiveConstructor, value uintptr) (Value, error) {
+	if err := s.check(); err != nil {
+		return Value{}, err
+	}
+	if err := requireInitialized(); err != nil {
+		return Value{}, err
+	}
+	primitiveConstructorsOnce.Do(resolvePrimitiveConstructors)
+	address := primitiveConstructorAddrs[kind]
+	var raw uintptr
+	if kind <= primitiveNull {
+		raw, _, _ = syscall.Syscall(address, 2,
+			s.iso.handleAssumingCheck(), s.handle, 0)
+	} else {
+		raw, _, _ = syscall.Syscall(address, 3,
+			s.iso.handleAssumingCheck(), value, s.handle)
+	}
+	if raw == 0 {
+		return Value{}, shimError(op, 0)
+	}
+	return Value{iso: s.iso, sc: s, h: raw}, nil
+}
+
 func (v Value) check() error {
 	if v.h == 0 {
 		return fmt.Errorf("gov8: zero value handle")
@@ -40,65 +101,46 @@ func (v Value) check() error {
 
 // Undefined returns the JS undefined value in the scope.
 func (s *Scope) Undefined() (Value, error) {
-	return s.construct("Undefined", func(h uintptr) (uintptr, error) {
-		return callHandle("Undefined", proc("gov8_undefined"), h, s.handle)
-	})
+	return s.constructPrimitive("Undefined", primitiveUndefined, 0)
 }
 
 // Null returns the JS null value in the scope.
 func (s *Scope) Null() (Value, error) {
-	return s.construct("Null", func(h uintptr) (uintptr, error) {
-		return callHandle("Null", proc("gov8_null"), h, s.handle)
-	})
+	return s.constructPrimitive("Null", primitiveNull, 0)
 }
 
 // Boolean returns a JS boolean in the scope.
 func (s *Scope) Boolean(b bool) (Value, error) {
-	return s.construct("Boolean", func(h uintptr) (uintptr, error) {
-		v := uintptr(0)
-		if b {
-			v = 1
-		}
-		return callHandle("Boolean", proc("gov8_boolean"), h, v, s.handle)
-	})
+	value := uintptr(0)
+	if b {
+		value = 1
+	}
+	return s.constructPrimitive("Boolean", primitiveBoolean, value)
 }
 
 // Int32 returns a JS integer (int32 range) in the scope.
 func (s *Scope) Int32(v int32) (Value, error) {
-	return s.construct("Int32", func(h uintptr) (uintptr, error) {
-		return callHandle("Int32", proc("gov8_integer_new"), h, uintptr(int32(v)), s.handle)
-	})
+	return s.constructPrimitive("Int32", primitiveInt32, uintptr(v))
 }
 
 // Uint32 returns a JS unsigned integer (uint32 range) in the scope.
 func (s *Scope) Uint32(v uint32) (Value, error) {
-	return s.construct("Uint32", func(h uintptr) (uintptr, error) {
-		return callHandle("Uint32", proc("gov8_integer_new_unsigned"), h, uintptr(v), s.handle)
-	})
+	return s.constructPrimitive("Uint32", primitiveUint32, uintptr(v))
 }
 
 // Number returns a JS number (float64) in the scope.
 func (s *Scope) Number(f float64) (Value, error) {
-	return s.construct("Number", func(h uintptr) (uintptr, error) {
-		return callHandle("Number", proc("gov8_number_new"), h,
-			uintptr(math.Float64bits(f)), s.handle)
-	})
+	return s.constructPrimitive("Number", primitiveNumber, uintptr(math.Float64bits(f)))
 }
 
 // BigIntFromInt64 returns a BigInt constructed from an int64.
 func (s *Scope) BigIntFromInt64(v int64) (Value, error) {
-	return s.construct("BigIntFromInt64", func(h uintptr) (uintptr, error) {
-		return callHandle("BigIntFromInt64", proc("gov8_bigint_new_i64"), h,
-			uintptr(v), s.handle)
-	})
+	return s.constructPrimitive("BigIntFromInt64", primitiveBigIntInt64, uintptr(v))
 }
 
 // BigIntFromUint64 returns a BigInt constructed from a uint64.
 func (s *Scope) BigIntFromUint64(v uint64) (Value, error) {
-	return s.construct("BigIntFromUint64", func(h uintptr) (uintptr, error) {
-		return callHandle("BigIntFromUint64", proc("gov8_bigint_new_u64"), h,
-			uintptr(v), s.handle)
-	})
+	return s.constructPrimitive("BigIntFromUint64", primitiveBigIntUint64, uintptr(v))
 }
 
 // NewString creates a JS string from a UTF-8 Go string. Invalid UTF-8 is
