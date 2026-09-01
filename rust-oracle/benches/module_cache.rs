@@ -135,6 +135,22 @@ fn module_cache_consume(c: &mut Criterion) {
             black_box(module);
         })
     });
+
+    // gov8's public Module wrapper persists every compiled module in a
+    // Global<Module> until Module.Close. Keep the scope-local baseline above,
+    // and measure that additional V8 lifetime work separately so comparisons
+    // do not attribute persistent-root creation/destruction to the cache
+    // consumer itself.
+    c.bench_function("module_cache/consume_compile_persistent_global", |b| {
+        common::banner();
+        b.iter(|| {
+            v8::scope!(let inner, scope);
+            let cache = v8::CachedData::new(&bytes);
+            let (module, rejected) = compile_module(inner, Some(cache));
+            assert!(!rejected);
+            black_box(v8::Global::new(inner, module));
+        })
+    });
 }
 
 criterion_group! {
