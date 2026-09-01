@@ -90,6 +90,7 @@ type CRDTPDispatchable struct {
 	mu     sync.Mutex
 	handle uintptr
 	closed bool
+	active bool
 }
 
 func NewCRDTPDispatchable(cbor, associatedData []byte) (*CRDTPDispatchable, error) {
@@ -117,6 +118,9 @@ func (d *CRDTPDispatchable) withHandle() (uintptr, error) {
 	}
 	if d.closed || d.handle == 0 {
 		return 0, errCRDTPClosed
+	}
+	if d.active {
+		return 0, errors.New("gov8: CRDTP Dispatchable is active")
 	}
 	return d.handle, nil
 }
@@ -197,13 +201,18 @@ func (d *CRDTPDispatchable) Close() error {
 		return nil
 	}
 	d.mu.Lock()
-	defer d.mu.Unlock()
 	if d.closed {
+		d.mu.Unlock()
 		return nil
+	}
+	if d.active {
+		d.mu.Unlock()
+		return errors.New("gov8: CRDTP Dispatchable is active")
 	}
 	d.closed = true
 	handle := d.handle
 	d.handle = 0
+	d.mu.Unlock()
 	if handle == 0 {
 		return nil
 	}

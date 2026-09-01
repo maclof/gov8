@@ -5,42 +5,12 @@
 
 #include "v8-inspector.h"
 #include <cstdint>
-#include <cstdlib>
 #include <cstring>
 #include <memory>
 #include <new>
 #include <vector>
 
 extern "C" {
-// Pulling rusty_v8's crdtp_binding.obj for RemoteObject::toBytes also pulls
-// virtual adapter code whose Rust callbacks are not part of this Go slice.
-// They are unreachable from serialization/conversion; fail fast if linker
-// reachability ever turns into runtime reachability.
-void crdtp__FallthroughCallback__Drop(void*) {
-  std::abort();
-}
-void crdtp__FallthroughCallback__Run(
-    void*, int, const uint8_t*, size_t, const uint8_t*, size_t,
-    const uint8_t*, size_t) {
-  std::abort();
-}
-bool crdtp__DomainDispatcher__BASE__Dispatch(
-    void*, const uint8_t*, size_t, const void*) {
-  std::abort();
-}
-void crdtp__DomainDispatcher__BASE__Drop(void*) {
-  std::abort();
-}
-void crdtp__FrontendChannel__BASE__sendProtocolResponse(void*, int, void*) {
-  std::abort();
-}
-void crdtp__FrontendChannel__BASE__sendProtocolNotification(void*, void*) {
-  std::abort();
-}
-void crdtp__FrontendChannel__BASE__flushProtocolNotifications(void*) {
-  std::abort();
-}
-
 v8_inspector::protocol::Runtime::API::RemoteObject*
 v8_inspector__V8InspectorSession__wrapObject(
     v8_inspector::V8InspectorSession*, const v8::Context*, const v8::Value*,

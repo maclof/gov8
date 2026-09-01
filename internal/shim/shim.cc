@@ -399,7 +399,7 @@ extern "C" {
 
 __declspec(dllexport) int64_t gov8_abi_version(void) {
   ClearErr();
-  return 24;
+  return 25;
 }
 
 // --- platform / process lifecycle -------------------------------------------
@@ -1685,6 +1685,7 @@ __declspec(dllexport) int64_t gov8_last_error(char* buf, int64_t cap) {
 #include "features/inspector_client_values.inc"
 #include "features/inspector_object_wrapping.inc"
 #include "features/crdtp_core.inc"
+#include "features/crdtp_dispatcher.inc"
 #include "features/inspector_inspected_object.inc"
 #include "features/inspector_runtime_events.inc"
 #include "features/trycatch_listener_residual.inc"
