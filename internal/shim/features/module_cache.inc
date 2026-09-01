@@ -286,4 +286,87 @@ __declspec(dllexport) int64_t gov8_module_cache_compile(
   }
 }
 
+__declspec(dllexport) void* gov8_module_cache_compile_local(
+    v8::Isolate* iso, void* ctxw, void* scope, void* tcw,
+    const char* src, int64_t src_len, const char* resource,
+    int64_t resource_len, int32_t line_offset, int32_t column_offset,
+    const uint8_t* cache, int64_t cache_len, int32_t consume,
+    int32_t* out_rejected) {
+  ClearErr();
+  CtxWrap* context = AsCtx(ctxw);
+  if (context == nullptr || out_rejected == nullptr ||
+      !ScopeIs(iso, scope) || !OwnedBy(iso, context->iso) ||
+      (src == nullptr && src_len > 0) || src_len < 0 || src_len > INT_MAX ||
+      (resource == nullptr && resource_len > 0) || resource_len < 0 ||
+      resource_len > INT_MAX || (consume != 0 && consume != 1) ||
+      (consume != 0 && (cache == nullptr || cache_len <= 0)) ||
+      cache_len > INT_MAX) {
+    SetErr("invalid argument");
+    return nullptr;
+  }
+  try {
+    Gov8IsolateScope isolate_scope(iso);
+    v8::Local<v8::Context> ctx = context->ctx->Get(iso);
+    v8::Context::Scope context_scope(ctx);
+    FallbackTryCatch fallback;
+    v8::TryCatch* try_catch = nullptr;
+    if (tcw != nullptr) {
+      TcWrap* wrap = AsTc(tcw);
+      if (wrap == nullptr || !OwnedBy(iso, wrap->iso)) {
+        SetErr("invalid trycatch handle");
+        return nullptr;
+      }
+      try_catch = TcOf(wrap);
+    }
+    if (try_catch == nullptr) try_catch = fallback.Init(iso);
+
+    v8::Local<v8::String> source;
+    v8::Local<v8::String> name;
+    if (!v8::String::NewFromUtf8(iso, src, v8::NewStringType::kNormal,
+                                 static_cast<int>(src_len)).ToLocal(&source) ||
+        !v8::String::NewFromUtf8(iso, resource, v8::NewStringType::kNormal,
+                                 static_cast<int>(resource_len)).ToLocal(&name)) {
+      SetErr("String::NewFromUtf8 failed");
+      return nullptr;
+    }
+    v8::ScriptOrigin origin(name, line_offset, column_offset, false, -1,
+                            v8::Local<v8::Value>(), false, false, true);
+    v8::ScriptCompiler::CachedData* cached = nullptr;
+    if (consume != 0) {
+      cached = v8__ScriptCompiler__CachedData__NEW(
+          cache, static_cast<int>(cache_len));
+      if (cached == nullptr) {
+        SetErr("CachedData allocation failed");
+        return nullptr;
+      }
+    }
+    alignas(v8::ScriptCompiler::Source)
+        unsigned char source_storage[sizeof(v8::ScriptCompiler::Source)];
+    v8__ScriptCompiler__Source__CONSTRUCT(
+        source_storage, ModuleCacheDeref(source), &origin, cached);
+    auto* compiler_source =
+        reinterpret_cast<v8::ScriptCompiler::Source*>(source_storage);
+    v8::Local<v8::Module> module;
+    const auto options = consume != 0
+                             ? v8::ScriptCompiler::kConsumeCodeCache
+                             : v8::ScriptCompiler::kNoCompileOptions;
+    const bool compiled = v8::ScriptCompiler::CompileModule(
+                              iso, compiler_source, options,
+                              v8::ScriptCompiler::kNoCacheNoReason)
+                              .ToLocal(&module);
+    const v8::ScriptCompiler::CachedData* consumed =
+        v8__ScriptCompiler__Source__GetCachedData(compiler_source);
+    *out_rejected = consumed != nullptr && consumed->rejected ? 1 : 0;
+    v8__ScriptCompiler__Source__DESTRUCT(source_storage);
+    if (!compiled) {
+      SetErr("module compile failed");
+      return nullptr;
+    }
+    return ToWire(module);
+  } catch (...) {
+    SetErr("C++ exception compiling scope-local cached module");
+    return nullptr;
+  }
+}
+
 }  // extern "C"
