@@ -56,3 +56,17 @@ still about 9.1x slower. Diagnostic direct-transition and thread-ID floors
 were approximately 47.6 ns and 51.35 ns respectively, while the native
 callback/task/delete floor remained hundreds of nanoseconds. The remaining
 allocation and callback boundary therefore remain measured performance work.
+
+## ABI-39 cold-retention follow-up
+
+Task and IdleTask now keep entry/work identifiers in a cold sidecar allocated
+only when a posting callback returns without consuming the transferred task.
+The synchronous matched path retains its one unique user-visible wrapper but
+shrinks it from 48 to 32 bytes. Forced-GC conformance verifies retained tasks
+still survive and drain exactly once during platform shutdown.
+
+Ten fresh-process one-second pairs produced a baseline median of 315.85 ns and
+a candidate median of 308.90 ns, a 2.2% improvement. Against the Rust 43.62 ns
+confidence-interval midpoint, current overhead is about 7.08x. Profiles place
+roughly 57% in callback runtime and 27% in `Task.Run`; the required callback
+transition and owner check now dominate.

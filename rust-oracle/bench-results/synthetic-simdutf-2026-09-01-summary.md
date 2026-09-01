@@ -129,3 +129,18 @@ frequency-sensitive and showed no stable additional latency reduction. The
 current ratios therefore remain approximately 1.1-1.2x Rust for transcoding and
 1.6-2.2x for short base64 calls; this change removes redundant native work but
 does not close the Windows DLL-transition floor.
+
+## ABI-39 scope and synthetic-cleanup follow-up
+
+The generic HandleScope improvement removes two allocations from both matched
+synthetic workloads. Synthetic-module close now also uses its already-cached
+unregister export directly, removing one further allocation with neutral paired
+latency. Seven 500 ms current-HEAD control/candidate pairs changed create from
+112 bytes/3 allocations to 96 bytes/2 and the full create/instantiate/evaluate
+path from 312 bytes/9 allocations to 296 bytes/8. Median times were effectively
+flat at 1254 versus 1249 ns and 3230 versus 3225 ns, respectively.
+
+Against the frozen Rust midpoints, these current controlled times are about
+2.17x for create and 2.39x for the full path. The improvement beyond the
+explicit scope/cleanup allocation savings is treated as machine-regime drift,
+not attributed to these edits.

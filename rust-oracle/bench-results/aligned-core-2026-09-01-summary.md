@@ -100,3 +100,21 @@ buffer instead of routing through generic Value conversion.
 
 The controlled 300 ms three-sample medians improve 7.5-24.9%. The previously
 recorded large compile-and-run workload remains faster in Go.
+
+## ABI-39 HandleScope and callback follow-up
+
+Caching the existing HandleScope enter/exit exports and calling them with
+fixed arity removes the two variadic wrapper allocations. Five paired 750 ms
+samples changed the pure `NewScope`/`Close` median from 295.1 to 200.5 ns and
+64 bytes/3 allocations to 48 bytes/1 allocation. Escape analysis confirms the
+remaining `Scope` allocation is required by its public lifetime and the
+isolate's nesting stack. The scope-local module-cache workload lost the same
+two allocations and measured 963.4 ns, about 2.74x its Rust midpoint; a minimal
+script compile improved from 1147 to 966.7 ns in that paired run.
+
+Callback `IntegerValue` now validates same-isolate callback values with one
+owner-thread query instead of two. Current-HEAD paired medians improved 0.5-3.8%
+after subtracting control drift, with no allocation change. Registry caches
+were tested and rejected because they added complexity without a separable
+timing benefit; unique invocation storage remains necessary so stale borrowed
+callback pointers can never become valid again.
