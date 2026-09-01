@@ -13,15 +13,15 @@ and constants, fields, enum variants and trait members are included.
 | Classification | Declarations | Percent |
 |---|---:|---:|
 | Matched Go equivalent or documented semantic shape | 1,647 | 88.6% |
-| Partial behavior or evidence | 22 | 1.2% |
+| Partial behavior or evidence | 24 | 1.3% |
 | Missing executable surface | 32 | 1.7% |
-| Unsafe or intentionally unsupported Rust ownership shape | 149 | 8.0% |
-| Ambiguous pending exact executable evidence | 8 | 0.4% |
+| Unsafe or intentionally unsupported Rust ownership shape | 155 | 8.3% |
+| Ambiguous pending exact executable evidence | 0 | 0.0% |
 | Total | 1,858 | 100% |
 
-The confirmed executable remainder is 54 declarations. Including the eight
-ambiguous declarations gives an upper bound of 62. The 149 intentionally
-unsupported declarations are not implementation backlog unless the project
+The confirmed executable remainder is 56 declarations. There is no remaining
+ambiguous bucket. The 155 intentionally unsupported declarations are not
+implementation backlog unless the project
 chooses a comparably safe Go abstraction.
 
 ## Source-family inventory
@@ -48,7 +48,7 @@ chooses a comparably safe Go abstraction.
 | `wasm.rs` | 28 | Safe executable surface matched, including positive serialized-cache behavior |
 | `inspector.rs` and `crdtp.rs` | 146 | Safe owned/closed surface matched; raw boxed/vtable representations hidden |
 | `cppgc.rs` | 60 | Persistent handles and safe member operations matched; generic tracing/type shapes, cells and custom heaps remain |
-| `fast_api.rs` | 75 | Descriptor substrate matched; callback options, one-byte arguments and type matrix remain |
+| `fast_api.rs` | 75 | Descriptor substrate matched; constructor/flag execution is partial; callback-local borrowed ABI shapes are intentionally unsupported |
 | `simdutf.rs`, `icu.rs` and `json.rs` | 83 | Matched |
 | `external_references.rs` | 16 | Matched for the supported native-address shape |
 | `lib.rs` constants/macros | 13 | Constants matched; Rust lexical-scope macros have no Go analogue |
@@ -65,13 +65,13 @@ denominator above is authoritative.
    `GarbageCollected`, `Visitor`, `Traced` and allocation.
 3. `CreateParams::cpp_heap` ownership transfer.
 4. ArrayBuffer allocator types, vtable ownership and default/custom factories.
-5. Executable `FastApiCallbackOptions`, including callback-local data.
-6. `FastApiOneByteString::as_bytes` callback arguments.
-7. Full executable Fast API type/flag matrix and safe Go callback adaptation.
-8. Dynamic-import `ModuleImportPhase::kDefer` callback delivery.
+5. Full executable Fast API constructor/type/flag matrix.
+6. Safe Go fast-callback adaptation, if a non-borrowed design can preserve V8's ABI and lifetime rules.
+7. Dynamic-import `ModuleImportPhase::kDefer` callback delivery.
 
-The eight ambiguous declarations are Fast API generated/ABI behaviors. They
-remain uncounted as matched until the dedicated Rust oracle resolves them.
+The Fast API residual oracle resolved the former ambiguous bucket. Two
+constructors remain partial; six callback-local native/borrowed-pointer items
+are explicitly classified as unsafe or intentionally unsupported.
 
 ## Reproduction
 
