@@ -1,0 +1,31 @@
+# ArrayBuffer allocator and Fast API comparative benchmarks - 2026-09-01
+
+Both implementations used V8 `15.2.124.1-rusty` on the same Windows host.
+The allocator workload creates and immediately frees one 64-byte backing store;
+both harnesses verify exactly one allocation and one free callback per
+iteration. Each Fast API iteration invokes a precompiled JavaScript loop that
+calls the target 256 times. Both harnesses verify the exact native-fast or slow
+callback counter delta outside the timed region.
+
+Commands:
+
+```text
+go test . -run '^$' -bench '^(BenchmarkArrayBufferAllocatorBackingStore|BenchmarkFastAPINativeOptimized|BenchmarkFastAPIGoSlowFallback)$' -benchmem -benchtime=1s -count=10
+cargo bench --locked --bench array_buffer_allocator --bench fast_api_residual -- --save-baseline allocator-fastapi-2026-09-01
+```
+
+| Operation | Go ns/op samples | Go B/op; allocs/op | Rust mean 95% CI | Median ratio |
+|---|---:|---:|---:|---:|
+| backing store 64 create/free | 1234, 1173, 1067, 1055, 1078, 1094, 1082, 1066, 1070, 1160 | 88; 5 | 90.776-102.85 ns | 11.1x |
+| native optimized loop, 256 calls | 4938, 5028, 7055, 6873, 6896, 7204, 6759, 7320, 6977, 7686 | 72; 2 | 1.0953-1.1594 us | 6.2x |
+| slow callback loop, 256 calls | 237713, 222318, 257402, 241490, 233744, 224744, 227809, 229110, 221164, 219166 | 41032; 1282 | 7.3427-7.6528 us | 30.5x |
+
+The ratios use each Go sample median and the Rust confidence-interval midpoint.
+They are measured optimization gaps, not accepted performance parity. The slow
+path crosses the Go callback boundary 256 times and allocates about five Go
+objects per callback; the native path proves every call used the optimized
+native address but still includes Go wrapper invocation of the outer loop.
+
+Raw Criterion estimates, samples, Tukey fences, and reports are stored in
+`criterion-allocator-fastapi-2026-09-01/`. Environment metadata is in
+`env-2026-09-01-DESKTOP-VJI58KR.txt`.

@@ -399,6 +399,11 @@ Raw output lives in `bench-results/`:
 - `object-lazy-2026-09-01-summary.md` — matching Go samples, Rust confidence
   interval, workload boundary, and the measured performance gap
 
+- `criterion-allocator-fastapi-2026-09-01/` — raw Criterion data for the
+  matched custom-allocator and Fast API execution workloads
+- `allocator-fastapi-2026-09-01-summary.md` — matching Go samples, Rust
+  confidence intervals, counter assertions, and measured performance gaps
+
 To record a new run (Windows PowerShell, from the `rust-oracle` directory):
 
 ```
@@ -430,6 +435,8 @@ Checked on this machine (2026-09-01, Rust toolchain 1.98.0, Go 1.26.2):
   repeated samples; raw data and the comparison summary are checked in
 - lazy data-property first read — matched Rust/Go workload measured with
   repeated samples; raw data and the comparison summary are checked in
+- custom allocator and Fast API execution — matched Rust/Go workloads measured
+  with repeated samples and exact callback-counter validation
 - Unsupported-target guard: `cargo check --target x86_64-pc-windows-gnu`
   (installed temporarily, then removed) fails immediately with the single
   "Supported platform" `compile_error!` and never downloads or builds the V8
