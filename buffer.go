@@ -156,17 +156,40 @@ type BackingStore struct {
 	active                        int
 }
 
+var (
+	backingStoreHotProcsOnce sync.Once
+	backingStoreNewAddr      uintptr
+	backingStoreDisposeAddr  uintptr
+	allocatorCloneAddr       uintptr
+	allocatorDisposeAddr     uintptr
+)
+
+func ensureBackingStoreHotProcs() {
+	backingStoreHotProcsOnce.Do(func() {
+		backingStoreNewAddr = proc("gov8_backing_store_new").Addr()
+		backingStoreDisposeAddr = proc("gov8_backing_store_dispose").Addr()
+		allocatorCloneAddr = proc("gov8_aba_clone").Addr()
+		allocatorDisposeAddr = proc("gov8_aba_dispose").Addr()
+	})
+}
+
 func cloneArrayBufferAllocatorReference(reference uintptr) (uintptr, error) {
 	if reference == 0 {
 		return 0, nil
 	}
-	return callHandle("ArrayBufferAllocator.backing-store.clone", proc("gov8_aba_clone"), reference)
+	ensureBackingStoreHotProcs()
+	handle, _, _ := syscall.Syscall(allocatorCloneAddr, 1, reference, 0, 0)
+	if handle == 0 {
+		return 0, shimError("ArrayBufferAllocator.backing-store.clone", 0)
+	}
+	return handle, nil
 }
 
 func (i *Isolate) backingStore(handle uintptr) (*BackingStore, error) {
 	reference, err := cloneArrayBufferAllocatorReference(i.arrayBufferAllocatorReference)
 	if err != nil {
-		_ = callErr("BackingStore.rollback", proc("gov8_backing_store_dispose"), handle)
+		ensureBackingStoreHotProcs()
+		_, _, _ = syscall.Syscall(backingStoreDisposeAddr, 1, handle, 0, 0)
 		return nil, err
 	}
 	return &BackingStore{iso: i, handle: handle, arrayBufferAllocatorReference: reference}, nil
@@ -226,10 +249,11 @@ func (i *Isolate) NewBackingStore(byteLength int) (*BackingStore, error) {
 	if err := i.check(); err != nil {
 		return nil, err
 	}
-	h, err := callHandle("NewBackingStore", proc("gov8_backing_store_new"),
-		i.handle, uintptr(byteLength))
-	if err != nil {
-		return nil, err
+	ensureBackingStoreHotProcs()
+	h, _, _ := syscall.Syscall(backingStoreNewAddr, 2,
+		i.handle, uintptr(byteLength), 0)
+	if h == 0 {
+		return nil, shimError("NewBackingStore", 0)
 	}
 	return i.backingStore(h)
 }
@@ -453,11 +477,13 @@ func (bs *BackingStore) Close() error {
 	bs.closing = true
 	handle := bs.handle
 	bs.mu.Unlock()
-	if err := callErr("BackingStore.Close", proc("gov8_backing_store_dispose"), handle); err != nil {
+	ensureBackingStoreHotProcs()
+	status, _, _ := syscall.Syscall(backingStoreDisposeAddr, 1, handle, 0, 0)
+	if int64(status) < 0 {
 		bs.mu.Lock()
 		bs.closing = false
 		bs.mu.Unlock()
-		return err
+		return shimError("BackingStore.Close", status)
 	}
 	bs.mu.Lock()
 	bs.closed = true
@@ -467,8 +493,9 @@ func (bs *BackingStore) Close() error {
 	bs.closing = false
 	bs.mu.Unlock()
 	if allocatorReference != 0 {
-		if err := callErr("ArrayBufferAllocator.backing-store.Close", proc("gov8_aba_dispose"), allocatorReference); err != nil {
-			return err
+		status, _, _ := syscall.Syscall(allocatorDisposeAddr, 1, allocatorReference, 0, 0)
+		if int64(status) < 0 {
+			return shimError("ArrayBufferAllocator.backing-store.Close", status)
 		}
 	}
 	return nil

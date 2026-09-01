@@ -29,3 +29,17 @@ native address but still includes Go wrapper invocation of the outer loop.
 Raw Criterion estimates, samples, Tukey fences, and reports are stored in
 `criterion-allocator-fastapi-2026-09-01/`. Environment metadata is in
 `env-2026-09-01-DESKTOP-VJI58KR.txt`.
+
+## Fixed-arity backing-store follow-up
+
+The Go path now caches its create, allocator-clone, backing-store-dispose, and
+allocator-dispose addresses and invokes them with fixed-arity Windows calls.
+This preserves the independent allocator reference held by every BackingStore
+while removing variadic frames from its hot lifecycle.
+
+Ten one-second samples were 750.9, 1030, 1074, 1043, 1041, 1125, 1136, 1039,
+1017, and 1038 ns/op at 48 bytes and 1 allocation per operation. The median
+improved from 1,080 to 1,039.5 ns/op (3.8%), while allocations fell from 88
+bytes/5 allocations to 48 bytes/1 allocation. The remaining roughly 10.7x gap
+is dominated by two required native-to-Go allocator callbacks plus DLL/V8
+transitions rather than Go heap allocation.
