@@ -322,6 +322,66 @@ func TestSyntheticModuleRejectsReentrantClose(t *testing.T) {
 	}
 }
 
+func TestSyntheticModuleNestedEvaluationScopes(t *testing.T) {
+	iso, ctx, scope := newTestRuntime(t)
+	var innerCalls, outerCalls atomic.Int32
+	inner, err := ctx.NewSyntheticModule(scope, "nested-inner", nil,
+		func(e *gov8.SyntheticModuleEvaluation) (gov8.Value, error) {
+			innerCalls.Add(1)
+			return syntheticInt(e, 41), nil
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer inner.Close()
+	if linked, err := inner.Instantiate(scope, func(gov8.ModuleResolveRequest) (*gov8.Module, error) { return nil, nil }, nil); err != nil || !linked {
+		t.Fatalf("inner Instantiate = %v, %v", linked, err)
+	}
+
+	outer, err := ctx.NewSyntheticModule(scope, "nested-outer", nil,
+		func(e *gov8.SyntheticModuleEvaluation) (gov8.Value, error) {
+			outerCalls.Add(1)
+			nestedScope, err := iso.NewScope()
+			if err != nil {
+				return gov8.Value{}, err
+			}
+			innerResult, err := inner.EvaluateValue(nestedScope, nil)
+			if err != nil {
+				_ = nestedScope.Close()
+				return gov8.Value{}, err
+			}
+			integer, ok, err := innerResult.IntegerValue(ctx)
+			if err != nil || !ok || integer != 41 {
+				_ = nestedScope.Close()
+				return gov8.Value{}, fmt.Errorf("nested result = %d, %v, %v", integer, ok, err)
+			}
+			if err := nestedScope.Close(); err != nil {
+				return gov8.Value{}, err
+			}
+			// This value belongs to the restored outer callback scope, not the
+			// nested scope that has just been closed.
+			return syntheticInt(e, 42), nil
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer outer.Close()
+	if linked, err := outer.Instantiate(scope, func(gov8.ModuleResolveRequest) (*gov8.Module, error) { return nil, nil }, nil); err != nil || !linked {
+		t.Fatalf("outer Instantiate = %v, %v", linked, err)
+	}
+	result, err := outer.EvaluateValue(scope, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	integer, ok, err := result.IntegerValue(ctx)
+	if err != nil || !ok || integer != 42 {
+		t.Fatalf("outer result = %d, %v, %v", integer, ok, err)
+	}
+	if innerCalls.Load() != 1 || outerCalls.Load() != 1 {
+		t.Fatalf("callback calls = inner %d, outer %d", innerCalls.Load(), outerCalls.Load())
+	}
+}
+
 func TestSyntheticModuleExplicitCleanupOrder(t *testing.T) {
 	iso, err := gov8.NewIsolate()
 	if err != nil {
