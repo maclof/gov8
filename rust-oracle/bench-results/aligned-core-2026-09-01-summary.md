@@ -233,3 +233,26 @@ The compile-and-run timings are neutral while every Run path removes exactly
 confirmation improved the median from 5446 to 5373.5 ns (-1.3%), reducing
 4240 B/6 to 4232 B/5 (about 1.31x the pinned Rust midpoint). Same-script
 reentry and success/error/success TryCatch tests cover slot restoration.
+
+## ABI-41 Function call same-scope follow-up
+
+`Function.Call` now reuses the function's successful scope/isolate proof when
+the call scope, receiver, and arguments carry the identical `Scope` pointer.
+Different-scope calls retain the prior full checks and error ordering. Focused
+coverage exercises zero, one, and multiple arguments, invalid values,
+wrong-thread and closed/foreign lifetimes, thrown exceptions, and nested
+JavaScript re-entry through a Go callback.
+
+Six order-balanced 500 ms frozen-executable pairs produced these controls:
+
+| Workload | Original samples (ns/op) | Same-scope samples (ns/op) | Median change | B/op; allocs/op |
+|---|---:|---:|---:|---:|
+| callback/native_call_from_js | 1810, 1776, 2104, 1798, 2224, 1789 | 2029, 1781, 1801, 1812, 1835, 1824 | 1804 to 1818 (+0.8%, neutral) | 272; 5 |
+| callback/native_call_from_host | 1796, 1859, 2478, 1854, 1913, 1862 | 2088, 1725, 1794, 1787, 2007, 1811 | 1860.5 to 1802.5 (-3.1%) | 320; 8 |
+| callback/function_new_call | 3904, 4037, 4680, 3935, 4026, 3735 | 4336, 3658, 3568, 3321, 3888, 3958 | 3980.5 to 3773 (-5.2%) | 512; 9 |
+
+The JavaScript-origin control does not use the optimized outer
+`Function.Call` and stayed neutral. The host and create/call medians improved
+in four of six pairs, leaving approximately 13.0x and 3.80x versus their
+pinned Rust midpoints. Allocations are unchanged; this pass removes redundant
+thread-affinity work rather than weakening lifetime enforcement.

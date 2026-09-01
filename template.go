@@ -572,7 +572,10 @@ func (f *Function) check() error {
 	if err := f.Value.check(); err != nil {
 		return err
 	}
-	return f.ctx.check()
+	// Value.check already proved the shared isolate's lifecycle and affinity.
+	// A Function's context is immutable and belongs to that same isolate, so
+	// repeating the thread-id syscall here cannot observe a distinct state.
+	return f.ctx.checkAssumingIsolate()
 }
 
 // NewFunction creates a native function object directly in the context (v8
@@ -638,18 +641,35 @@ func (f *Function) Call(s *Scope, recv Value, args ...Value) (Value, bool, error
 	if err := f.check(); err != nil {
 		return Value{}, false, err
 	}
-	if err := s.check(); err != nil {
-		return Value{}, false, err
+	if s != f.sc {
+		// Keep the public validation and error ordering unchanged for calls that
+		// do not use the Function's creation scope. The common same-scope case
+		// was already checked through f.check above.
+		if err := s.check(); err != nil {
+			return Value{}, false, err
+		}
 	}
 	if s.iso != f.iso {
 		return Value{}, false, foreignIsolate("scope")
 	}
-	if err := recv.check(); err != nil {
-		return Value{}, false, err
+	if recv.sc == s {
+		if recv.h == 0 {
+			return Value{}, false, fmt.Errorf("gov8: zero value handle")
+		}
+	} else {
+		if err := recv.check(); err != nil {
+			return Value{}, false, err
+		}
 	}
 	for _, a := range args {
-		if err := a.check(); err != nil {
-			return Value{}, false, err
+		if a.sc == s {
+			if a.h == 0 {
+				return Value{}, false, fmt.Errorf("gov8: zero value handle")
+			}
+		} else {
+			if err := a.check(); err != nil {
+				return Value{}, false, err
+			}
 		}
 		if a.iso != f.iso {
 			return Value{}, false, foreignIsolate("argument")

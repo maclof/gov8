@@ -150,3 +150,27 @@ retains an independent allocator reference for its post-isolate backing-store
 lifetime behavior. No production change was accepted: removing those costs
 would weaken callback observation or backing-store ownership. The previously
 rejected split-callback ABI was not repeated.
+
+## ABI-41 Function call validation follow-up
+
+The matched Fast API benchmark makes one public `Function.Call` for each
+256-call optimized JavaScript loop. When the function, supplied scope,
+receiver, and arguments name the exact same Go `Scope`, the function check now
+proves isolate affinity and scope lifetime once. Non-alias calls retain their
+previous validation sequence and error ordering. This changes neither the
+inner callback-options ABI nor the exact fast/slow counter proof.
+
+Eight order-balanced frozen-executable one-second pairs measured the original
+path at 1262, 1622, 2617, 1333, 1241, 1266, 1193, and 1494 ns/op, versus 1488,
+1229, 1495, 1391, 1153, 1174, 1169, and 1185 ns/op for the same-scope path.
+The candidate won six pairs and reduced the median 7.1%, from 1299.5 to 1207
+ns/op. Allocations remained 72 bytes and two allocations. The current median
+is about 1.07x the pinned Rust 1127.35 ns midpoint.
+
+A five-second profile changed from 1531 to 1404 ns/op. Cumulative
+`Isolate.check` time fell from 15.5% to 3.0%, and `currentThreadID` from 14.9%
+to 2.85%; the native transition consequently rose from 80.2% to 83.4% flat.
+Caching the procedure lookup by itself was neutral or slower and was rejected.
+The remaining two allocations marshal the single outer argument and output
+wire; an additive fixed-arity native export was not justified at this residual
+gap.
