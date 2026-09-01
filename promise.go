@@ -65,6 +65,29 @@ type PromiseResolver struct {
 	Value
 }
 
+var (
+	promiseHotOnce         sync.Once
+	promiseResolverNewAddr uintptr
+	promiseGetPromiseAddr  uintptr
+	promiseResolveAddr     uintptr
+	promiseStateAddr       uintptr
+	promiseResultAddr      uintptr
+	promiseThenAddr        uintptr
+	promiseIsFunctionAddr  uintptr
+)
+
+func ensurePromiseHotProcs() {
+	promiseHotOnce.Do(func() {
+		promiseResolverNewAddr = proc("gov8_promise_resolver_new_direct").Addr()
+		promiseGetPromiseAddr = proc("gov8_promise_resolver_get_promise_direct").Addr()
+		promiseResolveAddr = proc("gov8_promise_resolver_resolve_direct").Addr()
+		promiseStateAddr = proc("gov8_promise_state").Addr()
+		promiseResultAddr = proc("gov8_promise_result_direct").Addr()
+		promiseThenAddr = proc("gov8_promise_then_direct").Addr()
+		promiseIsFunctionAddr = proc("gov8_is_function").Addr()
+	})
+}
+
 // NewPromiseResolver creates a resolver with a fresh pending promise in the
 // context. The scope must belong to the same isolate as the context.
 func (s *Scope) NewPromiseResolver(c *Context) (PromiseResolver, error) {
@@ -74,20 +97,22 @@ func (s *Scope) NewPromiseResolver(c *Context) (PromiseResolver, error) {
 	if c == nil || c.iso != s.iso {
 		return PromiseResolver{}, foreignIsolate("context")
 	}
-	if err := c.check(); err != nil {
+	if err := c.checkAssumingIsolate(); err != nil {
 		return PromiseResolver{}, err
 	}
-	ih, err := s.iso.handleChecked()
-	if err != nil {
+	if err := requireInitialized(); err != nil {
 		return PromiseResolver{}, err
 	}
-	var out uintptr
-	r1, _, _ := proc("gov8_promise_resolver_new").Call(
-		ih, c.handle, s.handle, uintptr(unsafe.Pointer(&out)))
+	ensurePromiseHotProcs()
+	r1, _, _ := syscall.Syscall(promiseResolverNewAddr, 3,
+		s.iso.handleAssumingCheck(), c.handle, s.handle)
 	if int64(r1) < 0 {
 		return PromiseResolver{}, shimError("PromiseResolver.New", r1)
 	}
-	return PromiseResolver{Value{iso: s.iso, sc: s, h: out}}, nil
+	if r1 == 0 {
+		return PromiseResolver{}, shimError("PromiseResolver.New", r1)
+	}
+	return PromiseResolver{Value{iso: s.iso, sc: s, h: r1}}, nil
 }
 
 // GetPromise returns the resolver's associated promise.
@@ -98,28 +123,35 @@ func (r PromiseResolver) GetPromise(s *Scope) (Promise, error) {
 	if s.iso != r.iso {
 		return Promise{}, foreignIsolate("scope")
 	}
-	sh, err := s.checkedHandle()
+	sh, err := s.checkedHandleAssumingIsolate()
 	if err != nil {
 		return Promise{}, err
 	}
-	var out uintptr
-	r1, _, _ := proc("gov8_promise_resolver_get_promise").Call(
-		r.iso.handle, sh, r.h, uintptr(unsafe.Pointer(&out)))
+	ensurePromiseHotProcs()
+	r1, _, _ := syscall.Syscall(promiseGetPromiseAddr, 3,
+		r.iso.handleAssumingCheck(), sh, r.h)
 	if int64(r1) < 0 {
 		return Promise{}, shimError("PromiseResolver.GetPromise", r1)
 	}
-	return Promise{Value{iso: r.iso, sc: s, h: out}}, nil
+	if r1 == 0 {
+		return Promise{}, shimError("PromiseResolver.GetPromise", r1)
+	}
+	return Promise{Value{iso: r.iso, sc: s, h: r1}}, nil
 }
 
 // checkValues validates a resolved argument: same isolate, usable handle.
 func (r PromiseResolver) checkValue(v Value) error {
+	if v.h == 0 {
+		return fmt.Errorf("gov8: zero value handle")
+	}
+	if v.iso == r.iso {
+		_, err := v.sc.checkedHandleAssumingIsolate()
+		return err
+	}
 	if err := v.check(); err != nil {
 		return err
 	}
-	if v.iso != r.iso {
-		return foreignIsolate("value")
-	}
-	return nil
+	return foreignIsolate("value")
 }
 
 // Resolve settles the associated promise with value. The returned bool is
@@ -133,20 +165,19 @@ func (r PromiseResolver) Resolve(c *Context, v Value) (bool, error) {
 	if c == nil || c.iso != r.iso {
 		return false, foreignIsolate("context")
 	}
-	if err := c.check(); err != nil {
+	if err := c.checkAssumingIsolate(); err != nil {
 		return false, err
 	}
 	if err := r.checkValue(v); err != nil {
 		return false, err
 	}
-	var ok int32
-	r1, _, _ := proc("gov8_promise_resolver_resolve").Call(
-		r.iso.handle, c.handle, r.sc.handle, r.h, v.h,
-		uintptr(unsafe.Pointer(&ok)))
+	ensurePromiseHotProcs()
+	r1, _, _ := syscall.Syscall6(promiseResolveAddr, 5,
+		r.iso.handleAssumingCheck(), c.handle, r.sc.handle, r.h, v.h, 0)
 	if int64(r1) < 0 {
 		return false, shimError("PromiseResolver.Resolve", r1)
 	}
-	return ok == 1, nil
+	return r1 == 1, nil
 }
 
 // Reject settles the associated promise with value as the rejection reason,
@@ -179,11 +210,11 @@ func (p Promise) State() (PromiseState, error) {
 	if err := p.check(); err != nil {
 		return 0, err
 	}
-	ih, err := p.iso.handleChecked()
-	if err != nil {
+	if err := requireInitialized(); err != nil {
 		return 0, err
 	}
-	r1, _, _ := proc("gov8_promise_state").Call(ih, p.h)
+	ensurePromiseHotProcs()
+	r1, _, _ := syscall.Syscall(promiseStateAddr, 2, p.iso.handleAssumingCheck(), p.h, 0)
 	if int64(r1) < 0 {
 		return 0, shimError("Promise.State", r1)
 	}
@@ -199,17 +230,20 @@ func (p Promise) Result(s *Scope) (Value, error) {
 	if s.iso != p.iso {
 		return Value{}, foreignIsolate("scope")
 	}
-	sh, err := s.checkedHandle()
+	sh, err := s.checkedHandleAssumingIsolate()
 	if err != nil {
 		return Value{}, err
 	}
-	var out uintptr
-	r1, _, _ := proc("gov8_promise_result").Call(
-		p.iso.handle, sh, p.h, uintptr(unsafe.Pointer(&out)))
+	ensurePromiseHotProcs()
+	r1, _, _ := syscall.Syscall(promiseResultAddr, 3,
+		p.iso.handleAssumingCheck(), sh, p.h)
 	if int64(r1) < 0 {
 		return Value{}, shimError("Promise.Result", r1)
 	}
-	return Value{iso: p.iso, sc: s, h: out}, nil
+	if r1 == 0 {
+		return Value{}, shimError("Promise.Result", r1)
+	}
+	return Value{iso: p.iso, sc: s, h: r1}, nil
 }
 
 // HasHandler reports whether the promise has at least one derived promise
@@ -268,15 +302,37 @@ func (p Promise) StrictEquals(other Value) (bool, error) {
 // checkFunction validates that v is a usable function value of the same
 // isolate. This guards the ABI: the shim would reinterpret a non-function
 // slot as v8::Function.
-func checkFunction(v Value) error {
-	if err := v.check(); err != nil {
+func checkFunctionAssumingIsolate(v Value, iso *Isolate) error {
+	if v.iso != iso {
+		// Preserve the pre-existing validation and error ordering for foreign
+		// values. Same-isolate handlers take the optimized path below.
+		if err := v.check(); err != nil {
+			return err
+		}
+		isFn, err := v.IsFunction()
+		if err != nil {
+			return err
+		}
+		if !isFn {
+			return errors.New("gov8: promise handler is not a function")
+		}
+		return nil
+	}
+	if v.h == 0 {
+		return fmt.Errorf("gov8: zero value handle")
+	}
+	if _, err := v.sc.checkedHandleAssumingIsolate(); err != nil {
 		return err
 	}
-	isFn, err := v.IsFunction()
-	if err != nil {
+	if err := requireInitialized(); err != nil {
 		return err
 	}
-	if !isFn {
+	ensurePromiseHotProcs()
+	r1, _, _ := syscall.Syscall(promiseIsFunctionAddr, 2, iso.handleAssumingCheck(), v.h, 0)
+	if int64(r1) < 0 {
+		return shimError("gov8_is_function", r1)
+	}
+	if r1 != 1 {
 		return errors.New("gov8: promise handler is not a function")
 	}
 	return nil
@@ -306,23 +362,25 @@ func (p Promise) thenImpl(c *Context, onFulfilled, onRejected Value, op string) 
 	if c == nil || c.iso != p.iso {
 		return Promise{}, foreignIsolate("context")
 	}
-	if err := c.check(); err != nil {
+	if err := c.checkAssumingIsolate(); err != nil {
 		return Promise{}, err
 	}
-	if err := checkFunction(onFulfilled); err != nil {
+	if err := checkFunctionAssumingIsolate(onFulfilled, p.iso); err != nil {
 		return Promise{}, err
 	}
 	if onRejected.h == 0 {
-		var out uintptr
-		r1, _, _ := proc("gov8_promise_then").Call(
-			p.iso.handle, c.handle, p.sc.handle, p.h, onFulfilled.h,
-			uintptr(unsafe.Pointer(&out)))
+		ensurePromiseHotProcs()
+		r1, _, _ := syscall.Syscall6(promiseThenAddr, 5,
+			p.iso.handleAssumingCheck(), c.handle, p.sc.handle, p.h, onFulfilled.h, 0)
 		if int64(r1) < 0 {
 			return Promise{}, shimError("Promise."+op, r1)
 		}
-		return Promise{Value{iso: p.iso, sc: p.sc, h: out}}, nil
+		if r1 == 0 {
+			return Promise{}, shimError("Promise."+op, r1)
+		}
+		return Promise{Value{iso: p.iso, sc: p.sc, h: r1}}, nil
 	}
-	if err := checkFunction(onRejected); err != nil {
+	if err := checkFunctionAssumingIsolate(onRejected, p.iso); err != nil {
 		return Promise{}, err
 	}
 	var out uintptr
@@ -344,10 +402,10 @@ func (p Promise) Catch(c *Context, handler Value) (Promise, bool, error) {
 	if c == nil || c.iso != p.iso {
 		return Promise{}, false, foreignIsolate("context")
 	}
-	if err := c.check(); err != nil {
+	if err := c.checkAssumingIsolate(); err != nil {
 		return Promise{}, false, err
 	}
-	if err := checkFunction(handler); err != nil {
+	if err := checkFunctionAssumingIsolate(handler, p.iso); err != nil {
 		return Promise{}, false, err
 	}
 	var out uintptr

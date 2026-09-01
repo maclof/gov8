@@ -220,6 +220,17 @@ __declspec(dllexport) int64_t gov8_promise_resolver_new(v8::Isolate* iso,
   }
 }
 
+// Allocation-free Go hot path: successful local handles are user-space
+// addresses (positive intptr_t values); negative values remain the exact shim
+// status codes returned by the compatibility export above.
+__declspec(dllexport) int64_t gov8_promise_resolver_new_direct(
+    v8::Isolate* iso, void* ctxw, void* scope) {
+  void* out = nullptr;
+  const int64_t status = gov8_promise_resolver_new(iso, ctxw, scope, &out);
+  if (status < 0) return status;
+  return static_cast<int64_t>(reinterpret_cast<intptr_t>(out));
+}
+
 __declspec(dllexport) int64_t gov8_promise_resolver_get_promise(
     v8::Isolate* iso, void* scope, void* resolver, void** out) {
   ClearErr();
@@ -235,6 +246,15 @@ __declspec(dllexport) int64_t gov8_promise_resolver_get_promise(
     SetErr("C++ exception in promise_resolver_get_promise");
     return kErrCpp;
   }
+}
+
+__declspec(dllexport) int64_t gov8_promise_resolver_get_promise_direct(
+    v8::Isolate* iso, void* scope, void* resolver) {
+  void* out = nullptr;
+  const int64_t status =
+      gov8_promise_resolver_get_promise(iso, scope, resolver, &out);
+  if (status < 0) return status;
+  return static_cast<int64_t>(reinterpret_cast<intptr_t>(out));
 }
 
 // Resolve/reject the associated promise. *out_ok reports the success of the
@@ -267,6 +287,15 @@ __declspec(dllexport) int64_t gov8_promise_resolver_resolve(
     SetErr("C++ exception in promise_resolver_resolve");
     return kErrCpp;
   }
+}
+
+__declspec(dllexport) int64_t gov8_promise_resolver_resolve_direct(
+    v8::Isolate* iso, void* ctxw, void* scope, void* resolver, void* value) {
+  int32_t out_ok = 0;
+  const int64_t status = gov8_promise_resolver_resolve(
+      iso, ctxw, scope, resolver, value, &out_ok);
+  if (status < 0) return status;
+  return out_ok;
 }
 
 __declspec(dllexport) int64_t gov8_promise_resolver_reject(
@@ -344,6 +373,15 @@ __declspec(dllexport) int64_t gov8_promise_result(v8::Isolate* iso,
   }
 }
 
+__declspec(dllexport) int64_t gov8_promise_result_direct(v8::Isolate* iso,
+                                                         void* scope,
+                                                         void* promise) {
+  void* out = nullptr;
+  const int64_t status = gov8_promise_result(iso, scope, promise, &out);
+  if (status < 0) return status;
+  return static_cast<int64_t>(reinterpret_cast<intptr_t>(out));
+}
+
 __declspec(dllexport) int64_t gov8_promise_has_handler(v8::Isolate* iso,
                                                        void* promise) {
   ClearErr();
@@ -411,6 +449,16 @@ __declspec(dllexport) int64_t gov8_promise_then(v8::Isolate* iso, void* ctxw,
     SetErr("C++ exception in promise_then");
     return kErrCpp;
   }
+}
+
+__declspec(dllexport) int64_t gov8_promise_then_direct(
+    v8::Isolate* iso, void* ctxw, void* scope, void* promise,
+    void* handler) {
+  void* out = nullptr;
+  const int64_t status =
+      gov8_promise_then(iso, ctxw, scope, promise, handler, &out);
+  if (status < 0) return status;
+  return static_cast<int64_t>(reinterpret_cast<intptr_t>(out));
 }
 
 __declspec(dllexport) int64_t gov8_promise_then2(v8::Isolate* iso, void* ctxw,
