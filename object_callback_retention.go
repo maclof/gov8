@@ -32,6 +32,39 @@ type LazyDataPropertyConfiguration struct {
 	SetterSideEffectType SideEffectType
 }
 
+// lazyReceiverArgs validates one lazy-property receiver operation while
+// avoiding repeated affinity checks after the receiver has established the
+// isolate's owner thread. Context and scope state cannot change concurrently
+// on that thread.
+func (o *Object) lazyReceiverArgs(s *Scope, c *Context, key Value) (uintptr, error) {
+	if err := o.check(); err != nil {
+		return 0, err
+	}
+	if c == nil || c.iso != o.iso {
+		return 0, foreignIsolate("context")
+	}
+	if err := c.checkAssumingIsolate(); err != nil {
+		return 0, err
+	}
+	if s == nil || s.iso != o.iso {
+		return 0, foreignIsolate("scope")
+	}
+	sh, err := s.checkedHandleAssumingIsolate()
+	if err != nil {
+		return 0, err
+	}
+	if key.h == 0 {
+		return 0, fmt.Errorf("gov8: zero value handle")
+	}
+	if key.iso != o.iso {
+		return 0, foreignIsolate("key")
+	}
+	if key.sc == nil || key.sc.closed {
+		return 0, fmt.Errorf("gov8: scope used after Close")
+	}
+	return sh, nil
+}
+
 func validPropertyAttribute(attr PropertyAttribute) error {
 	if attr & ^PropertyAttribute(AttrReadOnly|AttrDontEnum|AttrDontDelete) != 0 {
 		return fmt.Errorf("gov8: invalid property attributes %#x", uint8(attr))
@@ -95,13 +128,12 @@ func (o *Object) SetAccessorWithConfiguration(s *Scope, c *Context, key Value, c
 // V8 152 CHECK-fails for a setter side-effect type of HasNoSideEffect; the Go
 // API turns that fatal-only precondition into a deterministic error.
 func (o *Object) SetLazyDataPropertyWithConfiguration(s *Scope, c *Context, key Value, configuration LazyDataPropertyConfiguration) (bool, error) {
-	sh, err := o.receiverArgs(s, c)
+	sh, err := o.lazyReceiverArgs(s, c, key)
 	if err != nil {
 		return false, err
 	}
-	if err := o.nameArg(key); err != nil {
-		return false, err
-	}
+	// The shim validates the dynamic Go Value as a V8 Name at the same boundary
+	// that consumes it. Avoid a separate DLL round trip for the same predicate.
 	if configuration.Getter == nil {
 		return false, errNilLazyGetter
 	}
@@ -117,13 +149,14 @@ func (o *Object) SetLazyDataPropertyWithConfiguration(s *Scope, c *Context, key 
 	if configuration.SetterSideEffectType == SideEffectHasNoSideEffect {
 		return false, fmt.Errorf("gov8: lazy setter side-effect type HasNoSideEffect is invalid")
 	}
-	handle, err := registerAccessorCallbacks(o.iso, configuration.Getter, nil, configuration.Data)
+	handle, entry, cacheKey, created, err := registerLazyGetter(o.iso, configuration.Getter, configuration.Data)
 	if err != nil {
 		return false, err
 	}
-	entry := lookupHostCallback(handle)
 	if entry == nil {
-		dropHostCallback(handle)
+		if created {
+			dropNewLazyGetter(handle, cacheKey)
+		}
 		return false, errLostCallbackRegistration
 	}
 	var okv int32
@@ -132,11 +165,13 @@ func (o *Object) SetLazyDataPropertyWithConfiguration(s *Scope, c *Context, key 
 		uintptr(configuration.Attribute), uintptr(configuration.GetterSideEffectType),
 		uintptr(configuration.SetterSideEffectType), uintptr(unsafe.Pointer(&okv)))
 	if int64(r1) < 0 {
-		dropHostCallback(handle)
+		if created {
+			dropNewLazyGetter(handle, cacheKey)
+		}
 		return false, shimError("Object.SetLazyDataPropertyWithConfiguration", r1)
 	}
-	if okv != 1 {
-		dropHostCallback(handle)
+	if okv != 1 && created {
+		dropNewLazyGetter(handle, cacheKey)
 	}
 	return okv == 1, nil
 }

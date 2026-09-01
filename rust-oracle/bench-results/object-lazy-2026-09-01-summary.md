@@ -35,3 +35,23 @@ optimization targets.
 Raw Criterion estimates, samples, and Tukey fences are stored in
 `criterion-object-lazy-2026-09-01/`. Machine metadata is in
 `env-2026-09-01-DESKTOP-VJI58KR.txt`.
+
+## Callback-reuse follow-up
+
+The Go path was subsequently changed to reuse the native callback context for
+the same zero-data getter function, validate the Name at the consuming shim
+boundary, combine the borrowed Scope and CallbackScope allocation, and avoid
+the generic ReturnValue setter for int32 results. Focused lifecycle, failure,
+callback-retention, conformance, race, and vet checks passed.
+
+Fresh before/after runs used the same commands and matched workload described
+above. The before Go median was 6866.5 ns/op at 20 allocations. The final Go
+samples were 3470, 3553, 5071, 5311, 5363, 5425, 5317, 5053, 5194, and 5738
+ns/op at 464 B/op and 15 allocations/op. The median fell to 5252.5 ns/op,
+23.5% below the fresh baseline, with 25% fewer allocations.
+
+The immediately following Rust run reported a 1094.2-1300.5 ns slope 95%
+confidence interval with a 1194.4 ns point estimate. The post-change Go median
+therefore remains about 4.40x the Rust estimate. General scope, object, string,
+property-read, numeric-conversion, and DLL callback crossings now dominate the
+matched workload, so this remains a measured performance gap.

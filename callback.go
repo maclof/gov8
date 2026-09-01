@@ -87,6 +87,15 @@ type hostCallbackFrame struct {
 	pdValueWire    uintptr
 }
 
+// hostCallbackInvocation keeps the two user-visible callback scope views in
+// one uniquely-owned allocation. Either pointer may be retained by user code;
+// both continue to address this invocation record after dispatch, with scope
+// invalidation making every later operation fail deterministically.
+type hostCallbackInvocation struct {
+	scope    Scope
+	callback CallbackScope
+}
+
 const (
 	cbKindFunction    = 0
 	cbKindAccessorGet = 1
@@ -145,10 +154,33 @@ type hostCallbackEntry struct {
 }
 
 var hostCallbackRegistry = struct {
-	mu      sync.Mutex
-	next    uint64
-	entries map[uint64]*hostCallbackEntry
-}{entries: make(map[uint64]*hostCallbackEntry)}
+	mu          sync.Mutex
+	next        uint64
+	entries     map[uint64]*hostCallbackEntry
+	lazyGetters map[lazyGetterCacheKey]uint64
+}{
+	entries:     make(map[uint64]*hostCallbackEntry),
+	lazyGetters: make(map[lazyGetterCacheKey]uint64),
+}
+
+// lazyGetterCacheKey identifies one exact Go function value within an
+// isolate. A Go function value is a pointer-sized reference to an immutable
+// funcval; copies of the same closure retain that reference, while separately
+// created capturing closures have distinct references. The registry entry
+// holds the function value itself, so its funcval cannot be collected or have
+// its address reused while this key remains published.
+//
+// This representation-dependent optimization is confined to the supported
+// Windows/amd64 build. Missing the cache is always safe; equality is used only
+// to share an otherwise identical, immutable dispatch context.
+type lazyGetterCacheKey struct {
+	iso      *Isolate
+	identity uintptr
+}
+
+func lazyGetterIdentity(getter AccessorGetterCallback) uintptr {
+	return *(*uintptr)(unsafe.Pointer(&getter))
+}
 
 var (
 	ensureDispatcherOnce sync.Once
@@ -194,6 +226,9 @@ func registerHostEntry(iso *Isolate, e *hostCallbackEntry, data Value) (uint64, 
 	if err := ensureDispatcher(); err != nil {
 		return 0, err
 	}
+	if err := requireInitialized(); err != nil {
+		return 0, err
+	}
 	hostCallbackRegistry.mu.Lock()
 	for {
 		hostCallbackRegistry.next++
@@ -204,12 +239,8 @@ func registerHostEntry(iso *Isolate, e *hostCallbackEntry, data Value) (uint64, 
 	h := hostCallbackRegistry.next
 	hostCallbackRegistry.mu.Unlock()
 
-	ih, err := iso.handleChecked()
-	if err != nil {
-		return 0, err
-	}
 	ctx, err := callHandle("HostContext.New", proc("gov8_host_context_new"),
-		ih, uintptr(h), data.h)
+		iso.handleAssumingCheck(), uintptr(h), data.h)
 	if err != nil {
 		return 0, err
 	}
@@ -234,6 +265,67 @@ func registerAccessorCallbacks(iso *Isolate, getter AccessorGetterCallback, sett
 		return 0, fmt.Errorf("gov8: accessor requires a getter or a setter")
 	}
 	return newHostContext(iso, nil, getter, setter, data)
+}
+
+// registerLazyGetter reuses the dispatch entry and native context when the
+// caller installs the same exact getter function value without callback data.
+// That is the Go equivalent of rusty_v8 repeatedly passing the same static
+// function pointer. Dynamic callback arguments (property, holder, receiver,
+// context and ReturnValue) still come from each invocation's CallbackFrame.
+//
+// Isolate affinity serializes calls for one isolate, so a cache miss cannot
+// race another publication for the same key. created tells the caller whether
+// a failed V8 installation should remove this newly-created registration.
+func registerLazyGetter(iso *Isolate, getter AccessorGetterCallback, data Value) (handle uint64, entry *hostCallbackEntry, key lazyGetterCacheKey, created bool, err error) {
+	if getter == nil {
+		return 0, nil, lazyGetterCacheKey{}, false, errNilLazyGetter
+	}
+	if data.h != 0 {
+		handle, err = registerAccessorCallbacks(iso, getter, nil, data)
+		if err != nil {
+			return 0, nil, lazyGetterCacheKey{}, false, err
+		}
+		return handle, lookupHostCallback(handle), lazyGetterCacheKey{}, true, nil
+	}
+
+	key = lazyGetterCacheKey{iso: iso, identity: lazyGetterIdentity(getter)}
+	hostCallbackRegistry.mu.Lock()
+	if cached := hostCallbackRegistry.lazyGetters[key]; cached != 0 {
+		entry = hostCallbackRegistry.entries[cached]
+		hostCallbackRegistry.mu.Unlock()
+		if entry == nil {
+			return 0, nil, lazyGetterCacheKey{}, false, errLostCallbackRegistration
+		}
+		return cached, entry, key, false, nil
+	}
+	hostCallbackRegistry.mu.Unlock()
+
+	handle, err = registerAccessorCallbacks(iso, getter, nil, data)
+	if err != nil {
+		return 0, nil, lazyGetterCacheKey{}, false, err
+	}
+	hostCallbackRegistry.mu.Lock()
+	entry = hostCallbackRegistry.entries[handle]
+	if entry != nil {
+		hostCallbackRegistry.lazyGetters[key] = handle
+	}
+	hostCallbackRegistry.mu.Unlock()
+	if entry == nil {
+		dropHostCallback(handle)
+		return 0, nil, lazyGetterCacheKey{}, false, errLostCallbackRegistration
+	}
+	return handle, entry, key, true, nil
+}
+
+func dropNewLazyGetter(handle uint64, key lazyGetterCacheKey) {
+	if key.identity != 0 {
+		hostCallbackRegistry.mu.Lock()
+		if hostCallbackRegistry.lazyGetters[key] == handle {
+			delete(hostCallbackRegistry.lazyGetters, key)
+		}
+		hostCallbackRegistry.mu.Unlock()
+	}
+	dropHostCallback(handle)
 }
 
 func lookupHostCallback(handle uint64) *hostCallbackEntry {
@@ -263,24 +355,27 @@ func dropHostCallback(handle uint64) {
 // uintptr→unsafe.Pointer conversion exists on this path.
 func hostCallbackDispatch(frame *hostCallbackFrame) uintptr {
 	if frame == nil {
-		fatalHostMisuse("gov8: native callback dispatch received a nil frame")
+		fatalNilHostCallbackFrame()
 		return 1
 	}
 	entry := lookupHostCallback(frame.handle)
 	if entry == nil {
-		fatalHostMisuse("gov8: native callback dispatch for unknown handle %d", frame.handle)
+		fatalUnknownHostCallback(frame.handle)
 		return 1
 	}
 	iso := entry.iso
 	// Enforce the isolate's thread affinity before any engine work: a
 	// callback running on a foreign thread means the engine contract was
 	// already violated at a higher level.
-	if err := iso.check(); err != nil {
-		fatalHostMisuse("gov8: native callback invoked off the owning thread: %v", err)
+	// Check the immutable owner thread before reading closed. A foreign-thread
+	// callback must not touch lock-protected isolate state even on the fatal
+	// path; the owner-thread invariant then makes the closed read stable.
+	if currentThreadID() != iso.tid || iso.closed {
+		fatalWrongThreadHostCallback(iso)
 		return 1
 	}
 	if frame.isolate != iso.handleAssumingCheck() || frame.scopeWire == 0 {
-		fatalHostMisuse("gov8: native callback supplied an invalid isolate or scope")
+		fatalInvalidHostCallbackFrame()
 		return 1
 	}
 	// Every native trampoline owns a HandleScope around this synchronous
@@ -288,7 +383,10 @@ func hostCallbackDispatch(frame *hostCallbackFrame) uintptr {
 	// than entering a second native HandleScope. The C++ token and this Go view
 	// are both invalidated as dispatch unwinds; retained callback values remain
 	// deterministically unusable after the callback.
-	scope := &Scope{iso: iso, handle: frame.scopeWire, borrowed: true}
+	invocation := &hostCallbackInvocation{}
+	invocation.scope = Scope{iso: iso, handle: frame.scopeWire, borrowed: true}
+	invocation.callback = CallbackScope{iso: iso, sc: &invocation.scope, ctxWire: frame.ctxWire}
+	scope := &invocation.scope
 	// Deferred functions run LIFO: the borrowed Go view is invalidated first,
 	// then the panic handler converts a recovered panic into the process abort
 	// documented on FunctionCallback. C++ closes the actual HandleScope after
@@ -306,7 +404,7 @@ func hostCallbackDispatch(frame *hostCallbackFrame) uintptr {
 		scope.handle = 0
 	}()
 
-	cs := &CallbackScope{iso: iso, sc: scope, ctxWire: frame.ctxWire}
+	cs := &invocation.callback
 	switch frame.kind {
 	case cbKindFunction:
 		entry.fn(cs, FunctionCallbackArguments{cs: cs, frame: frame},
@@ -376,10 +474,41 @@ func hostCallbackDispatch(frame *hostCallbackFrame) uintptr {
 			PropertyCallbackArguments{cs: cs, frame: frame},
 			ReturnValue{cs: cs, word: frame.rvWord}))
 	default:
-		fatalHostMisuse("gov8: native callback dispatch for unknown kind %d", frame.kind)
+		fatalUnknownHostCallbackKind(frame.kind)
 		return 1
 	}
 	return 0
+}
+
+// Keep fail-fast formatting out of hostCallbackDispatch's successful path.
+// Passing values through the generic variadic formatter there made the Go
+// compiler conservatively heap-box them on every callback, even though these
+// branches terminate the process and are never taken during valid dispatch.
+//
+//go:noinline
+func fatalNilHostCallbackFrame() {
+	fatalHostMisuse("gov8: native callback dispatch received a nil frame")
+}
+
+//go:noinline
+func fatalUnknownHostCallback(handle uint64) {
+	fatalHostMisuse("gov8: native callback dispatch for unknown handle %d", handle)
+}
+
+//go:noinline
+func fatalWrongThreadHostCallback(iso *Isolate) {
+	fatalHostMisuse("gov8: native callback invoked off the owning thread: isolate owner %s, callback thread %s",
+		quoteThreadID(iso.tid), quoteThreadID(currentThreadID()))
+}
+
+//go:noinline
+func fatalInvalidHostCallbackFrame() {
+	fatalHostMisuse("gov8: native callback supplied an invalid isolate or scope")
+}
+
+//go:noinline
+func fatalUnknownHostCallbackKind(kind int32) {
+	fatalHostMisuse("gov8: native callback dispatch for unknown kind %d", kind)
 }
 
 // fatalHostMisuse reports an unrecoverable dispatch-time misuse. Like the
@@ -815,7 +944,14 @@ func (rv ReturnValue) Set(v Value) error {
 
 // SetInt32 stores an int32 (surfacing as a JS number).
 func (rv ReturnValue) SetInt32(v int32) error {
-	return rv.set("gov8_rv_set_int32", uintptr(v))
+	if err := rv.cs.sc.check(); err != nil {
+		return err
+	}
+	r1, _, _ := proc("gov8_rv_set_int32").Call(rv.word, uintptr(v))
+	if int64(r1) < 0 {
+		return shimError("gov8_rv_set_int32", r1)
+	}
+	return nil
 }
 
 // SetUint32 stores a uint32 (surfacing as a JS number).
@@ -923,6 +1059,11 @@ func ReleaseIsolateHostState(i *Isolate) error {
 	}
 	for _, h := range handles {
 		delete(hostCallbackRegistry.entries, h)
+	}
+	for key := range hostCallbackRegistry.lazyGetters {
+		if key.iso == i {
+			delete(hostCallbackRegistry.lazyGetters, key)
+		}
 	}
 	hostCallbackRegistry.mu.Unlock()
 

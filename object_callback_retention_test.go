@@ -446,13 +446,51 @@ func TestLazyDataPropertyBorrowedCallbackScopeInvalidated(t *testing.T) {
 	}
 }
 
+func TestLazyDataPropertySharedGetterSurvivesFailedSiblingInstallation(t *testing.T) {
+	e := newObjectEnv(t)
+	defer e.close()
+
+	hits := 0
+	getter := func(_ *gov8.CallbackScope, _ gov8.PropertyCallbackArguments, rv gov8.ReturnValue) {
+		hits++
+		_ = rv.SetInt32(42)
+	}
+	first := e.mustObject()
+	firstKey := e.mustString("first")
+	if ok, err := first.SetLazyDataProperty(e.scope, e.ctx, firstKey, getter); err != nil || !ok {
+		t.Fatalf("first install: ok=%v err=%v", ok, err)
+	}
+
+	sealed := e.mustObject()
+	if ok, err := sealed.SetIntegrityLevel(e.scope, e.ctx, gov8.IntegritySealed); err != nil || !ok {
+		t.Fatalf("seal sibling: ok=%v err=%v", ok, err)
+	}
+	failedKey := e.mustString("failed")
+	if ok, _ := sealed.SetLazyDataProperty(e.scope, e.ctx, failedKey, getter); ok {
+		t.Fatal("lazy property installation on sealed sibling succeeded")
+	}
+
+	value, err := first.GetByKey(e.scope, e.ctx, firstKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, ok, err := value.Int32Value(e.ctx); err != nil || !ok || got != 42 {
+		t.Fatalf("first value after sibling failure: got=%d ok=%v err=%v", got, ok, err)
+	}
+	if hits != 1 {
+		t.Fatalf("getter hits = %d, want 1", hits)
+	}
+}
+
 func BenchmarkLazyDataPropertyFirstRead(b *testing.B) {
 	e := newObjectEnvTB(b)
 	defer e.close()
 	getter := func(_ *gov8.CallbackScope, _ gov8.PropertyCallbackArguments, rv gov8.ReturnValue) {
 		_ = rv.SetInt32(42)
 	}
-	// Validate the matched workload before timing it.
+	// Validate the matched workload before timing it. This also creates the
+	// reusable dispatch context for this exact getter value, mirroring Rust's
+	// untimed probe and repeated use of one static callback pointer.
 	probe := e.mustObject()
 	probeKey := e.mustString("lazy")
 	if ok, err := probe.SetLazyDataProperty(e.scope, e.ctx, probeKey, getter); err != nil || !ok {
