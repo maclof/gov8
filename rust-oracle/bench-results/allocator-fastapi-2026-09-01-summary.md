@@ -103,3 +103,50 @@ final ABI-40 DLL uses the unchanged legacy callback and measured a 1042 ns
 median in the subsequent control. The required allocation and free
 native-to-Go transitions, plus the one 48-byte public `BackingStore` wrapper,
 remain; no allocation reduction or behavioral change was retained.
+
+## ABI-41 allocator floor audit
+
+The allocator workload was rechecked against the committed ABI-41 DLL
+`0FBD464E2A21526067125465110DCB25C2BCBAD86C4B229809DE9E33A66CA6BF`.
+Both languages compile against V8 `15.2.124.1-rusty`, create and immediately
+free one 64-byte zeroed backing store per iteration, and validate exactly one
+allocation and one free callback outside timing. The Go harness now also runs
+the same untimed correctness probe as Rust and measures counter deltas so the
+probe is excluded from the timed result.
+
+Seven fresh one-second public samples were 746.3, 896.8, 764.8, 769.3, 764.1,
+770.1, and 773.0 ns/op at 48 bytes and one allocation. Their 769.3 ns median is
+7.95x the pinned Rust 96.813 ns confidence-interval midpoint, so the prior
+roughly 9x wording remains directionally correct but overstates this run.
+
+A five-second CPU profile measured 753.2 ns/op. Native/DLL calls accounted for
+63.5% flat and 86.7% cumulative time. Go callback runtime frames accounted for
+14.2% cumulative time, while the complete Go dispatcher body was below 1%
+cumulative. The allocation profile attributed the sole 48-byte allocation to
+the public `BackingStore` wrapper.
+
+Additional diagnostics used the same DLL and public setup:
+
+| Diagnostic | ns/op samples | Median | B/op; allocs/op |
+|---|---:|---:|---:|
+| Exact public host allocator, balanced with native-handle floor | 1016, 796.2, 819.0, 807.5, 802.4, 755.0, 759.2, 799.0 | 800.7 | 48; 1 |
+| Host allocator, native handles only | 559.3, 575.2, 593.4, 556.5, 552.5, 548.7, 533.1, 533.9 | 554.5 | 0; 0 |
+| Public host allocator without benchmark counter bodies | 742.9, 778.9, 740.9, 757.0, 778.9, 846.7, 747.0 | 757.0 | 48; 1 |
+| Public default native allocator | 380.1, 418.7, 438.3, 413.2, 482.2, 631.5, 581.3 | 438.3 | 48; 1 |
+| Default allocator, native handles only | 217.8, 241.9, 282.2, 265.1, 275.1, 282.1, 292.5 | 275.1 | 0; 0 |
+
+The native-handle host floor retains both native-to-Go callbacks and verifies
+their exact counts, but omits the public wrapper and the extra allocator shared
+reference that permits a Go backing store to outlive its isolate. The default
+native-handle floor omits callbacks as well. Together these measurements show
+that the remaining result is not registry contention or Go heap churn: it is
+split between required callback/runtime crossings and the public ownership
+lifecycle layered over V8's allocation work.
+
+The end-to-end workloads are observably equivalent, but their callback ABIs are
+not equally cheap. Rust calls unsafe native callbacks directly in-process; Go's
+safe callback contract crosses the Windows runtime boundary twice. Go also
+retains an independent allocator reference for its post-isolate backing-store
+lifetime behavior. No production change was accepted: removing those costs
+would weaken callback observation or backing-store ownership. The previously
+rejected split-callback ABI was not repeated.
