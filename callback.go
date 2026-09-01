@@ -64,6 +64,7 @@ type hostCallbackFrame struct {
 	argc          int64
 	argv          unsafe.Pointer
 	isolate       uintptr
+	scopeWire     uintptr
 	ctxWire       uintptr
 	dataWire      uintptr
 	thisWire      uintptr
@@ -261,6 +262,10 @@ func dropHostCallback(handle uint64) {
 // the parameter is typed as the frame pointer itself and no
 // uintptr→unsafe.Pointer conversion exists on this path.
 func hostCallbackDispatch(frame *hostCallbackFrame) uintptr {
+	if frame == nil {
+		fatalHostMisuse("gov8: native callback dispatch received a nil frame")
+		return 1
+	}
 	entry := lookupHostCallback(frame.handle)
 	if entry == nil {
 		fatalHostMisuse("gov8: native callback dispatch for unknown handle %d", frame.handle)
@@ -274,14 +279,20 @@ func hostCallbackDispatch(frame *hostCallbackFrame) uintptr {
 		fatalHostMisuse("gov8: native callback invoked off the owning thread: %v", err)
 		return 1
 	}
-	scope, err := iso.NewScope()
-	if err != nil {
-		fatalHostMisuse("gov8: callback scope: %v", err)
+	if frame.isolate != iso.handleAssumingCheck() || frame.scopeWire == 0 {
+		fatalHostMisuse("gov8: native callback supplied an invalid isolate or scope")
 		return 1
 	}
-	// Deferred functions run LIFO: the scope closes first (engine cleanup),
-	// then the panic handler converts a recovered panic into the process
-	// abort documented on FunctionCallback.
+	// Every native trampoline owns a HandleScope around this synchronous
+	// dispatch and exposes a stack GoScope token in scopeWire. Borrow it rather
+	// than entering a second native HandleScope. The C++ token and this Go view
+	// are both invalidated as dispatch unwinds; retained callback values remain
+	// deterministically unusable after the callback.
+	scope := &Scope{iso: iso, handle: frame.scopeWire, borrowed: true}
+	// Deferred functions run LIFO: the borrowed Go view is invalidated first,
+	// then the panic handler converts a recovered panic into the process abort
+	// documented on FunctionCallback. C++ closes the actual HandleScope after
+	// this dispatcher returns (or while the abort boundary unwinds).
 	defer func() {
 		if r := recover(); r != nil {
 			fmt.Fprintf(os.Stderr, "gov8: panic in native callback: %v\n", r)
@@ -290,7 +301,10 @@ func hostCallbackDispatch(frame *hostCallbackFrame) uintptr {
 			panic(r)
 		}
 	}()
-	defer func() { _ = scope.Close() }()
+	defer func() {
+		scope.closed = true
+		scope.handle = 0
+	}()
 
 	cs := &CallbackScope{iso: iso, sc: scope, ctxWire: frame.ctxWire}
 	switch frame.kind {

@@ -32,8 +32,9 @@
 //     point (one uintptr argument, registered by Go via
 //     gov8_host_set_dispatcher).
 //   - The Go dispatcher (root package callback.go) resolves the handle to
-//     the Go closures, enforces thread affinity, opens the callback's Go
-//     Scope, and runs the closure. It recovers Go panics: a panic in a
+//     the Go closures, enforces thread affinity, borrows the trampoline's
+//     HandleScope through a stack GoScope token, and runs the closure. It
+//     recovers Go panics: a panic in a
 //     native callback prints the panic message to stderr and terminates the
 //     process through gov8_host_panic_abort (fail-fast abort, exit code
 //     0xC0000409) -- the same observable process-fatal boundary the pinned
@@ -179,6 +180,7 @@ struct CallbackFrame {
   int64_t argc;
   void** argv;
   v8::Isolate* isolate;
+  void* scope_wire;      // stack GoScope for the trampoline's HandleScope
   void* ctx_wire;        // Isolate::GetCurrentContext()
   void* data_wire;       // embedder callback data (unwrapped from the context)
   void* this_wire;       // This() / HolderV2()
@@ -201,6 +203,37 @@ struct CallbackFrame {
   void* pd_value_wire;     // PropertyDescriptor value (when present)
 };
 
+#if defined(_WIN64)
+static_assert(offsetof(CallbackFrame, scope_wire) == 40);
+static_assert(sizeof(CallbackFrame) == 160);
+#endif
+
+// Owns the actual V8 HandleScope used by one callback dispatch and exposes a
+// validation-only GoScope token for synchronous Go re-entry. hs_storage in the
+// token is intentionally unused: ScopeIs reads only magic/iso, while handles
+// owns the active V8 scope. The token is invalidated before handles closes.
+class CallbackDispatchScope final {
+ public:
+  CallbackDispatchScope(v8::Isolate* iso, CallbackFrame* frame)
+      : handles_(iso), token_{} {
+    token_.magic = kScopeMagic;
+    token_.iso = iso;
+    frame->scope_wire = &token_;
+  }
+
+  ~CallbackDispatchScope() {
+    token_.magic = 0;
+    token_.iso = nullptr;
+  }
+
+  CallbackDispatchScope(const CallbackDispatchScope&) = delete;
+  CallbackDispatchScope& operator=(const CallbackDispatchScope&) = delete;
+
+ private:
+  v8::HandleScope handles_;
+  GoScope token_;
+};
+
 int64_t CallGoDispatcher(CallbackFrame* frame) {
   if (g_go_dispatch == 0) {
     // A callback exists but the Go side never registered its dispatcher:
@@ -210,6 +243,11 @@ int64_t CallGoDispatcher(CallbackFrame* frame) {
   using DispatchFn = uintptr_t (*)(uintptr_t);
   return static_cast<int64_t>(
       reinterpret_cast<DispatchFn>(g_go_dispatch)(reinterpret_cast<uintptr_t>(frame)));
+}
+
+int64_t CallGoDispatcherWithScope(CallbackFrame* frame) {
+  CallbackDispatchScope callback_scope(frame->isolate, frame);
+  return CallGoDispatcher(frame);
 }
 
 void AbortBadCallbackStatus() {
@@ -225,13 +263,12 @@ void HostFunctionTrampoline(const v8::FunctionCallbackInfo<v8::Value>& info) {
   v8::Isolate* iso = info.GetIsolate();
   // The isolate is already entered: the engine only invokes API callbacks
   // while executing script/host work on the owning thread.
-  v8::HandleScope hs(iso);
+  CallbackFrame frame{};
   GoCallbackContext* ctx = CallbackContextFromData(iso, info.Data());
   if (ctx == nullptr) {
     std::abort();
   }
   v8::ReturnValue<v8::Value> rv = info.GetReturnValue();
-  CallbackFrame frame{};
   frame.kind = kCbKindFunction;
   frame.flags = info.IsConstructCall() ? 1 : 0;
   frame.handle = ctx->handle;
@@ -251,7 +288,7 @@ void HostFunctionTrampoline(const v8::FunctionCallbackInfo<v8::Value>& info) {
     }
     frame.argv = argv.get();
   }
-  if (CallGoDispatcher(&frame) != 0) {
+  if (CallGoDispatcherWithScope(&frame) != 0) {
     AbortBadCallbackStatus();
   }
 }
@@ -259,13 +296,12 @@ void HostFunctionTrampoline(const v8::FunctionCallbackInfo<v8::Value>& info) {
 void HostAccessorGetTrampoline(v8::Local<v8::Name> property,
                                const v8::PropertyCallbackInfo<v8::Value>& info) {
   v8::Isolate* iso = info.GetIsolate();
-  v8::HandleScope hs(iso);
+  CallbackFrame frame{};
   GoCallbackContext* ctx = CallbackContextFromData(iso, info.Data());
   if (ctx == nullptr) {
     std::abort();
   }
   v8::ReturnValue<v8::Value> rv = info.GetReturnValue();
-  CallbackFrame frame{};
   frame.kind = kCbKindAccessorGet;
   frame.handle = ctx->handle;
   frame.isolate = iso;
@@ -274,7 +310,7 @@ void HostAccessorGetTrampoline(v8::Local<v8::Name> property,
   frame.this_wire = ToWire(info.HolderV2());
   frame.property_wire = ToWire(property);
   frame.rv_word = *reinterpret_cast<uintptr_t*>(&rv);
-  if (CallGoDispatcher(&frame) != 0) {
+  if (CallGoDispatcherWithScope(&frame) != 0) {
     AbortBadCallbackStatus();
   }
 }
@@ -283,12 +319,11 @@ void HostAccessorSetTrampoline(v8::Local<v8::Name> property,
                                v8::Local<v8::Value> value,
                                const v8::PropertyCallbackInfo<void>& info) {
   v8::Isolate* iso = info.GetIsolate();
-  v8::HandleScope hs(iso);
+  CallbackFrame frame{};
   GoCallbackContext* ctx = CallbackContextFromData(iso, info.Data());
   if (ctx == nullptr) {
     std::abort();
   }
-  CallbackFrame frame{};
   frame.kind = kCbKindAccessorSet;
   frame.handle = ctx->handle;
   frame.isolate = iso;
@@ -297,7 +332,7 @@ void HostAccessorSetTrampoline(v8::Local<v8::Name> property,
   frame.this_wire = ToWire(info.HolderV2());
   frame.property_wire = ToWire(property);
   frame.value_wire = ToWire(value);
-  if (CallGoDispatcher(&frame) != 0) {
+  if (CallGoDispatcherWithScope(&frame) != 0) {
     AbortBadCallbackStatus();
   }
 }
@@ -318,7 +353,6 @@ GoCallbackContext* SetupInterceptorFrame(
     const v8::PropertyCallbackInfo<T>& info, CallbackFrame* frame,
     int32_t kind) {
   v8::Isolate* iso = info.GetIsolate();
-  v8::HandleScope hs(iso);
   GoCallbackContext* ctx = CallbackContextFromData(iso, info.Data());
   if (ctx == nullptr) {
     std::abort();
@@ -382,7 +416,7 @@ void FillDescriptorFrame(const v8::PropertyDescriptor& desc,
 // Runs the Go dispatcher for an interceptor frame and returns the Intercepted
 // verdict the Go callback reported.
 v8::Intercepted DispatchInterceptor(CallbackFrame* frame) {
-  if (CallGoDispatcher(frame) != 0) {
+  if (CallGoDispatcherWithScope(frame) != 0) {
     AbortBadCallbackStatus();
   }
   return static_cast<v8::Intercepted>(frame->out_intercepted);
@@ -425,6 +459,7 @@ v8::Intercepted HostNamedDeleteTrampoline(v8::Local<v8::Name> property,
 void HostNamedEnumTrampoline(const v8::PropertyCallbackInfo<v8::Array>& info) {
   CallbackFrame frame{};
   SetupInterceptorFrame(info, &frame, kCbKindNamedEnum);
+  CallbackDispatchScope callback_scope(frame.isolate, &frame);
   if (CallGoDispatcher(&frame) != 0) {
     AbortBadCallbackStatus();
   }
@@ -487,6 +522,7 @@ v8::Intercepted HostIndexedDeleteTrampoline(uint32_t index,
 void HostIndexedEnumTrampoline(const v8::PropertyCallbackInfo<v8::Array>& info) {
   CallbackFrame frame{};
   SetupInterceptorFrame(info, &frame, kCbKindIndexedEnum);
+  CallbackDispatchScope callback_scope(frame.isolate, &frame);
   if (CallGoDispatcher(&frame) != 0) {
     AbortBadCallbackStatus();
   }

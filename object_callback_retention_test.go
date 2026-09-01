@@ -411,6 +411,41 @@ func objectCallbackPanicChild(t *testing.T, mode string) {
 	_, _ = os.Stderr.WriteString("marker:after-" + mode + "\n")
 }
 
+func TestLazyDataPropertyBorrowedCallbackScopeInvalidated(t *testing.T) {
+	e := newObjectEnv(t)
+	defer e.close()
+	obj := e.mustObject()
+	key := e.mustString("borrowed-lazy")
+	var borrowed *gov8.Scope
+	var callbackValue gov8.Value
+	var closeErr error
+	getter := func(cs *gov8.CallbackScope, _ gov8.PropertyCallbackArguments, rv gov8.ReturnValue) {
+		borrowed = cs.Scope()
+		callbackValue, _ = borrowed.Int32(42)
+		closeErr = borrowed.Close()
+		_ = rv.Set(callbackValue)
+	}
+	if ok, err := obj.SetLazyDataProperty(e.scope, e.ctx, key, getter); err != nil || !ok {
+		t.Fatalf("install: ok=%v err=%v", ok, err)
+	}
+	value, err := obj.GetByKey(e.scope, e.ctx, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, ok, err := value.Int32Value(e.ctx); err != nil || !ok || got != 42 {
+		t.Fatalf("value: got=%d ok=%v err=%v", got, ok, err)
+	}
+	if closeErr == nil || !strings.Contains(closeErr.Error(), "borrowed callback scope") {
+		t.Fatalf("Close during callback = %v", closeErr)
+	}
+	if _, err := borrowed.Int32(1); err == nil || !strings.Contains(err.Error(), "used after Close") {
+		t.Fatalf("borrowed scope after callback = %v", err)
+	}
+	if _, err := callbackValue.IsInt32(); err == nil || !strings.Contains(err.Error(), "used after Close") {
+		t.Fatalf("callback value after callback = %v", err)
+	}
+}
+
 func BenchmarkLazyDataPropertyFirstRead(b *testing.B) {
 	e := newObjectEnvTB(b)
 	defer e.close()
