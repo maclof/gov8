@@ -165,7 +165,7 @@ ownership, cppgc object wrapping with traced targets, strong/weak cppgc
 persistent handles, custom cppgc heap ownership and process lifecycle, generic
 copied cells and owner-mediated member graphs, and snapshot composition with
 callback-backed ArrayBuffer allocators and custom cppgc heaps. The Rust fixtures
-contain 519 normalized checks: 517 compare byte-for-byte with Go and two have
+contain 524 normalized checks: 522 compare byte-for-byte with Go and two have
 narrowly documented safety normalizations; none is oracle-only.
 Separate fatal and panic-boundary subprocess tests cover unsafe lifecycle and
 callback edges.

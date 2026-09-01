@@ -61,6 +61,7 @@ struct Payload {
   cppgc::Member<RustObj> strong;
   cppgc::WeakMember<RustObj> weak;
   v8::TracedReference<v8::Data> traced;
+  void* generic_graph;
 
   Payload(uint64_t registry, int32_t id, uint16_t pointer_tag,
           bool should_observe_trace)
@@ -78,8 +79,15 @@ struct Payload {
         custom_name(),
         strong(nullptr),
         weak(nullptr),
-        traced() {}
+        traced(),
+        generic_graph(nullptr) {}
 };
+
+namespace graph {
+void Trace(const Payload* payload, cppgc::Visitor* visitor);
+const char* Name(const Payload* payload);
+void Drop(Payload* payload);
+}  // namespace graph
 
 constexpr size_t AlignUp(size_t value, size_t alignment) {
   return (value + alignment - 1) & ~(alignment - 1);
@@ -129,6 +137,9 @@ extern "C" void rusty_v8_RustObj_trace(const RustObj* object,
       visitor, const_cast<cppgc::WeakMember<RustObj>*>(&payload->weak));
   cppgc__Visitor__Trace__TracedReference(
       visitor, const_cast<v8::TracedReference<v8::Data>*>(&payload->traced));
+  if (payload->generic_graph != nullptr) {
+    graph::Trace(payload, visitor);
+  }
 }
 
 extern "C" const char* rusty_v8_RustObj_get_name(const RustObj* object) {
@@ -136,6 +147,9 @@ extern "C" const char* rusty_v8_RustObj_get_name(const RustObj* object) {
   if (object == nullptr) Abort();
   const Payload* payload = PayloadOf(object);
   if (payload->magic != kPayloadMagic) Abort();
+  if (payload->generic_graph != nullptr) {
+    return graph::Name(payload);
+  }
   if (payload->generic_registry_id != 0) {
     generic::Dispatch(payload->generic_registry_id, 2, 0);
     return payload->custom_name.c_str();
@@ -151,6 +165,9 @@ extern "C" void rusty_v8_RustObj_drop(RustObj* object) {
   const uint64_t registry_id = payload->registry_id;
   const uint64_t generic_registry_id = payload->generic_registry_id;
   const int32_t cell_value = payload->cell_value;
+  if (payload->generic_graph != nullptr) {
+    graph::Drop(payload);
+  }
   payload->magic = 0;
   payload->traced.Reset();
   payload->~Payload();

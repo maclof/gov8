@@ -400,7 +400,7 @@ extern "C" {
 
 __declspec(dllexport) int64_t gov8_abi_version(void) {
   ClearErr();
-  return 35;
+  return 36;
 }
 
 // --- platform / process lifecycle -------------------------------------------
@@ -1706,6 +1706,7 @@ __declspec(dllexport) int64_t gov8_last_error(char* buf, int64_t cap) {
 #include "features/cppgc_member.inc"
 #include "features/cppgc_heap_lifecycle.inc"
 #include "features/cppgc_generic_residual.inc"
+#include "features/cppgc_generic_graph.inc"
 #include "features/strings_bigint.inc"
 #include "features/typed_arrays.inc"
 #include "features/fixed_primitive_arrays.inc"

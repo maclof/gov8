@@ -48,7 +48,7 @@ the project chooses a comparably safe Go abstraction.
 | Serializer/deserializer | 40 | Matched |
 | `wasm.rs` | 28 | Safe executable surface matched, including positive serialized-cache behavior |
 | `inspector.rs` and `crdtp.rs` | 146 | Safe owned/closed surface matched; raw boxed/vtable representations hidden |
-| `cppgc.rs` | 60 | Safe executable behavior matched, including copied generic cells, tracing/name callbacks, owner-mediated members, persistent handles and custom heaps; ten literal borrowed/generic shapes remain partial |
+| `cppgc.rs` | 60 | Safe executable behavior matched, including arbitrary copied generic state, indexed strong/weak graphs, V8 traced references, tracing/name callbacks, persistent handles and custom heaps; ten literal borrowed/generic shapes remain partial |
 | `fast_api.rs` | 75 | Descriptor, constructor and flag execution matched; callback-local borrowed ABI shapes are intentionally unsupported |
 | `simdutf.rs`, `icu.rs` and `json.rs` | 83 | Matched |
 | `external_references.rs` | 16 | Matched for the supported native-address shape |
@@ -63,16 +63,25 @@ denominator above is authoritative.
 No executable declaration remains missing. The ten partial declarations are:
 
 1. `cppgc::Visitor` and `Visitor::trace`: Rust exposes a callback-borrowed GC
-   visitor; Go keeps visitation native and exposes declarative traced edges.
+   visitor; Go keeps visitation native and exposes declarative indexed traced
+   edges, now exercised by the generic-breadth oracle.
 2. `cppgc::Traced` and `Traced::trace`: Rust's freely implementable generic
-   trait maps to native tracing of the Go facade's configured members.
+   trait maps to native tracing of the Go facade's configured members and V8
+   traced reference.
 3. `cppgc::InternalFieldIndex`: Rust exposes the raw alias; Go uses the fixed
    native API-wrapper field contract.
 4. `cppgc::UnsafePtr<T>`, `UnsafePtr::new` and `UnsafePtr::as_ref`: Go never
    exposes an unrooted raw cppgc pointer or unchecked borrowed reference.
 5. Generic `cppgc::Member<T>` and `cppgc::WeakMember<T>` types: Go provides
-   owner-mediated strong and weak member operations instead of freely
-   composable fields.
+   owner-mediated indexed strong and weak member operations instead of freely
+   composable fields; mutation barriers and weak clearing are exact.
+
+The generic-breadth fixture now closes the executable behavior behind six of
+these ten declarations: `Visitor`, `Visitor::trace`, `Traced`, `Traced::trace`,
+`Member<T>` and `WeakMember<T>`. The strict language-shape count remains ten
+because Go intentionally exposes none of those borrowed Rust types directly.
+The other four are `InternalFieldIndex` and the three `UnsafePtr` declarations;
+they provide no missing safe executable behavior and remain deliberately raw.
 
 These are literal API-shape differences, not unimplemented safe behavior. The
 Fast API residual oracle resolved its former ambiguous and partial buckets; six
