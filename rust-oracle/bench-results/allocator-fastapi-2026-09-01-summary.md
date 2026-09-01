@@ -70,3 +70,14 @@ fixed-arity/direct-conversion pass reduced its 256-call median from 164,758 to
 138,750 ns and allocations from 1,282 to 258, leaving about 18.5x Rust. The
 remaining separate gap is dominated by callback crossings and borrowed-scope
 lifetime enforcement.
+
+## Split allocator-callback experiment
+
+An ABI-40 experiment replaced the legacy allocator dispatcher with four
+operation-specific callbacks. Interleaved frozen-binary samples produced a
+1181 ns baseline median and a 1188 ns experimental median, 0.6% slower with
+large outliers, so the additive export and Go path were fully reverted. The
+final ABI-40 DLL uses the unchanged legacy callback and measured a 1042 ns
+median in the subsequent control. The required allocation and free
+native-to-Go transitions, plus the one 48-byte public `BackingStore` wrapper,
+remain; no allocation reduction or behavioral change was retained.

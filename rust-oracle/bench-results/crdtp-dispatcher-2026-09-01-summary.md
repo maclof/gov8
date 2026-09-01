@@ -65,3 +65,19 @@ The immediately paired pinned Rust run reported a 1455.5-1682.6 ns slope 95%
 confidence interval, midpoint 1579.4 ns. Final Go is therefore about 1.92x
 slower. Profiles attribute the remaining material gap primarily to DLL and
 native-to-Go callback transitions.
+
+## ABI-40 callback-view follow-up
+
+An additive callback export now supplies a native-owned serialized byte view
+for the duration of the channel callback. Go copies that ephemeral view while
+the callback is active and clears it on exit; retained and post-callback
+`Bytes` calls continue through the original owned native value. The common
+response output slot is embedded in a heap-stable callback frame, with a
+separate heap fallback for nested/reentrant sends.
+
+Against a frozen ABI-39 baseline, the median changed from 3279 ns at 176 B/6
+allocations to 3001 ns at 192 B/5 allocations, an 8.48% time improvement and
+one fewer allocation. The extra 16 bytes hold the two view words. Using the
+pinned Rust midpoint of 1579.05 ns, the current route is about 1.90x Rust.
+Normal, race and exact conformance runs cover repeated and retained byte access;
+a 350,000-route nested-output stress test verifies reentrant storage safety.

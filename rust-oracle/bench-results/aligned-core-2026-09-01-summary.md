@@ -118,3 +118,27 @@ after subtracting control drift, with no allocation change. Registry caches
 were tested and rejected because they added complexity without a separable
 timing benefit; unique invocation storage remains necessary so stale borrowed
 callback pointers can never become valid again.
+
+## ABI-40 primitive-constructor and Promise confirmation
+
+Eight primitive constructors now use cached fixed-arity exports. This removes
+one variadic frame allocation per value while preserving the returned public
+wrapper. Seven interleaved 500 ms pairs measured these representative changes:
+
+| Operation | Before median | After median | Allocation change |
+|---|---:|---:|---:|
+| callback/native_call_from_host | 2406 ns | 2353 ns | 384 B/11 to 320 B/8 |
+| synthetic module full route | 3448 ns | 3273 ns | 296 B/8 to 256 B/6 |
+| bigint/from_i64 | 710.7 ns | 659.5 ns | 136 B/5 to 112 B/4 |
+
+The medians improve 2.2%, 5.1%, and 7.2%, respectively. A steady-state
+constructor regression also verifies that `Int32` itself performs no Go heap
+allocation.
+
+A separate Promise same-source shortcut initially appeared about 2% faster,
+but a longer two-second confirmation contradicted the resolver result, so the
+experiment was fully reverted. Current controls measured resolver creation at
+about 1030-1128 ns and then/checkpoint at about 1909-2693 ns, with 112 B/3 and
+176 B/5 allocations. Against the pinned Rust midpoints, the representative
+ratios are about 8.43x and 4.74x; native transitions, affinity validation and
+the required checkpoint remain the measured floor.
