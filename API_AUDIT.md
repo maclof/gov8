@@ -6,18 +6,22 @@ coverage from being mistaken for complete upstream API coverage.
 Reference: Rust `v8 = 152.2.0`, V8 `15.2.124.1-rusty`, target
 `x86_64-pc-windows-msvc`, audited 2026-09-01.
 
-Generated bindings, deref-inherited duplicates, blanket trait methods and
-private-module internals are excluded. Public rustdoc items, inherent methods
-and constants, fields, enum variants and trait members are included.
+The checked-in [declaration ledger](audit/v8_152_2_0_declarations.csv) records
+the stable source ID, Rust path, kind, classification, Go mapping, evidence and
+rationale for every included declaration. Generated binding enum-value noise,
+deref-inherited duplicates and blanket trait methods are excluded. Public
+rustdoc items, inherent methods and constants, fields, enum variants and trait
+members are included. Small generated wrapper declarations that rusty_v8
+publicly reexports remain in the ledger.
 
 | Classification | Declarations | Percent |
 |---|---:|---:|
-| Matched Go equivalent or documented semantic shape | 1,694 | 91.2% |
+| Matched Go equivalent or documented semantic shape | 1,693 | 91.2% |
 | Partial language-shape difference with safe behavioral equivalent | 10 | 0.5% |
 | Missing executable surface | 0 | 0.0% |
 | Unsafe or intentionally unsupported Rust ownership shape | 154 | 8.3% |
 | Ambiguous pending exact executable evidence | 0 | 0.0% |
-| Total | 1,858 | 100% |
+| Total | 1,857 | 100% |
 
 The confirmed executable declaration remainder is zero. There is no remaining
 ambiguous bucket. The ten partial declarations have safe behavioral Go
@@ -54,9 +58,27 @@ the project chooses a comparably safe Go abstraction.
 | `external_references.rs` | 16 | Matched for the supported native-address shape |
 | `lib.rs` constants/macros | 13 | Constants matched; Rust lexical-scope macros have no Go analogue |
 
-Some related low-count files are grouped above. These rustdoc-family figures
-precede manual macro/type-alias reconciliation; the classified 1,858-item
-denominator above is authoritative.
+Some related low-count files are grouped above. These semantic family groups
+total 1,856 declarations. The ledger adds the one source-visible declaration
+rustdoc omits, `FastApiOneByteString::as_bytes`, for a reproducible total of
+1,857. The former 1,858 total contained one unexplained matched row: it had no
+Rust declaration, stable ID or evidence and has been removed. No executable Go
+surface changed as a result.
+
+## Classification boundary
+
+The 154 unsafe rows are individually identified in the ledger. Their exact
+rationale totals are: 49 Rust pinning/lexical-scope construction declarations,
+32 generic smart-pointer or mapping-vtable declarations, 25 raw or unchecked
+handle declarations, 15 raw isolate/manual-entry declarations, 10 generated
+ABI-layout declarations, 10 raw allocator/backing-pointer declarations, 6
+callback-borrowed Fast API declarations, 4 raw Inspector wrapper/iterator
+declarations, 2 raw stack-pointer declarations and 1 Rust `SharedRef` platform
+ownership declaration. Safe behavior above these raw shapes is classified and
+tested separately rather than counted as a raw Go API.
+
+The row-level reconciliation found no missing safe executable declaration. Its
+only count correction is the unsupported extra matched row described above.
 
 ## Confirmed residual language-shape differences
 
@@ -91,13 +113,13 @@ or intentionally unsupported.
 ## Reproduction
 
 ```powershell
-cargo doc --manifest-path rust-oracle\Cargo.toml --locked -p v8 --no-deps --target-dir $env:TEMP\gov8-rustdoc-audit
-go doc -all .
-rg -n '^pub |^\s+pub fn|^\s+pub unsafe fn' $cargoRegistry\v8-152.2.0\src -g '*.rs'
-rg -n '\*\*complete\*\*|\*\*partial\*\*|\*\*missing\*\*' PARITY.md
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\verify_api_audit_ledger.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\verify_api_audit_ledger.ps1 -Regenerate
 ```
 
-The rustdoc count stops before deref and trait-implementation sections to avoid
-inherited-method multiplication. Macro-generated APIs and aliases require
-manual reconciliation; `FastApiOneByteString::as_bytes` is manually restored
-because rustdoc hides it behind a generated alias.
+The script generates pinned rustdoc JSON with `cargo rustdoc`, reconstructs
+associated-item owners, validates every stable source ID and cited repository
+file, and checks the exact `1,693 + 10 + 154 = 1,857` arithmetic. `-Regenerate`
+canonicalizes row order and source-derived columns while retaining the reviewed
+classification fields. `FastApiOneByteString::as_bytes` is restored explicitly
+because rustdoc hides inherent methods behind that generated alias.

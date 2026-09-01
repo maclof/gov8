@@ -176,4 +176,5 @@ declarations use intentional safe Go equivalents, and 154 unsafe ownership
 shapes remain unexposed. Nor is this a global performance-parity claim: several
 matched workloads still have measured Go overhead and remain optimization
 targets. The authoritative distinctions are tracked in
-`PARITY.md`; `API_AUDIT.md` provides the 1,858-declaration denominator.
+`PARITY.md`; `API_AUDIT.md` provides the reproducible 1,857-declaration
+denominator.

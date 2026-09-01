@@ -8,7 +8,7 @@ This matrix tracks observable parity against the sole supported reference:
 - Artifact SHA-256: `0b17ca072bae37dd4ff00e6014d2b413becb031c9342ee11cb8226a5881f62b2`
 
 The declaration-level denominator and intentional language-shape clusters are tracked in
-`API_AUDIT.md`: 1,694 of 1,858 public declarations currently have a matched Go
+`API_AUDIT.md`: 1,693 of 1,857 public declarations currently have a matched Go
 equivalent or documented semantic shape. Ten more declarations retain safe Go
 behavioral equivalents but intentionally differ from Rust's borrowed or generic
 API shape; none is missing as an executable surface.
