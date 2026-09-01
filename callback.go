@@ -550,6 +550,29 @@ func (cs *CallbackScope) check() error {
 	return cs.sc.check()
 }
 
+// checkValue validates a callback value with one owner-thread check on the
+// overwhelmingly common same-isolate path. Value.check and CallbackScope.check
+// would otherwise each query the OS thread independently. Unrelated or
+// malformed values retain the original validation order and errors.
+func (cs *CallbackScope) checkValue(v Value) error {
+	if v.h == 0 {
+		return fmt.Errorf("gov8: zero value handle")
+	}
+	if cs != nil && cs.iso != nil && cs.sc != nil && v.iso == cs.iso && v.sc != nil {
+		if err := cs.check(); err != nil {
+			return err
+		}
+		if v.sc.closed {
+			return fmt.Errorf("gov8: scope used after Close")
+		}
+		return nil
+	}
+	if err := v.check(); err != nil {
+		return err
+	}
+	return cs.check()
+}
+
 // NewString creates a JS string in the callback scope.
 func (cs *CallbackScope) NewString(str string) (Value, error) {
 	return cs.sc.NewString(str)
@@ -575,10 +598,7 @@ func (cs *CallbackScope) ToString(v Value) (string, error) {
 // IntegerValue is Value::IntegerValue in the callback's current context;
 // ok is false when the conversion failed.
 func (cs *CallbackScope) IntegerValue(v Value) (int64, bool, error) {
-	if err := v.check(); err != nil {
-		return 0, false, err
-	}
-	if err := cs.check(); err != nil {
+	if err := cs.checkValue(v); err != nil {
 		return 0, false, err
 	}
 	callbackScalarProcsOnce.Do(resolveCallbackScalarProcs)
