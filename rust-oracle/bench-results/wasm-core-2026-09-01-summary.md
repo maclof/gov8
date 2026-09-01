@@ -31,3 +31,54 @@ performance-parity claims.
 Raw Criterion estimates, samples, Tukey fences, and reports are stored in
 `criterion-wasm-core-2026-09-01/`. Machine metadata is in
 `env-2026-09-01-DESKTOP-VJI58KR.txt`.
+
+## Restoration dispatch follow-up
+
+The restoration wrapper was subsequently changed to resolve its export once
+and use a fixed-arity Windows syscall. This keeps the native output slot and
+argument frame on the Go stack while retaining the mutex across V8's use of
+the shareable compiled representation. The public API and ownership contract
+are unchanged.
+
+Fresh before/after commands used the same checkout, host, module, and timed
+region as above:
+
+```text
+go test -run '^$' -bench '^BenchmarkWasmFromCompiledAnswerModule$' -benchmem -benchtime=1s -count=10 .
+cargo bench --locked --bench wasm -- from_compiled
+```
+
+| Result | ns/op samples or Criterion time interval | B/op; allocs/op |
+|---|---:|---:|
+| Go before | 647.4, 948.6, 932.2, 1020, 920.0, 934.9, 990.3, 919.4, 1002, 982.6 | 144; 6 |
+| Go after | 549.9, 781.6, 760.8, 771.5, 770.6, 825.7, 754.3, 725.5, 746.8, 823.3 | 88; 4 |
+| Rust Criterion | 143.43-154.71 ns (149.43 ns midpoint) | not reported |
+
+The Go median fell from 941.75 ns to 765.7 ns (18.7%), and each restoration
+now saves 56 bytes and two allocations. Against the simultaneous pinned Rust
+midpoint, the post-change public benchmark remains about 5.1x slower.
+
+Two diagnostic Go benchmarks bound the remaining difference. They use
+100,000 fixed iterations per sample so an existing HandleScope can be reused
+without unbounded local-handle growth:
+
+```text
+go test -run '^$' -bench '^BenchmarkWasmFromCompiled(ExistingScope|NativeFloor)$' -benchmem -benchtime=100000x -count=10 .
+```
+
+| Diagnostic | ns/op samples | B/op; allocs/op |
+|---|---:|---:|
+| Existing scope, public wrapper | 331.4, 336.2, 326.6, 312.2, 316.6, 319.2, 319.2, 365.9, 319.9, 354.7 | 24; 1 |
+| DLL + V8 restoration floor | 294.8, 292.4, 261.6, 273.0, 246.8, 282.1, 282.2, 249.3, 275.2, 282.9 | 0; 0 |
+
+The native-floor median is 278.65 ns, already about 1.86x the complete Rust
+operation. It excludes Go validation, the compiled-module ownership lock, the
+returned Go wrapper, and HandleScope enter/exit. Although the underlying C
+bridge signature names only the isolate and compiled representation, an
+experimental build proved that V8 consults the current context internally:
+removing the validated `Context::Scope` caused an access violation in the
+exact compiled-module round-trip test. That experiment was reverted. The
+context entry, DLL transition, and V8 restoration therefore form a measured
+lower bound for the current safe architecture rather than removable wrapper
+work. Complete current Rust samples and reports are stored in
+`criterion-wasm-restore-fixed-2026-09-01/`.

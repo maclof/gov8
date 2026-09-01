@@ -6,8 +6,18 @@ import (
 	"errors"
 	"runtime"
 	"sync"
+	"syscall"
 	"unsafe"
 )
+
+var (
+	wasmFromCompiledProcOnce sync.Once
+	wasmFromCompiledProcAddr uintptr
+)
+
+func resolveWasmFromCompiledProc() {
+	wasmFromCompiledProcAddr = proc("gov8_wasm_module_from_compiled").Addr()
+}
 
 // WasmModuleObject is a scope-local WebAssembly.Module value.
 type WasmModuleObject struct{ Value }
@@ -115,14 +125,22 @@ func (c *Context) WasmModuleFromCompiled(s *Scope, compiled *CompiledWasmModule)
 	if compiled == nil {
 		return nil, errors.New("gov8: nil compiled wasm module")
 	}
+	wasmFromCompiledProcOnce.Do(resolveWasmFromCompiledProc)
 	compiled.mu.Lock()
-	defer compiled.mu.Unlock()
 	if compiled.closed {
+		compiled.mu.Unlock()
 		return nil, errors.New("gov8: compiled wasm module used after Close")
 	}
 	var out uintptr
-	r1, _, _ := proc("gov8_wasm_module_from_compiled").Call(c.iso.handleAssumingCheck(), c.handle, sh,
-		compiled.handle, uintptr(unsafe.Pointer(&out)))
+	// Proc.Call marks every uintptr argument as escaping. This fixed-arity
+	// syscall keeps the output slot and argument frame on the stack while
+	// preserving the Windows uintptr keep-alive contract. The compiled lock
+	// remains held across native recreation so Close cannot free the shared
+	// representation concurrently.
+	r1, _, _ := syscall.Syscall6(wasmFromCompiledProcAddr, 5,
+		c.iso.handleAssumingCheck(), c.handle, sh, compiled.handle,
+		uintptr(unsafe.Pointer(&out)), 0)
+	compiled.mu.Unlock()
 	if int64(r1) < 0 {
 		return nil, shimError("WasmModuleFromCompiled", r1)
 	}

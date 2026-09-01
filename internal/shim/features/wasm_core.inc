@@ -107,6 +107,9 @@ __declspec(dllexport) int64_t gov8_wasm_module_from_compiled(
   }
   try {
     Gov8IsolateScope isolate_scope(iso);
+    // The C bridge takes only isolate + compiled, but V8 consults the
+    // isolate's current context internally while recreating the module.
+    // Entering the caller's validated context is therefore required.
     v8::Local<v8::Context> ctx = context->ctx->Get(iso);
     v8::Context::Scope context_scope(ctx);
     const v8::WasmModuleObject* result =
