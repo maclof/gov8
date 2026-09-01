@@ -61,6 +61,7 @@ $ConformancePackages = @(
     './conformance-functions-advanced',
     './conformance-inspector-transport',
     './conformance-inspector-client-callbacks',
+    './conformance-inspector-client-values',
     './conformance-inspector-session-controls',
     './conformance-inspector-object-wrapping',
     './conformance-inspector-inspected-object',
