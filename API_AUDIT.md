@@ -16,16 +16,16 @@ publicly reexports remain in the ledger.
 
 | Classification | Declarations | Percent |
 |---|---:|---:|
-| Matched Go equivalent or documented semantic shape | 1,689 | 91.0% |
+| Matched Go equivalent or documented semantic shape | 1,698 | 91.4% |
 | Partial language-shape difference with safe behavioral equivalent | 10 | 0.5% |
-| Incomplete safe executable surface | 9 | 0.5% |
+| Incomplete safe executable surface | 0 | 0.0% |
 | Intentional raw/borrowed/generic Rust shape (ledger status `unsafe`) | 149 | 8.0% |
 | Ambiguous pending exact executable evidence | 0 | 0.0% |
 | Total | 1,857 | 100% |
 
-The ledger has 19 `partial` rows: ten declarations have safe behavioral Go
-equivalents but not literal Rust borrowed/generic API shapes, while nine have
-confirmed safe executable remainder. There is no ambiguous bucket. The ledger's
+The ledger has 10 `partial` rows, all with safe behavioral Go equivalents but
+without literal Rust borrowed/generic API shapes. There is no incomplete safe
+executable or ambiguous bucket. The ledger's
 `unsafe` status is a project taxonomy for 149 intentionally unexposed carrier
 shapes; it does not mean every corresponding Rust declaration is an `unsafe
 fn`. These `unsafe`-status rows are not implementation backlog unless the
@@ -36,16 +36,16 @@ project chooses a comparably safe Go abstraction.
 | Rust source family | Public declarations | Current mapping |
 |---|---:|---|
 | `V8.rs` | 16 | Lifecycle, flags, version and process hooks matched; raw platform-handle shape hidden |
-| `platform.rs` | 21 | Platforms, transferred task dispatch, pumping and custom-dispatch benchmark covered; the trait's five synchronous default methods are not matched |
+| `platform.rs` | 21 | Platforms, transferred task dispatch, pumping and custom-dispatch benchmark covered; embeddable defaults reproduce all five synchronous Rust methods, while the function adapter retains an explicit safe-drop option |
 | `isolate.rs` | 212 | Safe surface broadly matched; raw pointers, explicit enter/exit and ownership machinery hidden |
 | `isolate_create_params.rs` | 22 | Safe fields and snapshot/allocator/cppgc composition matched; raw stack-pointer input intentionally hidden |
 | `locker.rs` | 5 | Matched |
-| `scope.rs` | 86 | Safe scopes/TryCatch/guards broadly matched; current and entered-or-microtask getters return identity-only `ContextRef` values rather than usable Context handles; Rust pinning and unsafe lifetime machinery hidden |
+| `scope.rs` | 86 | Safe scopes/TryCatch/guards matched, including usable scope-local current and entered-or-microtask Context handles; Rust pinning and unsafe lifetime machinery hidden |
 | `handle.rs` | 38 | Managed handles and safe checked casts are matched, including JavaScript-created Promise conversion; raw `Local`/`SealedLocal` and unchecked casts remain hidden |
 | `support.rs` | 22 | Rust `UniqueRef`/`SharedRef`, mapping and vtable machinery intentionally absent |
 | `context.rs` and `microtask.rs` | 11 | Matched |
 | `data.rs` | 528 | Value hierarchy, predicates, conversions and specialized values matched |
-| Object/property families | 78 | Safe object and property operations broadly matched; creation-context comparison exists but the Context-returning getter remains incomplete |
+| Object/property families | 78 | Safe object and property operations matched, including optional scope-local creation-context retrieval and re-entry |
 | `regexp.rs` and `string.rs` | 103 | Matched with checked and owned Go shapes |
 | `array_buffer.rs` | 14 | Buffer behavior and safe allocator ownership matched; raw generic vtable fields remain intentionally hidden |
 | `function.rs` and `template.rs` | 140 | Normal callbacks/templates matched; Fast API tracked separately |
@@ -89,16 +89,17 @@ in each ledger row. Conversely, the three explicitly unsafe `UnsafePtr` rows
 remain in the partial bucket because Go supplies an owner-mediated behavioral
 equivalent. The status names classify Go API-shape treatment, not Rust syntax.
 
-The row-level reconciliation found nine incomplete safe executable
-declarations: the `PlatformImpl` trait and its five default methods, two active
-Context getters, and `Object::get_creation_context`. It also preserves
-the earlier correction of three stale unsafe classifications for APIs already
+The row-level reconciliation now has no incomplete safe executable
+declarations. The final nine were closed by exact opt-in `PlatformImpl`
+defaults, usable current/entered Context references, and optional creation-
+context retrieval. It also preserves the earlier correction of three stale
+unsafe classifications for APIs already
 implemented and covered in Go: `Global::into_raw`, `Global::from_raw`, and
 `ArrayBuffer::new_backing_store_from_ptr`.
 
 ## Confirmed residual language-shape differences
 
-Ten of the 19 partial declarations are intentional language-shape differences:
+All ten partial declarations are intentional language-shape differences:
 
 1. `cppgc::Visitor` and `Visitor::trace`: Rust exposes a callback-borrowed GC
    visitor; Go keeps visitation native and exposes declarative indexed traced
@@ -126,24 +127,23 @@ Fast API residual oracle resolved its former ambiguous and partial buckets; six
 callback-local native/borrowed-pointer Fast API items carry the intentional
 `unsafe`-shape status.
 
-## Confirmed safe executable gaps
+## Safe executable closure
 
-The other nine `partial` rows are implementation or behavior remainder:
+No declaration remains in the safe executable backlog. The last nine rows are
+covered by byte-exact Rust/Go Context and custom-platform fixtures plus focused
+lifecycle, thread-affinity, scope-lifetime and exactly-once task tests. Rust's
+default platform methods are intentionally opt-in in Go because their exact
+synchronous non-nestable behavior can deadlock inside `Atomics.notify`;
+`PlatformImplFuncs` remains the documented safe-drop alternative.
 
-1. `platform::PlatformImpl` and its five task-posting methods: custom dispatch
-   is implemented, but Go's interface requires explicit methods and its nil
-   function adapters close transferred work. Rust provides five synchronous
-   defaults that run ordinary, non-nestable and delayed tasks immediately and
-   run idle tasks with deadline zero.
-2. `PinnedRef::get_current_context` and
-   `PinnedRef::get_entered_or_microtask_context`: Go exposes identity-only
-   `ContextRef` getters, but they do not provide usable returned Context handles.
-3. `Object::get_creation_context`: Go can compare an object's creation Context
-   with a supplied Context, but cannot return the Context itself.
-These nine rows are safe executable backlog, not raw-carrier API-shape
-differences. Together the classification arithmetic is
-`1,689 matched + 19 partial + 149 unsafe-status = 1,857`, with the partial
-bucket split into ten intentional shape differences and nine executable gaps.
+The two raw CreateParams stack-limit declarations remain in the intentional
+`unsafe`-shape bucket. Oracle subprocess probes show that pinned V8 overwrites
+the supplied limit during isolate thread initialization, so the raw pointer
+round-trip has no missing JavaScript execution behavior to reproduce.
+
+The classification arithmetic is
+`1,698 matched + 10 partial + 149 unsafe-status = 1,857`; every partial row is
+an intentional language-shape difference with covered safe behavior.
 
 ## Reproduction
 
@@ -155,7 +155,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\verify_api_audit_led
 The script generates pinned rustdoc JSON with `cargo rustdoc`, reconstructs
 associated-item owners, and validates every stable source ID and cited
 repository file. The reviewed ledger arithmetic is
-`1,689 + 19 + 149 = 1,857`. `-Regenerate`
+`1,698 + 10 + 149 = 1,857`. `-Regenerate`
 canonicalizes row order and source-derived columns while retaining the reviewed
 classification fields. `FastApiOneByteString::as_bytes` is restored explicitly
 because rustdoc hides inherent methods behind that generated alias.

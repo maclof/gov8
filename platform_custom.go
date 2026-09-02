@@ -44,6 +44,42 @@ type PlatformImpl interface {
 // after outstanding task wrappers have been closed.
 type PlatformImplCloser interface{ Close() }
 
+// PlatformImplDefaults supplies rusty_v8 152.2.0's default PlatformImpl
+// methods for embedding in a custom implementation. Every method runs and
+// destroys the transferred task synchronously on the thread that invoked the
+// callback. The delayed methods intentionally ignore their delay, and the idle
+// method uses an absolute deadline of +0.0.
+//
+// This behavior is opt-in because synchronous execution is reentrant and may
+// deadlock inside V8. In particular, PostNonNestableTask can be called by
+// Atomics.notify while V8 holds its waiter lock; immediately running that task
+// attempts to acquire the same lock. Synchronous execution also means a task
+// posted from a background thread runs on that background thread. Embed this
+// type only when exact rusty_v8 default behavior is required and those hazards
+// are acceptable. PlatformImplFuncs remains the nil-safe adapter: an unset
+// callback drops its task without running it.
+type PlatformImplDefaults struct{}
+
+func (PlatformImplDefaults) PostTask(_ PlatformIsolate, task *Task) {
+	_ = task.runTransferred()
+}
+
+func (PlatformImplDefaults) PostNonNestableTask(_ PlatformIsolate, task *Task) {
+	_ = task.runTransferred()
+}
+
+func (PlatformImplDefaults) PostDelayedTask(_ PlatformIsolate, task *Task, _ float64) {
+	_ = task.runTransferred()
+}
+
+func (PlatformImplDefaults) PostNonNestableDelayedTask(_ PlatformIsolate, task *Task, _ float64) {
+	_ = task.runTransferred()
+}
+
+func (PlatformImplDefaults) PostIdleTask(_ PlatformIsolate, task *IdleTask) {
+	_ = task.runTransferred(0)
+}
+
 // PlatformImplFuncs adapts function fields into PlatformImpl. A nil callback
 // closes (drops) its task. In particular, it never runs non-nestable work
 // synchronously: rusty_v8's immediate default deadlocks when Atomics.notify
@@ -416,6 +452,14 @@ func (task *Task) Run(isolate *Isolate) error {
 	if PlatformIsolate(isolate.handleAssumingCheck()) != task.isolate {
 		return foreignIsolate("task")
 	}
+	return task.runTransferred()
+}
+
+// runTransferred consumes, runs, and destroys the native task without adding
+// an isolate-affinity policy. Public Task.Run performs that policy check first;
+// PlatformImplDefaults deliberately does not, because rusty_v8's defaults run
+// synchronously on whichever thread invoked the platform callback.
+func (task *Task) runTransferred() error {
 	handle, err := task.take()
 	if err != nil {
 		return err
@@ -528,6 +572,11 @@ func (task *IdleTask) Run(isolate *Isolate, deadlineInSeconds float64) error {
 	if PlatformIsolate(isolate.handleAssumingCheck()) != task.isolate {
 		return foreignIsolate("idle task")
 	}
+	return task.runTransferred(deadlineInSeconds)
+}
+
+// runTransferred is the idle-task counterpart of Task.runTransferred.
+func (task *IdleTask) runTransferred(deadlineInSeconds float64) error {
 	handle, err := task.take()
 	if err != nil {
 		return err

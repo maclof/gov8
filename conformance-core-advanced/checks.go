@@ -525,10 +525,16 @@ func checkContextEnterExitNesting(t tester) obs {
 	defer func() { _ = scope.Close() }()
 
 	outer := enterContext(t, ctx1)
+	r1 := &runtime{iso: iso, ctx: ctx1, scope: scope}
+	if _, ok := r1.eval(t, nil, "globalThis.contextMarker = 'ctx1'"); !ok {
+		t.Fatal("ctx1 marker eval failed")
+	}
 	outerCur := currentContext(t, iso, scope)
 	outerCurrentIsCtx1 := sameContext(t, outerCur, ctx1)
 	outerEntered := enteredOrMicrotask(t, iso, scope)
 	outerEnteredIsCtx1 := sameContext(t, outerEntered, ctx1)
+	outerCurrentMarker := contextRefMarker(t, outerCur, scope, ctx1)
+	outerEnteredMarker := contextRefMarker(t, outerEntered, scope, ctx1)
 
 	g1a := globalObject(t, ctx1, scope)
 	g1b := globalObject(t, ctx1, scope)
@@ -536,41 +542,59 @@ func checkContextEnterExitNesting(t tester) obs {
 	globalIdentity := sameValue(t, g1a, g1b)
 	globalsDistinct := !sameValue(t, g1a, g2)
 
-	innerCurrentIsCtx2, innerEnteredIsCtx2, innerCurrentNotCtx1 := func() (bool, bool, bool) {
+	innerCurrentIsCtx2, innerEnteredIsCtx2, innerCurrentNotCtx1, innerCurrentMarker, innerEnteredMarker := func() (bool, bool, bool, string, string) {
 		inner := enterContext(t, ctx2)
 		defer func() { closeContextScope(t, inner) }()
+		r2 := &runtime{iso: iso, ctx: ctx2, scope: scope}
+		if _, ok := r2.eval(t, nil, "globalThis.contextMarker = 'ctx2'"); !ok {
+			t.Fatal("ctx2 marker eval failed")
+		}
 		cur := currentContext(t, iso, scope)
 		curIs2 := sameContext(t, cur, ctx2)
 		entered := enteredOrMicrotask(t, iso, scope)
 		enteredIs2 := sameContext(t, entered, ctx2)
 		not1 := !sameContext(t, cur, ctx1)
-		return curIs2, enteredIs2, not1
+		currentMarker := contextRefMarker(t, cur, scope, ctx2)
+		enteredMarker := contextRefMarker(t, entered, scope, ctx2)
+		return curIs2, enteredIs2, not1, currentMarker, enteredMarker
 	}()
 
 	restored := currentContext(t, iso, scope)
 	restoredIsCtx1 := sameContext(t, restored, ctx1)
+	restoredEntered := enteredOrMicrotask(t, iso, scope)
+	restoredEnteredIsCtx1 := sameContext(t, restoredEntered, ctx1)
 	closeContextScope(t, outer)
 
 	return wantGot("core-advanced/context/enter_exit_nesting",
 		jobj(
 			kv("outer_current_is_ctx1", jbool(true)),
 			kv("outer_entered_is_ctx1", jbool(true)),
+			kv("outer_current_marker", jstr("ctx1")),
+			kv("outer_entered_marker", jstr("ctx1")),
 			kv("global_identity_stable", jbool(true)),
 			kv("globals_distinct", jbool(true)),
 			kv("inner_current_is_ctx2", jbool(true)),
 			kv("inner_entered_is_ctx2", jbool(true)),
 			kv("inner_current_not_ctx1", jbool(true)),
+			kv("inner_current_marker", jstr("ctx2")),
+			kv("inner_entered_marker", jstr("ctx2")),
 			kv("restored_is_ctx1", jbool(true)),
+			kv("restored_entered_is_ctx1", jbool(true)),
 		),
 		jobj(
 			kv("outer_current_is_ctx1", jbool(outerCurrentIsCtx1)),
 			kv("outer_entered_is_ctx1", jbool(outerEnteredIsCtx1)),
+			kv("outer_current_marker", jstr(outerCurrentMarker)),
+			kv("outer_entered_marker", jstr(outerEnteredMarker)),
 			kv("global_identity_stable", jbool(globalIdentity)),
 			kv("globals_distinct", jbool(globalsDistinct)),
 			kv("inner_current_is_ctx2", jbool(innerCurrentIsCtx2)),
 			kv("inner_entered_is_ctx2", jbool(innerEnteredIsCtx2)),
 			kv("inner_current_not_ctx1", jbool(innerCurrentNotCtx1)),
+			kv("inner_current_marker", jstr(innerCurrentMarker)),
+			kv("inner_entered_marker", jstr(innerEnteredMarker)),
 			kv("restored_is_ctx1", jbool(restoredIsCtx1)),
+			kv("restored_entered_is_ctx1", jbool(restoredEnteredIsCtx1)),
 		))
 }
 

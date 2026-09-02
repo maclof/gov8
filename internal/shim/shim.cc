@@ -400,7 +400,7 @@ extern "C" {
 
 __declspec(dllexport) int64_t gov8_abi_version(void) {
   ClearErr();
-  return 42;
+  return 43;
 }
 
 // --- platform / process lifecycle -------------------------------------------

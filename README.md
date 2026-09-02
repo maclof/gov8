@@ -311,17 +311,18 @@ Matched benchmark reports and their environment metadata are kept in
 
 ## Project status
 
-The current suite contains 525 normalized cross-language fixture checks: 523
-are exact and 2 use documented safety normalizations. The declaration ledger
-records 1,689 direct matches, 19 partial declarations (10 intentional Go-shape
-differences and 9 executable gaps), and 149 intentionally unexposed
+The current suite contains 526 normalized cross-language fixture checks: 525
+are exact and 1 uses a documented safety normalization. The declaration ledger
+records 1,698 direct matches, 10 intentional Go-shape differences, no safe
+executable gaps, and 149 intentionally unexposed
 raw/borrowed/generic Rust shapes.
 
 This does not mean every Rust ownership or generic type has a literal Go
-spelling, and it is not a full feature or performance parity claim. Usable
-current/creation Context returns, custom-platform default dispatch, the safe
-stack-limit shape, intentional Go normalizations, and measured performance
-gaps are tracked openly.
+spelling, and it is not a performance-parity claim. The audited safe executable
+surface has feature and behavioral parity; intentional Go safety shapes and
+measured performance gaps are tracked openly. The raw CreateParams stack-limit
+pointer is omitted, and the oracle confirms pinned V8 overwrites it before
+JavaScript execution.
 
 - [`PARITY.md`](PARITY.md) - feature coverage, behavior notes, and performance
   evidence

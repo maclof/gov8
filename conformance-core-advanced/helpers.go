@@ -200,6 +200,26 @@ func sameContext(t tester, ref *gov8.ContextRef, ctx *gov8.Context) bool {
 	return eq
 }
 
+func contextRefMarker(t tester, ref *gov8.ContextRef, scope *gov8.Scope, ctx *gov8.Context) string {
+	t.Helper()
+	global, err := ref.GlobalObject(scope)
+	if err != nil {
+		t.Fatalf("ContextRef.GlobalObject: %v", err)
+	}
+	value, found, err := global.GetByName(scope, ctx, "contextMarker")
+	if err != nil {
+		t.Fatalf("GlobalObject.GetByName(contextMarker): %v", err)
+	}
+	if !found {
+		return ""
+	}
+	text, err := value.ToString(ctx)
+	if err != nil {
+		return ""
+	}
+	return text
+}
+
 func globalObject(t tester, ctx *gov8.Context, scope *gov8.Scope) gov8.Value {
 	t.Helper()
 	g, err := ctx.GlobalObject(scope)

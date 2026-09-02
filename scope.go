@@ -28,11 +28,12 @@ func ensureScopeHotProcs() {
 // values whose scope is closed. Open scopes per isolate must strictly nest
 // (that is a V8 rule) and must be closed on the isolate's owning thread.
 type Scope struct {
-	iso                       *Isolate
-	handle                    uintptr
-	closed                    bool
-	borrowed                  bool
-	javascriptExecutionGuards []uintptr
+	iso                         *Isolate
+	handle                      uintptr
+	closed                      bool
+	borrowed                    bool
+	activeBorrowedContextScopes uint32
+	javascriptExecutionGuards   []uintptr
 }
 
 // The Isolate-owned handleScopeStack mirrors the user-visible HandleScope
@@ -154,6 +155,9 @@ func (s *Scope) Close() error {
 	}
 	if len(s.javascriptExecutionGuards) != 0 {
 		return fmt.Errorf("gov8: scope has active JavaScript execution guards")
+	}
+	if s.activeBorrowedContextScopes != 0 {
+		return fmt.Errorf("gov8: scope has an active borrowed context scope")
 	}
 	if err := s.requireCurrent(); err != nil {
 		return err

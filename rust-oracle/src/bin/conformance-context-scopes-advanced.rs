@@ -308,6 +308,86 @@ fn continuation_preserved_data() -> Vec<CheckOutcome> {
 static QUEUE_ADDRESS: AtomicUsize = AtomicUsize::new(0);
 static QUEUE_OBSERVATIONS: Mutex<Vec<(bool, i32, bool, i32)>> = Mutex::new(Vec::new());
 
+#[derive(Default)]
+struct ContextObservations {
+    callback_count: usize,
+    current_marker: String,
+    entered_marker: String,
+    current_equals_entered: bool,
+    nested_current_marker: String,
+    nested_entered_marker: String,
+    nested_current_equals_entered: bool,
+    restored_current_marker: String,
+    restored_entered_marker: String,
+    restored_current_equals_entered: bool,
+}
+
+static CONTEXT_OBSERVATIONS: Mutex<Option<ContextObservations>> = Mutex::new(None);
+
+fn context_marker(scope: &v8::PinScope<'_, '_>, context: v8::Local<'_, v8::Context>) -> String {
+    let key = v8::String::new(scope, "contextMarker").unwrap();
+    context
+        .global(scope)
+        .get(scope, key.into())
+        .and_then(|value| value.to_string(scope))
+        .map(|value| value.to_rust_string_lossy(scope))
+        .unwrap_or_default()
+}
+
+fn context_observer_callback(
+    scope: &mut v8::PinScope<'_, '_>,
+    _args: v8::FunctionCallbackArguments<'_>,
+    _rv: v8::ReturnValue<'_, v8::Value>,
+) {
+    let (current_marker, entered_marker, current_equals_entered) = {
+        let current = scope.get_current_context();
+        let entered = scope.get_entered_or_microtask_context();
+        (
+            context_marker(scope, current),
+            context_marker(scope, entered),
+            current == entered,
+        )
+    };
+
+    let nested = v8::Context::new(scope, Default::default());
+    let (nested_current_marker, nested_entered_marker, nested_current_equals_entered) = {
+        let nested_scope = &mut v8::ContextScope::new(scope, nested);
+        let _ = eval(
+            nested_scope,
+            "globalThis.contextMarker = 'nested-in-microtask'",
+        );
+        let nested_current = nested_scope.get_current_context();
+        let nested_entered = nested_scope.get_entered_or_microtask_context();
+        (
+            context_marker(nested_scope, nested_current),
+            context_marker(nested_scope, nested_entered),
+            nested_current == nested_entered,
+        )
+    };
+
+    let (restored_current_marker, restored_entered_marker, restored_current_equals_entered) = {
+        let restored_current = scope.get_current_context();
+        let restored_entered = scope.get_entered_or_microtask_context();
+        (
+            context_marker(scope, restored_current),
+            context_marker(scope, restored_entered),
+            restored_current == restored_entered,
+        )
+    };
+    *CONTEXT_OBSERVATIONS.lock().unwrap() = Some(ContextObservations {
+        callback_count: 1,
+        current_marker,
+        entered_marker,
+        current_equals_entered,
+        nested_current_marker,
+        nested_entered_marker,
+        nested_current_equals_entered,
+        restored_current_marker,
+        restored_entered_marker,
+        restored_current_equals_entered,
+    });
+}
+
 fn queue_observer_callback(
     scope: &mut v8::PinScope<'_, '_>,
     _args: v8::FunctionCallbackArguments<'_>,
@@ -378,6 +458,83 @@ fn microtask_running_and_depth() -> Vec<CheckOutcome> {
             ),
             ("outside_after_running", Json::b(outside_after.0)),
             ("outside_after_depth", Json::i(i64::from(outside_after.1))),
+        ]),
+    )]
+}
+
+/// A native microtask executes after all explicit `ContextScope`s have
+/// exited. Both context accessors recover the microtask's creation context;
+/// an explicitly nested context temporarily wins, then the microtask context
+/// is restored before the callback returns.
+fn current_entered_microtask_context() -> Vec<CheckOutcome> {
+    *CONTEXT_OBSERVATIONS.lock().unwrap() = None;
+    let isolate = &mut v8::Isolate::new(Default::default());
+    v8::scope!(let scope, isolate);
+    let queue = v8::MicrotaskQueue::new(scope, v8::MicrotasksPolicy::Explicit);
+    let outer_context = v8::Context::new(scope, Default::default());
+    let microtask_context = v8::Context::new(
+        scope,
+        v8::ContextOptions {
+            microtask_queue: Some(queue_ptr(queue.as_ref())),
+            ..Default::default()
+        },
+    );
+    {
+        let outer_scope = &mut v8::ContextScope::new(scope, outer_context);
+        let _ = eval(outer_scope, "globalThis.contextMarker = 'outer'");
+        let inner_scope = &mut v8::ContextScope::new(outer_scope, microtask_context);
+        let _ = eval(inner_scope, "globalThis.contextMarker = 'microtask'");
+        let callback = v8::Function::builder(context_observer_callback)
+            .build(inner_scope)
+            .unwrap();
+        queue.enqueue_microtask(inner_scope, callback);
+    }
+
+    // No ContextScope is active here. Calling either context accessor from
+    // this plain HandleScope would create an unchecked Local from V8's empty
+    // handle, so the safe rusty_v8 API has no executable outside-context
+    // `None` case. The callback below is the supported microtask fallback.
+    queue.perform_checkpoint(scope);
+    let observed = CONTEXT_OBSERVATIONS
+        .lock()
+        .unwrap()
+        .take()
+        .unwrap_or_default();
+
+    vec![pass(
+        "context-scopes-advanced/context/current_entered_microtask",
+        Json::obj(vec![
+            ("callback_count", Json::i(observed.callback_count as i64)),
+            ("current_marker", Json::s(&observed.current_marker)),
+            ("entered_marker", Json::s(&observed.entered_marker)),
+            (
+                "current_equals_entered",
+                Json::b(observed.current_equals_entered),
+            ),
+            (
+                "nested_current_marker",
+                Json::s(&observed.nested_current_marker),
+            ),
+            (
+                "nested_entered_marker",
+                Json::s(&observed.nested_entered_marker),
+            ),
+            (
+                "nested_current_equals_entered",
+                Json::b(observed.nested_current_equals_entered),
+            ),
+            (
+                "restored_current_marker",
+                Json::s(&observed.restored_current_marker),
+            ),
+            (
+                "restored_entered_marker",
+                Json::s(&observed.restored_entered_marker),
+            ),
+            (
+                "restored_current_equals_entered",
+                Json::b(observed.restored_current_equals_entered),
+            ),
         ]),
     )]
 }
@@ -502,6 +659,7 @@ const CHECKS: &[CheckFn] = &[
     context_options_shared_queue,
     continuation_preserved_data,
     microtask_running_and_depth,
+    current_entered_microtask_context,
     context_promise_hooks,
     javascript_execution_scope_nesting,
 ];

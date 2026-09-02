@@ -214,11 +214,11 @@ func promiseState(p gov8.Promise) string {
 	return state.String()
 }
 
-func defaultChild() {
+func defaultChild(impl gov8.PlatformImpl) {
 	if err := gov8.SetFlagsFromString("--allow-natives-syntax"); err != nil {
 		panic(err)
 	}
-	if err := gov8.ConfigureCustomPlatform(gov8.CustomPlatformOptions{ThreadPoolSize: 1, Unprotected: true}, gov8.PlatformImplFuncs{}); err != nil {
+	if err := gov8.ConfigureCustomPlatform(gov8.CustomPlatformOptions{ThreadPoolSize: 1, Unprotected: true}, impl); err != nil {
 		panic(err)
 	}
 	if err := gov8.Initialize(); err != nil {
@@ -605,7 +605,9 @@ func lifecycleChild() {
 func TestCustomPlatformChild(t *testing.T) {
 	switch os.Getenv("GOV8_CUSTOM_PLATFORM_CHILD") {
 	case "default":
-		defaultChild()
+		defaultChild(gov8.PlatformImplDefaults{})
+	case "safe-drop":
+		defaultChild(gov8.PlatformImplFuncs{})
 	case "queued":
 		queuedChild()
 	case "panic":
@@ -654,7 +656,7 @@ func TestCustomPlatformConformance(t *testing.T) {
 		ReturnedFromAtomicsNotify bool   `json:"returned_from_atomics_notify"`
 		DidNotExitWithin500ms     bool   `json:"did_not_exit_within_500ms"`
 		TerminatedByHarness       bool   `json:"terminated_by_harness"`
-	}{"post_non_nestable_task", "task.Close()", strings.Contains(defaultText, "before-notify"), strings.Contains(defaultText, "after-notify"), timedOut, timedOut}
+	}{"post_non_nestable_task", "task.run()", strings.Contains(defaultText, "before-notify"), strings.Contains(defaultText, "after-notify"), timedOut, timedOut}
 	first, _ := json.Marshal(struct {
 		Check string `json:"check"`
 		OK    bool   `json:"ok"`
@@ -686,14 +688,20 @@ func TestCustomPlatformConformance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fixtureLines := strings.Split(strings.TrimSpace(string(fixture)), "\n")
-	// Exact, explicit normalization of the sole safety difference. Rust's
-	// defaults synchronously run the non-nestable task and deadlock; Go's nil
-	// adapter drops it and returns. All other fixture bytes remain unchanged.
-	fixtureLines[0] = string(first)
-	want := strings.Join(fixtureLines, "\n") + "\n"
+	want := string(fixture)
 	if actual != want {
 		t.Fatalf("normalized report differs:\nwant:\n%s\ngot:\n%s", want, actual)
+	}
+}
+
+func TestCustomPlatformNilSafeAdapterAvoidsDefaultDeadlock(t *testing.T) {
+	stdout, stderr, code, timedOut := runChild(t, "safe-drop", 5*time.Second)
+	if timedOut || code != 0 {
+		t.Fatalf("safe-drop child: timeout=%v code=%#x\nstdout:\n%s\nstderr:\n%s", timedOut, uint32(code), stdout, stderr)
+	}
+	text := string(stdout)
+	if !strings.Contains(text, "before-notify") || !strings.Contains(text, "after-notify") {
+		t.Fatalf("safe-drop adapter did not return from Atomics.notify:\n%s", text)
 	}
 }
 

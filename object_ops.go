@@ -75,10 +75,9 @@ import (
 //     context local is passed; Go's convention of passing the context
 //     explicitly to every context-bound operation subsumes the distinction
 //     in one method per shape.
-//   - The crate's Option<Local<Context>> creation context is exposed as the
-//     query CreationContextIs against a *Context instead of a raw
-//     context-typed Value, so no non-Value engine object can leak into the
-//     Value API.
+//   - The crate's Option<Local<Context>> creation context maps to
+//     (*ContextRef, bool, error), preserving both its scope-local lifetime and
+//     its empty Option without treating Context as a Value.
 //   - SameValueZero is implemented exactly as the pinned crate implements
 //     it Rust-side (SameValue, or both sides strictly equal the zero Smi);
 //     it needs a Scope only to materialize that zero.
@@ -405,6 +404,35 @@ func (o *Object) CreationContextIs(s *Scope, c *Context) (bool, error) {
 		return false, shimError("Object.CreationContextIs", r1)
 	}
 	return same == 1, nil
+}
+
+// CreationContext returns the scope-local Context in which o was created.
+// present is false when V8 returns an empty MaybeLocal; that is not an error.
+// The returned reference becomes invalid when s closes.
+func (o *Object) CreationContext(s *Scope) (context *ContextRef, present bool, err error) {
+	if err := o.check(); err != nil {
+		return nil, false, err
+	}
+	if s == nil || s.iso != o.iso {
+		return nil, false, foreignIsolate("scope")
+	}
+	sh, err := s.checkedHandleAssumingIsolate()
+	if err != nil {
+		return nil, false, err
+	}
+	if err := s.requireCurrent(); err != nil {
+		return nil, false, err
+	}
+	var out uintptr
+	r1, _, _ := proc("gov8_oo_object_creation_context").Call(
+		o.iso.handleAssumingCheck(), sh, o.h, uintptr(unsafe.Pointer(&out)))
+	if int64(r1) < 0 {
+		return nil, false, shimError("Object.CreationContext", r1)
+	}
+	if out == 0 {
+		return nil, false, nil
+	}
+	return &ContextRef{iso: o.iso, sc: s, h: out}, true, nil
 }
 
 // GetConstructorName returns the name of the function invoked as the

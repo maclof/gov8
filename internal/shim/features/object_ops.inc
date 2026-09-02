@@ -570,6 +570,26 @@ __declspec(dllexport) int64_t gov8_oo_object_identity_hash(v8::Isolate* iso,
   } GOV8_RV_END_CATCH("oo_object_identity_hash")
 }
 
+// Returns the object's creation Context as a local wire in the caller's open
+// Scope. A null wire is the pinned crate's empty Option and is not an error.
+__declspec(dllexport) int64_t gov8_oo_object_creation_context(
+    v8::Isolate* iso, void* scope, void* obj, void** out) {
+  ClearErr();
+  if (out == nullptr || !ScopeIs(iso, scope)) {
+    SetErr("invalid argument");
+    return kErrBadArg;
+  }
+  *out = nullptr;
+  try {
+    Gov8IsolateScope iso_scope(iso);
+    GOV8_OO_REQUIRE_RECEIVER(obj)
+    const v8::Context* created = v8__Object__GetCreationContext(
+        gov8_snap_impl::DerefLocal(FromWire<v8::Object>(obj)));
+    *out = const_cast<void*>(static_cast<const void*>(created));
+    return kOk;
+  } GOV8_RV_END_CATCH("oo_object_creation_context")
+}
+
 // Creation-context identity: reports whether the object was created in the
 // context wrapper ctxw (the engine's own context equality on the wires).
 // An object with NO creation context (empty maybe) is kErrState, not a

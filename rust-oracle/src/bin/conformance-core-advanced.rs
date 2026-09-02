@@ -692,50 +692,99 @@ fn thread_handle_after_dispose() -> Vec<CheckOutcome> {
 
 /// Context enter/exit nesting through `ContextScope`s (the crate has no
 /// `Context::enter`/`Exit`): the current context follows the innermost
-/// scope, restores on exit, and `global()` is a stable per-context identity.
+/// scope, restores on exit, and both current/entered contexts expose the
+/// expected usable global object.
 fn context_enter_exit_nesting() -> Vec<CheckOutcome> {
     let isolate = &mut v8::Isolate::new(Default::default());
     v8::scope!(let scope, isolate);
     let ctx1 = v8::Context::new(scope, Default::default());
     let ctx2 = v8::Context::new(scope, Default::default());
     let outer = &mut v8::ContextScope::new(scope, ctx1);
+    eval(outer, "globalThis.contextMarker = 'ctx1'").unwrap();
 
-    let outer_current_is_ctx1 = outer.get_current_context() == ctx1;
-    let outer_entered_is_ctx1 = outer.get_entered_or_microtask_context() == ctx1;
+    let outer_current = outer.get_current_context();
+    let outer_entered = outer.get_entered_or_microtask_context();
+    let outer_current_is_ctx1 = outer_current == ctx1;
+    let outer_entered_is_ctx1 = outer_entered == ctx1;
+    let marker_key = v8::String::new(outer, "contextMarker").unwrap();
+    let outer_current_marker = outer_current
+        .global(outer)
+        .get(outer, marker_key.into())
+        .and_then(|value| value.to_string(outer))
+        .map(|value| value.to_rust_string_lossy(outer))
+        .unwrap_or_default();
+    let outer_entered_marker = outer_entered
+        .global(outer)
+        .get(outer, marker_key.into())
+        .and_then(|value| value.to_string(outer))
+        .map(|value| value.to_rust_string_lossy(outer))
+        .unwrap_or_default();
     let global_identity = ctx1.global(outer) == ctx1.global(outer);
     let globals_distinct = ctx1.global(outer) != ctx2.global(outer);
 
     let inner_current_is_ctx2;
     let inner_entered_is_ctx2;
     let inner_current_not_ctx1;
+    let inner_current_marker;
+    let inner_entered_marker;
     {
         let inner = &mut v8::ContextScope::new(outer, ctx2);
-        inner_current_is_ctx2 = inner.get_current_context() == ctx2;
-        inner_entered_is_ctx2 = inner.get_entered_or_microtask_context() == ctx2;
-        inner_current_not_ctx1 = inner.get_current_context() != ctx1;
+        eval(inner, "globalThis.contextMarker = 'ctx2'").unwrap();
+        let current = inner.get_current_context();
+        let entered = inner.get_entered_or_microtask_context();
+        inner_current_is_ctx2 = current == ctx2;
+        inner_entered_is_ctx2 = entered == ctx2;
+        inner_current_not_ctx1 = current != ctx1;
+        let marker_key = v8::String::new(inner, "contextMarker").unwrap();
+        inner_current_marker = current
+            .global(inner)
+            .get(inner, marker_key.into())
+            .and_then(|value| value.to_string(inner))
+            .map(|value| value.to_rust_string_lossy(inner))
+            .unwrap_or_default();
+        inner_entered_marker = entered
+            .global(inner)
+            .get(inner, marker_key.into())
+            .and_then(|value| value.to_string(inner))
+            .map(|value| value.to_rust_string_lossy(inner))
+            .unwrap_or_default();
     }
 
     let restored_is_ctx1 = outer.get_current_context() == ctx1;
+    let restored_entered_is_ctx1 = outer.get_entered_or_microtask_context() == ctx1;
 
     let actual = Json::obj(vec![
         ("outer_current_is_ctx1", Json::b(outer_current_is_ctx1)),
         ("outer_entered_is_ctx1", Json::b(outer_entered_is_ctx1)),
+        ("outer_current_marker", Json::s(&outer_current_marker)),
+        ("outer_entered_marker", Json::s(&outer_entered_marker)),
         ("global_identity_stable", Json::b(global_identity)),
         ("globals_distinct", Json::b(globals_distinct)),
         ("inner_current_is_ctx2", Json::b(inner_current_is_ctx2)),
         ("inner_entered_is_ctx2", Json::b(inner_entered_is_ctx2)),
         ("inner_current_not_ctx1", Json::b(inner_current_not_ctx1)),
+        ("inner_current_marker", Json::s(&inner_current_marker)),
+        ("inner_entered_marker", Json::s(&inner_entered_marker)),
         ("restored_is_ctx1", Json::b(restored_is_ctx1)),
+        (
+            "restored_entered_is_ctx1",
+            Json::b(restored_entered_is_ctx1),
+        ),
     ]);
     let expected = Json::obj(vec![
         ("outer_current_is_ctx1", Json::b(true)),
         ("outer_entered_is_ctx1", Json::b(true)),
+        ("outer_current_marker", Json::s("ctx1")),
+        ("outer_entered_marker", Json::s("ctx1")),
         ("global_identity_stable", Json::b(true)),
         ("globals_distinct", Json::b(true)),
         ("inner_current_is_ctx2", Json::b(true)),
         ("inner_entered_is_ctx2", Json::b(true)),
         ("inner_current_not_ctx1", Json::b(true)),
+        ("inner_current_marker", Json::s("ctx2")),
+        ("inner_entered_marker", Json::s("ctx2")),
         ("restored_is_ctx1", Json::b(true)),
+        ("restored_entered_is_ctx1", Json::b(true)),
     ]);
     vec![expect_eq(
         "core-advanced/context/enter_exit_nesting",

@@ -160,8 +160,11 @@ func (e *EscapableScope) Close() error {
 // ContextScope). Contexts must be exited in reverse enter order; the Go
 // stack below enforces that where the crate's type system does.
 type ContextScope struct {
-	iso    *Isolate
+	iso *Isolate
+	// Exactly one of ctx/ref is set. ctx is a persistent Go Context; ref is a
+	// borrowed scope-local Context whose source Scope is guarded until Close.
 	ctx    *Context
+	ref    *ContextRef
 	closed bool
 }
 
@@ -189,6 +192,32 @@ func (c *Context) Enter() (*ContextScope, error) {
 	return cs, nil
 }
 
+// Enter enters this scope-local Context. The source Scope need not be the
+// current innermost HandleScope, but it must remain live until the returned
+// ContextScope closes; Scope.Close enforces that borrowed lifetime.
+func (r *ContextRef) Enter() (*ContextScope, error) {
+	if err := r.check(); err != nil {
+		return nil, err
+	}
+	if r.h == 0 {
+		return nil, errors.New("gov8: empty context reference")
+	}
+	if r.sc.activeBorrowedContextScopes == ^uint32(0) {
+		return nil, errors.New("gov8: too many active borrowed context scopes")
+	}
+	r.sc.activeBorrowedContextScopes++
+	if err := callErr("ContextRef.Enter", proc("gov8_ca_context_enter_local"),
+		r.iso.handleAssumingCheck(), r.sc.handle, r.h); err != nil {
+		r.sc.activeBorrowedContextScopes--
+		return nil, err
+	}
+	cs := &ContextScope{iso: r.iso, ref: r}
+	contextScopeStacks.mu.Lock()
+	contextScopeStacks.m[r.iso] = append(contextScopeStacks.m[r.iso], cs)
+	contextScopeStacks.mu.Unlock()
+	return cs, nil
+}
+
 // Close exits the context. The innermost entered context must be exited
 // first (the engine's Enter/Exit pair is LIFO).
 func (cs *ContextScope) Close() error {
@@ -198,8 +227,16 @@ func (cs *ContextScope) Close() error {
 	if err := cs.iso.check(); err != nil {
 		return err
 	}
-	if err := cs.ctx.checkAssumingIsolate(); err != nil {
-		return err
+	if cs.ctx != nil {
+		if err := cs.ctx.checkAssumingIsolate(); err != nil {
+			return err
+		}
+	} else if cs.ref != nil {
+		if err := cs.ref.check(); err != nil {
+			return err
+		}
+	} else {
+		return errors.New("gov8: invalid context scope")
 	}
 	contextScopeStacks.mu.Lock()
 	stack := contextScopeStacks.m[cs.iso]
@@ -207,29 +244,108 @@ func (cs *ContextScope) Close() error {
 		contextScopeStacks.mu.Unlock()
 		return errors.New("gov8: context scopes must be exited in reverse enter order")
 	}
+	contextScopeStacks.mu.Unlock()
+	if cs.ctx != nil {
+		if err := callErr("ContextScope.Close", proc("gov8_ca_context_exit"),
+			cs.iso.handleAssumingCheck(), cs.ctx.handle); err != nil {
+			return err
+		}
+	} else {
+		if err := callErr("ContextScope.Close", proc("gov8_ca_context_exit_local"),
+			cs.iso.handleAssumingCheck(), cs.ref.sc.handle, cs.ref.h); err != nil {
+			return err
+		}
+	}
+	contextScopeStacks.mu.Lock()
+	stack = contextScopeStacks.m[cs.iso]
 	contextScopeStacks.m[cs.iso] = stack[:len(stack)-1]
 	contextScopeStacks.mu.Unlock()
-	if err := callErr("ContextScope.Close", proc("gov8_ca_context_exit"),
-		cs.iso.handleAssumingCheck(), cs.ctx.handle); err != nil {
-		return err
+	if cs.ref != nil {
+		cs.ref.sc.activeBorrowedContextScopes--
 	}
 	cs.closed = true
 	return nil
 }
 
-// ContextRef is an engine-observed context (the current or
-// entered-or-microtask context), comparable by identity against a Context.
+// ContextRef is an engine-observed scope-local Context. It preserves the
+// Local<Context> lifetime of the pinned Rust API: the reference and values
+// materialized from it are invalid once its Scope closes.
 type ContextRef struct {
 	iso *Isolate
 	sc  *Scope
 	h   uintptr
 }
 
+func (r *ContextRef) check() error {
+	if r == nil || r.iso == nil || r.sc == nil {
+		return errors.New("gov8: nil context reference")
+	}
+	if err := r.iso.check(); err != nil {
+		return err
+	}
+	if r.sc.iso != r.iso {
+		return foreignIsolate("context reference scope")
+	}
+	_, err := r.sc.checkedHandleAssumingIsolate()
+	return err
+}
+
+// IsEmpty reports whether V8 returned no current/entered Context. The pinned
+// Rust getters cannot safely represent this native state, while Go keeps it as
+// an explicit, non-dereferenceable result.
+func (r *ContextRef) IsEmpty() (bool, error) {
+	if err := r.check(); err != nil {
+		return false, err
+	}
+	return r.h == 0, nil
+}
+
+// GlobalObject returns this Context's global object in s. The reference's
+// source Scope and the result Scope must both still be live and belong to the
+// same isolate.
+func (r *ContextRef) GlobalObject(s *Scope) (*Object, error) {
+	if err := r.check(); err != nil {
+		return nil, err
+	}
+	if r.h == 0 {
+		return nil, errors.New("gov8: empty context reference")
+	}
+	if s == nil || s.iso != r.iso {
+		return nil, foreignIsolate("scope")
+	}
+	sh, err := s.checkedHandleAssumingIsolate()
+	if err != nil {
+		return nil, err
+	}
+	if err := s.requireCurrent(); err != nil {
+		return nil, err
+	}
+	var out uintptr
+	r1, _, _ := proc("gov8_ca_context_global_local").Call(
+		r.iso.handleAssumingCheck(), sh, r.h, uintptr(unsafe.Pointer(&out)))
+	if int64(r1) < 0 {
+		return nil, shimError("ContextRef.GlobalObject", r1)
+	}
+	if out == 0 {
+		return nil, errors.New("gov8: ContextRef.GlobalObject returned an empty value")
+	}
+	return &Object{Value{iso: r.iso, sc: s, h: out}}, nil
+}
+
 // CurrentContext observes the isolate's current context (the innermost
 // entered one) as a scope-local reference.
 func (i *Isolate) CurrentContext(s *Scope) (*ContextRef, error) {
-	sh, err := s.checkedHandle()
+	if err := i.check(); err != nil {
+		return nil, err
+	}
+	if s == nil || s.iso != i {
+		return nil, foreignIsolate("scope")
+	}
+	sh, err := s.checkedHandleAssumingIsolate()
 	if err != nil {
+		return nil, err
+	}
+	if err := s.requireCurrent(); err != nil {
 		return nil, err
 	}
 	var out uintptr
@@ -242,8 +358,17 @@ func (i *Isolate) CurrentContext(s *Scope) (*ContextRef, error) {
 
 // EnteredOrMicrotaskContext observes the entered or microtask context.
 func (i *Isolate) EnteredOrMicrotaskContext(s *Scope) (*ContextRef, error) {
-	sh, err := s.checkedHandle()
+	if err := i.check(); err != nil {
+		return nil, err
+	}
+	if s == nil || s.iso != i {
+		return nil, foreignIsolate("scope")
+	}
+	sh, err := s.checkedHandleAssumingIsolate()
 	if err != nil {
+		return nil, err
+	}
+	if err := s.requireCurrent(); err != nil {
 		return nil, err
 	}
 	var out uintptr
@@ -256,14 +381,17 @@ func (i *Isolate) EnteredOrMicrotaskContext(s *Scope) (*ContextRef, error) {
 
 // SameAs reports whether the observed context is c (engine identity).
 func (r *ContextRef) SameAs(c *Context) (bool, error) {
-	if err := r.sc.check(); err != nil {
+	if err := r.check(); err != nil {
 		return false, err
 	}
-	if err := c.checkAssumingIsolate(); err != nil {
-		return false, err
+	if c == nil {
+		return false, errors.New("gov8: nil context")
 	}
 	if c.iso != r.iso {
 		return false, nil
+	}
+	if err := c.checkAssumingIsolate(); err != nil {
+		return false, err
 	}
 	var local uintptr
 	if err := callErr("ContextRef.SameAs", proc("gov8_ca_context_local"),
@@ -277,6 +405,31 @@ func (r *ContextRef) SameAs(c *Context) (bool, error) {
 	r1, _, _ := proc("gov8_ca_context_eq").Call(r.h, local)
 	if int64(r1) < 0 {
 		return false, shimError("ContextRef.SameAs", r1)
+	}
+	return r1 == 1, nil
+}
+
+// SameAsRef reports engine identity equality with another scope-local Context.
+// Empty references compare equal only to another empty reference.
+func (r *ContextRef) SameAsRef(other *ContextRef) (bool, error) {
+	if err := r.check(); err != nil {
+		return false, err
+	}
+	if other == nil {
+		return false, errors.New("gov8: nil context reference")
+	}
+	if other.iso != r.iso {
+		return false, nil
+	}
+	if err := other.check(); err != nil {
+		return false, err
+	}
+	if r.h == 0 || other.h == 0 {
+		return r.h == other.h, nil
+	}
+	r1, _, _ := proc("gov8_ca_context_eq").Call(r.h, other.h)
+	if int64(r1) < 0 {
+		return false, shimError("ContextRef.SameAsRef", r1)
 	}
 	return r1 == 1, nil
 }

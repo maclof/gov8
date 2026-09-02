@@ -4,6 +4,7 @@ package contextscopesadvancedconformance
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"strings"
 	"testing"
@@ -57,6 +58,7 @@ func runReport(t *testing.T) string {
 		checkSharedQueue,
 		checkContinuationData,
 		checkQueueRunningAndDepth,
+		checkCurrentEnteredMicrotaskContext,
 		checkPromiseHooks,
 		checkJavascriptExecutionScopes,
 	}
@@ -371,6 +373,204 @@ func checkQueueRunningAndDepth(t *testing.T) outcome {
 		OutsideAfterDepth            int32 `json:"outside_after_depth"`
 	}{outsideBeforeRunning, outsideBeforeDepth, len(observations), inside.runningBefore, inside.depthBefore, inside.runningAfter, inside.depthAfter, outsideAfterRunning, outsideAfterDepth}
 	return outcome{"context-scopes-advanced/microtask/running_and_scope_depth", valueResult}
+}
+
+func checkCurrentEnteredMicrotaskContext(t *testing.T) outcome {
+	iso, scope := newIsolateScope(t)
+	defer func() { _ = scope.Close(); _ = iso.Close() }()
+	queue, err := iso.NewMicrotaskQueue(gov8.PolicyExplicit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = queue.Close() }()
+	outerContext, err := iso.NewContext()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = outerContext.Close() }()
+	microtaskContext, err := iso.NewContextWithOptions(scope, &gov8.ContextOptions{MicrotaskQueue: queue})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = microtaskContext.Close() }()
+
+	type observation struct {
+		callbackCount                int
+		currentMarker                string
+		enteredMarker                string
+		currentEqualsEntered         bool
+		nestedCurrentMarker          string
+		nestedEnteredMarker          string
+		nestedCurrentEqualsEntered   bool
+		restoredCurrentMarker        string
+		restoredEnteredMarker        string
+		restoredCurrentEqualsEntered bool
+	}
+	var observed observation
+	var callbackErr error
+	observe := func(ref *gov8.ContextRef, callbackScope *gov8.Scope, operationContext *gov8.Context) (string, error) {
+		global, err := ref.GlobalObject(callbackScope)
+		if err != nil {
+			return "", err
+		}
+		value, found, err := global.GetByName(callbackScope, operationContext, "contextMarker")
+		if err != nil || !found {
+			return "", err
+		}
+		return value.ToString(operationContext)
+	}
+	callback, err := iso.NewFunction(scope, microtaskContext, func(cs *gov8.CallbackScope, _ gov8.FunctionCallbackArguments, _ gov8.ReturnValue) {
+		observed.callbackCount++
+		current, err := cs.Isolate().CurrentContext(cs.Scope())
+		if err != nil {
+			callbackErr = err
+			return
+		}
+		entered, err := cs.Isolate().EnteredOrMicrotaskContext(cs.Scope())
+		if err != nil {
+			callbackErr = err
+			return
+		}
+		observed.currentMarker, err = observe(current, cs.Scope(), microtaskContext)
+		if err != nil {
+			callbackErr = err
+			return
+		}
+		observed.enteredMarker, err = observe(entered, cs.Scope(), microtaskContext)
+		if err != nil {
+			callbackErr = err
+			return
+		}
+		observed.currentEqualsEntered, err = current.SameAsRef(entered)
+		if err != nil {
+			callbackErr = err
+			return
+		}
+
+		nested, err := cs.Isolate().NewContext()
+		if err != nil {
+			callbackErr = err
+			return
+		}
+		defer func() { _ = nested.Close() }()
+		nestedScope, err := nested.Enter()
+		if err != nil {
+			callbackErr = err
+			return
+		}
+		if _, ok := eval(t, nested, cs.Scope(), "globalThis.contextMarker = 'nested-in-microtask'"); !ok {
+			callbackErr = errors.New("nested marker eval failed")
+			_ = nestedScope.Close()
+			return
+		}
+		nestedCurrent, err := cs.Isolate().CurrentContext(cs.Scope())
+		if err != nil {
+			callbackErr = err
+			_ = nestedScope.Close()
+			return
+		}
+		nestedEntered, err := cs.Isolate().EnteredOrMicrotaskContext(cs.Scope())
+		if err != nil {
+			callbackErr = err
+			_ = nestedScope.Close()
+			return
+		}
+		observed.nestedCurrentMarker, err = observe(nestedCurrent, cs.Scope(), nested)
+		if err == nil {
+			observed.nestedEnteredMarker, err = observe(nestedEntered, cs.Scope(), nested)
+		}
+		if err == nil {
+			observed.nestedCurrentEqualsEntered, err = nestedCurrent.SameAsRef(nestedEntered)
+		}
+		if err != nil {
+			callbackErr = err
+			_ = nestedScope.Close()
+			return
+		}
+		if err := nestedScope.Close(); err != nil {
+			callbackErr = err
+			return
+		}
+
+		restoredCurrent, err := cs.Isolate().CurrentContext(cs.Scope())
+		if err != nil {
+			callbackErr = err
+			return
+		}
+		restoredEntered, err := cs.Isolate().EnteredOrMicrotaskContext(cs.Scope())
+		if err != nil {
+			callbackErr = err
+			return
+		}
+		observed.restoredCurrentMarker, err = observe(restoredCurrent, cs.Scope(), microtaskContext)
+		if err == nil {
+			observed.restoredEnteredMarker, err = observe(restoredEntered, cs.Scope(), microtaskContext)
+		}
+		if err == nil {
+			observed.restoredCurrentEqualsEntered, err = restoredCurrent.SameAsRef(restoredEntered)
+		}
+		if err != nil {
+			callbackErr = err
+		}
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	outerScope, err := outerContext.Enter()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := eval(t, outerContext, scope, "globalThis.contextMarker = 'outer'"); !ok {
+		t.Fatal("outer marker eval failed")
+	}
+	microtaskScope, err := microtaskContext.Enter()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := eval(t, microtaskContext, scope, "globalThis.contextMarker = 'microtask'"); !ok {
+		t.Fatal("microtask marker eval failed")
+	}
+	if err := queue.Enqueue(microtaskContext, callback.Value); err != nil {
+		t.Fatal(err)
+	}
+	if err := microtaskScope.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := outerScope.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := queue.PerformCheckpoint(nil); err != nil {
+		t.Fatal(err)
+	}
+	if callbackErr != nil {
+		t.Fatalf("microtask callback observation: %v", callbackErr)
+	}
+
+	valueResult := struct {
+		CallbackCount                int    `json:"callback_count"`
+		CurrentMarker                string `json:"current_marker"`
+		EnteredMarker                string `json:"entered_marker"`
+		CurrentEqualsEntered         bool   `json:"current_equals_entered"`
+		NestedCurrentMarker          string `json:"nested_current_marker"`
+		NestedEnteredMarker          string `json:"nested_entered_marker"`
+		NestedCurrentEqualsEntered   bool   `json:"nested_current_equals_entered"`
+		RestoredCurrentMarker        string `json:"restored_current_marker"`
+		RestoredEnteredMarker        string `json:"restored_entered_marker"`
+		RestoredCurrentEqualsEntered bool   `json:"restored_current_equals_entered"`
+	}{
+		observed.callbackCount,
+		observed.currentMarker,
+		observed.enteredMarker,
+		observed.currentEqualsEntered,
+		observed.nestedCurrentMarker,
+		observed.nestedEnteredMarker,
+		observed.nestedCurrentEqualsEntered,
+		observed.restoredCurrentMarker,
+		observed.restoredEnteredMarker,
+		observed.restoredCurrentEqualsEntered,
+	}
+	return outcome{"context-scopes-advanced/context/current_entered_microtask", valueResult}
 }
 
 func checkPromiseHooks(t *testing.T) outcome {

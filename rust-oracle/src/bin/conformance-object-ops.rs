@@ -740,12 +740,14 @@ fn identity_hash_contract() -> Vec<CheckOutcome> {
 
 /// `Object::get_creation_context` reports the context an object was created
 /// in, even when queried from a different context scope, and covers the
-/// native objects of the context itself.
+/// native objects of the context itself. The returned context remains usable
+/// after the creating inner `ContextScope` exits.
 fn creation_context() -> Vec<CheckOutcome> {
     let isolate = &mut v8::Isolate::new(Default::default());
     v8::scope!(let scope, isolate);
     let ctx1 = v8::Context::new(scope, Default::default());
     let scope = &mut v8::ContextScope::new(scope, ctx1);
+    let _ = eval(scope, "globalThis.creationMarker = 'ctx1'");
 
     // Objects created inside ctx1.
     let plain = v8::Object::new(scope);
@@ -768,9 +770,28 @@ fn creation_context() -> Vec<CheckOutcome> {
     let ctx2 = v8::Context::new(scope, Default::default());
     let obj2 = {
         let inner = &mut v8::ContextScope::new(scope, ctx2);
+        let _ = eval(inner, "globalThis.creationMarker = 'ctx2'");
         v8::Object::new(inner)
     };
     let obj2_ctx = obj2.get_creation_context(scope);
+    let obj2_ctx_again = obj2.get_creation_context(scope);
+    let obj2_context_identity_stable = obj2_ctx == obj2_ctx_again;
+    let obj2_context_not_outer = obj2_ctx.map(|context| context != ctx1).unwrap_or(false);
+    let obj2_context_global_marker = obj2_ctx
+        .map(|context| {
+            let origin_scope = &mut v8::ContextScope::new(scope, context);
+            eval_text(origin_scope, "String(globalThis.creationMarker)")
+        })
+        .unwrap_or_default();
+    let outer_restored_after_origin_scope = scope.get_current_context() == ctx1;
+    // GetCreationContext is optional because a detached global proxy has no
+    // native context. rusty_v8 152.2.0 does not expose Context::DetachGlobal,
+    // so every safely constructible live object in this check has Some(...).
+    let all_live_objects_have_context = plain_ctx.is_some()
+        && js_ctx.is_some()
+        && prototype_ctx.is_some()
+        && global_ctx.is_some()
+        && obj2_ctx.is_some();
 
     let ctx_of = |value: Option<v8::Local<v8::Context>>, which: v8::Local<v8::Context>| {
         value.map(|c| c == which).unwrap_or(false)
@@ -784,6 +805,23 @@ fn creation_context() -> Vec<CheckOutcome> {
         ),
         ("global_is_ctx1", Json::b(ctx_of(global_ctx, ctx1))),
         ("obj2_is_ctx2", Json::b(ctx_of(obj2_ctx, ctx2))),
+        (
+            "obj2_context_identity_stable",
+            Json::b(obj2_context_identity_stable),
+        ),
+        ("obj2_context_not_outer", Json::b(obj2_context_not_outer)),
+        (
+            "obj2_context_global_marker",
+            Json::s(&obj2_context_global_marker),
+        ),
+        (
+            "outer_restored_after_origin_scope",
+            Json::b(outer_restored_after_origin_scope),
+        ),
+        (
+            "all_live_objects_have_context",
+            Json::b(all_live_objects_have_context),
+        ),
     ]);
     let expected = Json::obj(vec![
         ("plain_is_ctx1", Json::b(true)),
@@ -791,6 +829,11 @@ fn creation_context() -> Vec<CheckOutcome> {
         ("object_prototype_is_ctx1", Json::b(true)),
         ("global_is_ctx1", Json::b(true)),
         ("obj2_is_ctx2", Json::b(true)),
+        ("obj2_context_identity_stable", Json::b(true)),
+        ("obj2_context_not_outer", Json::b(true)),
+        ("obj2_context_global_marker", Json::s("ctx2")),
+        ("outer_restored_after_origin_scope", Json::b(true)),
+        ("all_live_objects_have_context", Json::b(true)),
     ]);
     vec![expect_eq(
         "obj-ops/identity/creation_context",

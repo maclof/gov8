@@ -778,6 +778,63 @@ __declspec(dllexport) int64_t gov8_ca_context_exit(v8::Isolate* iso,
   }
 }
 
+// Enter/exit a borrowed scope-local Context wire. The owning Go Scope is
+// validated on every transition and kept open by the Go ContextScope guard.
+__declspec(dllexport) int64_t gov8_ca_context_enter_local(
+    v8::Isolate* iso, void* scope, void* context_wire) {
+  ClearErr();
+  if (!ScopeIs(iso, scope) || context_wire == nullptr) {
+    SetErr("invalid argument");
+    return kErrBadArg;
+  }
+  try {
+    Gov8IsolateScope iso_scope(iso);
+    v8__Context__Enter(
+        gov8_snap_impl::DerefLocal(FromWire<v8::Context>(context_wire)));
+    return kOk;
+  } catch (...) {
+    SetErr("C++ exception in context_enter_local");
+    return kErrCpp;
+  }
+}
+
+__declspec(dllexport) int64_t gov8_ca_context_exit_local(
+    v8::Isolate* iso, void* scope, void* context_wire) {
+  ClearErr();
+  if (!ScopeIs(iso, scope) || context_wire == nullptr) {
+    SetErr("invalid argument");
+    return kErrBadArg;
+  }
+  try {
+    Gov8IsolateScope iso_scope(iso);
+    v8__Context__Exit(
+        gov8_snap_impl::DerefLocal(FromWire<v8::Context>(context_wire)));
+    return kOk;
+  } catch (...) {
+    SetErr("C++ exception in context_exit_local");
+    return kErrCpp;
+  }
+}
+
+__declspec(dllexport) int64_t gov8_ca_context_global_local(
+    v8::Isolate* iso, void* scope, void* context_wire, void** out) {
+  ClearErr();
+  if (!ScopeIs(iso, scope) || context_wire == nullptr || out == nullptr) {
+    SetErr("invalid argument");
+    return kErrBadArg;
+  }
+  *out = nullptr;
+  try {
+    Gov8IsolateScope iso_scope(iso);
+    v8::Local<v8::Context> context = FromWire<v8::Context>(context_wire);
+    *out = ToWire(context->Global());
+    return kOk;
+  } catch (...) {
+    SetErr("C++ exception in context_global_local");
+    return kErrCpp;
+  }
+}
+
 // Current / entered-or-microtask context as a wire in the CALLER's open
 // HandleScope (0 when the engine reports none).
 __declspec(dllexport) int64_t gov8_ca_context_current(v8::Isolate* iso,

@@ -35,7 +35,7 @@ fn context_scopes_advanced_is_deterministic_across_processes() {
 #[test]
 fn context_scopes_advanced_fixture_has_exact_shape_and_order() {
     let lines: Vec<_> = FIXTURE.lines().collect();
-    assert_eq!(lines.len(), 9, "eight checks plus summary required");
+    assert_eq!(lines.len(), 10, "nine checks plus summary required");
     let expected_ids = [
         "context-scopes-advanced/context/options_global_template_and_extras",
         "context-scopes-advanced/context/options_global_object_reuse",
@@ -43,10 +43,11 @@ fn context_scopes_advanced_fixture_has_exact_shape_and_order() {
         "context-scopes-advanced/microtask/options_shared_queue",
         "context-scopes-advanced/context/continuation_preserved_data",
         "context-scopes-advanced/microtask/running_and_scope_depth",
+        "context-scopes-advanced/context/current_entered_microtask",
         "context-scopes-advanced/context/promise_hooks",
         "context-scopes-advanced/scope/disallow_allow_nesting",
     ];
-    let checks = &lines[..8];
+    let checks = &lines[..9];
     let actual_ids: Vec<_> = checks
         .iter()
         .map(|line| {
@@ -58,8 +59,8 @@ fn context_scopes_advanced_fixture_has_exact_shape_and_order() {
         .collect();
     assert_eq!(actual_ids, expected_ids);
     assert_eq!(
-        lines[8],
-        "{\"summary\":{\"total\":8,\"passed\":8,\"failed\":0}}"
+        lines[9],
+        "{\"summary\":{\"total\":9,\"passed\":9,\"failed\":0}}"
     );
     for token in [
         "global_template",
@@ -70,6 +71,8 @@ fn context_scopes_advanced_fixture_has_exact_shape_and_order() {
         "visible_in_second_context",
         "inside_running",
         "inside_depth",
+        "nested_current_equals_entered",
+        "restored_current_marker",
         "disable_stops_hooks",
         "disallowed_again",
     ] {

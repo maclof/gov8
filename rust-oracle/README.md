@@ -92,7 +92,7 @@ src/lib.rs                  platform init guard + run_all()/run_host_all()
 src/json.rs                 canonical JSON writer (documented rules + tests)
 src/report.rs               check outcome -> JSONL line encoding
 src/checks/                 ordered check registry (34 checks, 6 groups)
-src/checks/host/            ordered host-interaction registry (18 checks, 6 groups)
+src/checks/host/            ordered host-interaction registry (19 checks, 6 groups)
 src/bin/conformance.rs      prints the base JSONL report; exit 1 on any failure
 src/bin/conformance-host.rs prints the host-interaction JSONL report (no shutdown)
 src/bin/panic-boundary.rs   dedicated panic-boundary characterization executable
@@ -175,7 +175,7 @@ and verified in-process via `oracle::run_host_all()`. The slice performs no
 platform shutdown, so its fixture can be verified in a process that keeps
 using V8 afterwards (the base `run_all()` may still run after it).
 
-Check groups and IDs (fixed order, 18 checks):
+Check groups and IDs (fixed order, 19 checks):
 
 - `template/function_template_construction`,
   `template/instance_prototype_and_constructor`,
@@ -190,7 +190,7 @@ Check groups and IDs (fixed order, 18 checks):
   `accessor/static_accessor_on_constructor`
 - `external/internal_field_externals`, `external/isolate_slot_ownership`
 - `promise/resolver_settlement_semantics`, `promise/native_then_checkpoint`,
-  `promise/reject_callback_events`
+  `promise/value_try_cast`, `promise/reject_callback_events`
 - `lifecycle/global_clone_equality`, `lifecycle/weak_collect_forced_gc`
 
 Regenerate it (same review discipline as the base fixture):
@@ -428,7 +428,7 @@ Checked on this machine (2026-09-01, Rust toolchain 1.98.0, Go 1.26.2):
 - `cargo fmt --check` — clean
 - `cargo check` — clean (only the documented LNK4098 linker warning)
 - `cargo test --locked` — all unit, fixture, deterministic-process,
-  lifecycle, panic, and fatal-path tests pass; the fixture corpus contains 525
+  lifecycle, panic, and fatal-path tests pass; the fixture corpus contains 526
   normalized checks
 - `cargo clippy --all-targets -- -D warnings` — clean
 - `cargo bench --locked -- --test` — every benchmark smoke-runs successfully

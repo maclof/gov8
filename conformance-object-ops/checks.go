@@ -656,6 +656,18 @@ func checkCreationContext(t tester) obs {
 	t.Helper()
 	r := newRuntime(t)
 	defer r.close(t)
+	outer, err := r.ctx.Enter()
+	if err != nil {
+		t.Fatalf("Context.Enter(ctx1): %v", err)
+	}
+	defer func() {
+		if err := outer.Close(); err != nil {
+			t.Errorf("ContextScope.Close(ctx1): %v", err)
+		}
+	}()
+	if _, ok := r.eval(t, nil, "globalThis.creationMarker = 'ctx1'"); !ok {
+		t.Fatal("ctx1 marker eval failed")
+	}
 
 	plain, err := r.scope.NewObject(r.ctx)
 	if err != nil {
@@ -694,15 +706,90 @@ func checkCreationContext(t tester) obs {
 	if err != nil {
 		t.Fatalf("NewContext: %v", err)
 	}
+	defer closeContext(t, ctx2)
+	inner, err := ctx2.Enter()
+	if err != nil {
+		t.Fatalf("Context.Enter(ctx2): %v", err)
+	}
+	r2 := &runtime{iso: r.iso, ctx: ctx2, scope: r.scope}
+	if _, ok := r2.eval(t, nil, "globalThis.creationMarker = 'ctx2'"); !ok {
+		t.Fatal("ctx2 marker eval failed")
+	}
 	obj2, err := r.scope.NewObject(ctx2)
 	if err != nil {
 		t.Fatalf("NewObject(ctx2): %v", err)
 	}
-	obj2IsCtx2, err := obj2.CreationContextIs(r.scope, ctx2)
-	if err != nil {
-		t.Fatalf("CreationContextIs: %v", err)
+	if err := inner.Close(); err != nil {
+		t.Fatalf("ContextScope.Close(ctx2): %v", err)
 	}
-	closeContext(t, ctx2)
+
+	plainCtx, plainPresent, err := plain.CreationContext(r.scope)
+	if err != nil {
+		t.Fatalf("CreationContext(plain): %v", err)
+	}
+	jsCtx, jsPresent, err := jsLiteralObj.CreationContext(r.scope)
+	if err != nil {
+		t.Fatalf("CreationContext(js literal): %v", err)
+	}
+	prototypeCtx, prototypePresent, err := objectPrototypeObj.CreationContext(r.scope)
+	if err != nil {
+		t.Fatalf("CreationContext(Object.prototype): %v", err)
+	}
+	globalCtx, globalPresent, err := globalProxy.CreationContext(r.scope)
+	if err != nil {
+		t.Fatalf("CreationContext(global): %v", err)
+	}
+	obj2Ctx, obj2Present, err := obj2.CreationContext(r.scope)
+	if err != nil {
+		t.Fatalf("CreationContext(obj2): %v", err)
+	}
+	obj2CtxAgain, obj2PresentAgain, err := obj2.CreationContext(r.scope)
+	if err != nil {
+		t.Fatalf("CreationContext(obj2 again): %v", err)
+	}
+
+	obj2IsCtx2 := false
+	obj2ContextIdentityStable := false
+	obj2ContextNotOuter := false
+	obj2ContextGlobalMarker := ""
+	if obj2Present {
+		obj2IsCtx2, err = obj2Ctx.SameAs(ctx2)
+		if err != nil {
+			t.Fatalf("ContextRef.SameAs(ctx2): %v", err)
+		}
+		obj2ContextNotOuter, err = obj2Ctx.SameAs(r.ctx)
+		if err != nil {
+			t.Fatalf("ContextRef.SameAs(ctx1): %v", err)
+		}
+		obj2ContextNotOuter = !obj2ContextNotOuter
+		originScope, enterErr := obj2Ctx.Enter()
+		if enterErr != nil {
+			t.Fatalf("ContextRef.Enter(obj2): %v", enterErr)
+		}
+		obj2ContextGlobalMarker = r2.evalText(t, "String(globalThis.creationMarker)")
+		if closeErr := originScope.Close(); closeErr != nil {
+			t.Fatalf("ContextScope.Close(obj2): %v", closeErr)
+		}
+	}
+	if obj2Present && obj2PresentAgain {
+		obj2ContextIdentityStable, err = obj2Ctx.SameAsRef(obj2CtxAgain)
+		if err != nil {
+			t.Fatalf("ContextRef.SameAsRef: %v", err)
+		}
+	}
+	restored, err := r.iso.CurrentContext(r.scope)
+	if err != nil {
+		t.Fatalf("CurrentContext: %v", err)
+	}
+	outerRestoredAfterOriginScope, err := restored.SameAs(r.ctx)
+	if err != nil {
+		t.Fatalf("ContextRef.SameAs(ctx1): %v", err)
+	}
+	allLiveObjectsHaveContext := plainPresent && jsPresent && prototypePresent && globalPresent && obj2Present
+	_ = plainCtx
+	_ = jsCtx
+	_ = prototypeCtx
+	_ = globalCtx
 
 	got := jobj(
 		kv("plain_is_ctx1", jbool(plainIsCtx1)),
@@ -710,6 +797,11 @@ func checkCreationContext(t tester) obs {
 		kv("object_prototype_is_ctx1", jbool(objectPrototypeIsCtx1)),
 		kv("global_is_ctx1", jbool(globalIsCtx1)),
 		kv("obj2_is_ctx2", jbool(obj2IsCtx2)),
+		kv("obj2_context_identity_stable", jbool(obj2ContextIdentityStable)),
+		kv("obj2_context_not_outer", jbool(obj2ContextNotOuter)),
+		kv("obj2_context_global_marker", jstr(obj2ContextGlobalMarker)),
+		kv("outer_restored_after_origin_scope", jbool(outerRestoredAfterOriginScope)),
+		kv("all_live_objects_have_context", jbool(allLiveObjectsHaveContext)),
 	)
 	want := jobj(
 		kv("plain_is_ctx1", jbool(true)),
@@ -717,6 +809,11 @@ func checkCreationContext(t tester) obs {
 		kv("object_prototype_is_ctx1", jbool(true)),
 		kv("global_is_ctx1", jbool(true)),
 		kv("obj2_is_ctx2", jbool(true)),
+		kv("obj2_context_identity_stable", jbool(true)),
+		kv("obj2_context_not_outer", jbool(true)),
+		kv("obj2_context_global_marker", jstr("ctx2")),
+		kv("outer_restored_after_origin_scope", jbool(true)),
+		kv("all_live_objects_have_context", jbool(true)),
 	)
 	return wantGot("obj-ops/identity/creation_context", want, got)
 }
