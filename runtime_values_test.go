@@ -12,7 +12,7 @@ import (
 
 // Behavior tests for the runtime-values slice, mirroring the pinned oracle's
 // characterization (rust-oracle/src/bin/conformance-runtime-values.rs). The
-// byte-exact conformance runner lives in conformance-runtime-values/; these
+// byte-exact conformance runner lives in conformance/runtime-values/; these
 // tests cover the same observations plus the lifecycle, negative, and
 // concurrency cases that must not abort the process.
 

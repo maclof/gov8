@@ -10,7 +10,7 @@ import (
 
 // Template construction and lifecycle tests, mirroring the pinned Rust host
 // oracle's template checks (rust-oracle/src/checks/host/templates.rs). The
-// fixture-level mechanical comparison lives in conformance-host-templates/;
+// fixture-level mechanical comparison lives in conformance/host-templates/;
 // these tests cover the same behaviors plus misuse and lifecycle cases.
 
 func evalText(t *testing.T, ctx *gov8.Context, scope *gov8.Scope, src string) (string, bool) {

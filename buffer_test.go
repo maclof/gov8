@@ -16,7 +16,7 @@ import (
 // Behavior tests for the buffers slice, mirroring the pinned oracle's
 // characterization (rust-oracle/src/bin/conformance-buffers.rs and
 // tests/buffers_negative.rs). The byte-exact conformance runner lives in
-// conformance-buffers/; these tests cover the same observations plus the
+// conformance/buffers/; these tests cover the same observations plus the
 // lifecycle, negative, and concurrency cases that must not abort the process.
 
 func hexEncode(b []byte) string {

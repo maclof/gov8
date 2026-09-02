@@ -1,5 +1,9 @@
 # gov8 conformance runner
 
+The base cross-language runner lives in this directory. Focused API and
+behavior suites live in named subdirectories, so every conformance package is
+kept under one `conformance/` tree.
+
 Re-implements the pinned Rust oracle's 34 conformance checks
 (`../rust-oracle/src/checks`, fixed order) on top of the Go binding and
 compares the normalized JSON-lines report **byte-for-byte** against the

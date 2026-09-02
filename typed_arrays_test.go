@@ -13,7 +13,7 @@ import (
 // Behavior tests for the typed-array slice, mirroring the pinned oracle's
 // characterization (rust-oracle/src/bin/conformance-typed-arrays.rs and
 // tests/typed_arrays_negative.rs). The byte-exact conformance runner lives in
-// conformance-typed-arrays/; these tests cover the same observations plus
+// conformance/typed-arrays/; these tests cover the same observations plus
 // the lifecycle, affinity, and concurrency cases that must not abort the
 // process.
 

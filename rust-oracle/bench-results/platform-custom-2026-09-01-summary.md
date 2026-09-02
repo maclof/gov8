@@ -10,7 +10,7 @@ The matched baseline used commit `21f395d`'s production implementation with
 only the new atomic benchmark harness applied:
 
 ```text
-go test ./conformance-platform-custom -run '^$' -bench '^BenchmarkCustomPlatformNoopTaskDispatch$' -benchmem -benchtime=3s -count=10 -cpu=1
+go test ./conformance/platform-custom -run '^$' -bench '^BenchmarkCustomPlatformNoopTaskDispatch$' -benchmem -benchtime=3s -count=10 -cpu=1
 ```
 
 The optimized implementation used the same command with `-count=15`.
