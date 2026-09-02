@@ -67,6 +67,10 @@ AllocatorWrap* Checked(void* wire) {
   return wrap;
 }
 
+void ReleaseRetainedAllocator(void* raw) noexcept {
+  delete static_cast<std::shared_ptr<v8::ArrayBuffer::Allocator>*>(raw);
+}
+
 bool FillCreateParams(void* wire,
                       v8::Isolate::CreateParams* params) noexcept {
   auto* wrap = Checked(wire);
@@ -122,6 +126,39 @@ __declspec(dllexport) void* gov8_aba_new_host(uintptr_t id) {
         std::move(allocator));
   } catch (...) {
     SetErr("C++ exception creating host ArrayBuffer allocator");
+    return nullptr;
+  }
+}
+
+// Creates a standalone backing store whose native wrapper retains the
+// isolate's allocator shared reference. This is ownership-equivalent to a
+// separate gov8_aba_clone wrapper, but lets backing-store disposal release the
+// store first and allocator second in one native call.
+__declspec(dllexport) void* gov8_aba_backing_store_new(
+    v8::Isolate* iso, int64_t byte_length, void* allocator_wire) {
+  ClearErr();
+  auto* allocator = gov8_array_buffer_allocator_impl::Checked(allocator_wire);
+  if (iso == nullptr || byte_length < 0 || allocator == nullptr) {
+    SetErr("invalid allocator-aware backing store argument");
+    return nullptr;
+  }
+  void* wire = gov8_backing_store_new(iso, byte_length);
+  if (wire == nullptr) return nullptr;
+  auto* store = gov8_buf_impl::AsBs(wire);
+  if (store == nullptr) {
+    gov8_backing_store_dispose(wire);
+    SetErr("invalid allocator-aware backing store result");
+    return nullptr;
+  }
+  try {
+    store->retained_owner =
+        new std::shared_ptr<v8::ArrayBuffer::Allocator>(allocator->allocator);
+    store->release_retained_owner =
+        gov8_array_buffer_allocator_impl::ReleaseRetainedAllocator;
+    return wire;
+  } catch (...) {
+    gov8_backing_store_dispose(wire);
+    SetErr("C++ exception retaining backing store allocator");
     return nullptr;
   }
 }

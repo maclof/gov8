@@ -158,6 +158,11 @@ struct BsWrap {
   // Heap-held shared reference; stable address handed to Go as an opaque
   // handle and released exactly once by gov8_backing_store_dispose.
   BsRep* rep;
+  // Optional native owner retained for the lifetime of this wrapper. The
+  // allocator-aware constructor uses it to keep the isolate's allocator alive
+  // without a second Go-visible wrapper and two additional DLL crossings.
+  void* retained_owner;
+  void (*release_retained_owner)(void*) noexcept;
 };
 
 constexpr uint64_t kBsMagic = 0x674f563842535442ULL;  // "gOV8BSTB"
@@ -852,6 +857,8 @@ __declspec(dllexport) int64_t gov8_backing_store_dispose(void* bsw) {
     // possibly already-disposed isolate.
     std__shared_ptr__v8__BackingStore__reset(w->rep);
     delete w->rep;
+    if (w->release_retained_owner != nullptr)
+      w->release_retained_owner(w->retained_owner);
     delete w;
     return kOk;
   } catch (...) {

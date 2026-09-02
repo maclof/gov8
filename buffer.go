@@ -157,16 +157,18 @@ type BackingStore struct {
 }
 
 var (
-	backingStoreHotProcsOnce sync.Once
-	backingStoreNewAddr      uintptr
-	backingStoreDisposeAddr  uintptr
-	allocatorCloneAddr       uintptr
-	allocatorDisposeAddr     uintptr
+	backingStoreHotProcsOnce         sync.Once
+	backingStoreNewAddr              uintptr
+	backingStoreNewWithAllocatorAddr uintptr
+	backingStoreDisposeAddr          uintptr
+	allocatorCloneAddr               uintptr
+	allocatorDisposeAddr             uintptr
 )
 
 func ensureBackingStoreHotProcs() {
 	backingStoreHotProcsOnce.Do(func() {
 		backingStoreNewAddr = proc("gov8_backing_store_new").Addr()
+		backingStoreNewWithAllocatorAddr = proc("gov8_aba_backing_store_new").Addr()
 		backingStoreDisposeAddr = proc("gov8_backing_store_dispose").Addr()
 		allocatorCloneAddr = proc("gov8_aba_clone").Addr()
 		allocatorDisposeAddr = proc("gov8_aba_dispose").Addr()
@@ -250,10 +252,19 @@ func (i *Isolate) NewBackingStore(byteLength int) (*BackingStore, error) {
 		return nil, err
 	}
 	ensureBackingStoreHotProcs()
-	h, _, _ := syscall.Syscall(backingStoreNewAddr, 2,
-		i.handle, uintptr(byteLength), 0)
+	var h uintptr
+	if i.arrayBufferAllocatorReference != 0 {
+		h, _, _ = syscall.Syscall(backingStoreNewWithAllocatorAddr, 3,
+			i.handle, uintptr(byteLength), i.arrayBufferAllocatorReference)
+	} else {
+		h, _, _ = syscall.Syscall(backingStoreNewAddr, 2,
+			i.handle, uintptr(byteLength), 0)
+	}
 	if h == 0 {
 		return nil, shimError("NewBackingStore", 0)
+	}
+	if i.arrayBufferAllocatorReference != 0 {
+		return &BackingStore{iso: i, handle: h}, nil
 	}
 	return i.backingStore(h)
 }

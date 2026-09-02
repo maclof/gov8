@@ -1274,6 +1274,17 @@ func (c *Context) CompileFunction(s *Scope, source string, params []string, tc *
 	return Value{iso: c.iso, sc: s, h: out}, nil
 }
 
+var (
+	callFunctionProcOnce sync.Once
+	callFunctionProc     *syscall.Proc
+)
+
+func ensureCallFunctionProc() {
+	callFunctionProcOnce.Do(func() {
+		callFunctionProc = proc("gov8_ca_function_call")
+	})
+}
+
 // CallFunction invokes fn with recv and args in the context. TryCatch
 // routing matches Script.Run: a thrown exception yields an error and is
 // recorded in tc when supplied.
@@ -1316,7 +1327,8 @@ func CallFunction(c *Context, s *Scope, fn, recv Value, args []Value, tc *TryCat
 		argv = uintptr(unsafe.Pointer(&wires[0]))
 	}
 	var out uintptr
-	r1, _, _ := proc("gov8_ca_function_call").Call(
+	ensureCallFunctionProc()
+	r1, _, _ := callFunctionProc.Call(
 		c.iso.handleAssumingCheck(), c.handle, sh, fn.h, recv.h,
 		argv, uintptr(len(wires)), tcv, uintptr(unsafe.Pointer(&out)))
 	if int64(r1) < 0 {

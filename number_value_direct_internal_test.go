@@ -77,12 +77,12 @@ func TestNumberValueDirectLegacyDifferentialAndStatuses(t *testing.T) {
 	}
 }
 
-func TestShimABIVersion43(t *testing.T) {
+func TestShimABIVersion44(t *testing.T) {
 	version, _, _ := proc("gov8_abi_version").Call()
 	if version != shimABIVersion {
 		t.Fatalf("shim ABI = %d, Go expects %d", version, shimABIVersion)
 	}
-	if shimABIVersion != 43 {
-		t.Fatalf("Go shim ABI = %d, want 43", shimABIVersion)
+	if shimABIVersion != 44 {
+		t.Fatalf("Go shim ABI = %d, want 44", shimABIVersion)
 	}
 }

@@ -43,6 +43,14 @@ func BenchmarkWasmFromCompiledAnswerModule(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
+	// The pinned Rust workload holds a ContextScope around setup and every
+	// timed nested HandleScope restoration. Keep the matching context entry
+	// outside the timer; WasmModuleFromCompiled still preserves its standalone
+	// behavior for callers that do not pre-enter the context.
+	contextScope, err := ctx.Enter()
+	if err != nil {
+		b.Fatal(err)
+	}
 	setupScope, err := iso.NewScope()
 	if err != nil {
 		b.Fatal(err)
@@ -58,7 +66,12 @@ func BenchmarkWasmFromCompiledAnswerModule(b *testing.B) {
 	if err := setupScope.Close(); err != nil {
 		b.Fatal(err)
 	}
-	defer func() { _ = compiled.Close(); _ = ctx.Close(); _ = iso.Close() }()
+	defer func() {
+		_ = compiled.Close()
+		_ = contextScope.Close()
+		_ = ctx.Close()
+		_ = iso.Close()
+	}()
 	probeScope, err := iso.NewScope()
 	if err != nil {
 		b.Fatal(err)
@@ -81,6 +94,7 @@ func BenchmarkWasmFromCompiledAnswerModule(b *testing.B) {
 		b.Fatal(err)
 	}
 	b.ReportAllocs()
+	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		scope, err := iso.NewScope()
 		if err != nil {
@@ -95,6 +109,7 @@ func BenchmarkWasmFromCompiledAnswerModule(b *testing.B) {
 			b.Fatal(err)
 		}
 	}
+	b.StopTimer()
 }
 
 // BenchmarkWasmFromCompiledAnswerModuleCrossIsolate measures the same
@@ -166,6 +181,7 @@ func BenchmarkWasmFromCompiledAnswerModuleCrossIsolate(b *testing.B) {
 	}
 
 	b.ReportAllocs()
+	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		scope, err := consumer.NewScope()
 		if err != nil {
@@ -180,4 +196,5 @@ func BenchmarkWasmFromCompiledAnswerModuleCrossIsolate(b *testing.B) {
 			b.Fatal(err)
 		}
 	}
+	b.StopTimer()
 }

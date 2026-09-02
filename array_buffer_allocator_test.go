@@ -248,6 +248,57 @@ func TestArrayBufferAllocatorValidation(t *testing.T) {
 	}
 }
 
+func TestBackingStoreRetainsExplicitDefaultAllocator(t *testing.T) {
+	allocator, err := gov8.NewDefaultArrayBufferAllocator()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = allocator.Close() })
+	params := gov8.NewCreateParams()
+	if err := params.SetArrayBufferAllocator(allocator); err != nil {
+		t.Fatal(err)
+	}
+	iso, err := gov8.NewIsolateWithParams(params)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = iso.Close() })
+	before, err := allocator.UseCount()
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := iso.NewBackingStore(8)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	withStore, err := allocator.UseCount()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// V8's BackingStore and the Go wrapper's explicit post-isolate lifetime
+	// guard each retain one shared allocator reference.
+	if withStore != before+2 {
+		t.Fatalf("allocator use count with store = %d, want %d", withStore, before+2)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	after, err := allocator.UseCount()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after != before {
+		t.Fatalf("allocator use count after store Close = %d, want %d", after, before)
+	}
+	if err := iso.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := allocator.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestArrayBufferAllocatorOwnerMayCloseBeforeIsolate(t *testing.T) {
 	events := &allocatorTestEvents{}
 	allocator, err := gov8.NewArrayBufferAllocator(events.callbacks())

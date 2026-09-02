@@ -407,6 +407,9 @@ Raw output lives in `bench-results/`:
   startup, script, callback, promise, and module workloads
 - `aligned-core-2026-09-01-summary.md` — matching Go samples, Rust confidence
   intervals, exact workload boundaries, and measured ratios
+- `performance-followup-2026-09-02-summary.md` — balanced frozen-binary samples
+  for the ABI-44 allocator ownership path, function-call procedure cache, Wasm
+  benchmark alignment, and rejected Promise/platform experiments
 
 To record a new run (Windows PowerShell, from the `rust-oracle` directory):
 
