@@ -1,16 +1,27 @@
-# gov8
+# gov8 — Go bindings for V8
 
 [![Go Reference](https://pkg.go.dev/badge/github.com/maclof/gov8.svg)](https://pkg.go.dev/github.com/maclof/gov8)
 [![windows-amd64](https://github.com/maclof/gov8/actions/workflows/windows-amd64.yml/badge.svg?branch=master)](https://github.com/maclof/gov8/actions/workflows/windows-amd64.yml)
 
-`gov8` embeds the V8 JavaScript engine in Go. It offers an explicit, typed Go
-API for isolates, contexts, handle scopes, scripts, callbacks, promises,
-modules, WebAssembly, snapshots, Inspector, and the other safe surfaces covered
-by the pinned Rust [`v8`](https://crates.io/crates/v8) crate.
+Embed Google's V8 JavaScript engine in Go with a typed API and a packaged
+Windows runtime. Applications install with `go get` and run without requiring
+Rust, Visual Studio, a C/C++ compiler, or a separate V8 download.
 
-The project uses `rusty_v8` as an executable reference: Go and Rust run the same
-fixtures and matched benchmarks so behavior and performance claims can be
-checked rather than assumed.
+## Highlights
+
+- **Real V8** — execute JavaScript and WebAssembly using the engine from Chrome.
+- **Go and JavaScript interop** — expose Go callbacks to JavaScript and call
+  JavaScript functions from Go.
+- **Zero-build application setup** — the verified Windows amd64 runtime is
+  included in the Go module and extracted automatically.
+- **Audited behavior** — a pinned `rusty_v8` oracle runs matching fixtures and
+  benchmarks against the Go implementation.
+- **Broad safe API coverage** — isolates, contexts, handle scopes, scripts,
+  callbacks, promises, modules, WebAssembly, snapshots, and Inspector.
+
+The public API follows the safe executable surface of the pinned Rust
+[`v8`](https://crates.io/crates/v8) crate while preserving V8's explicit
+ownership, lifetime, and thread-affinity rules.
 
 ## Requirements
 

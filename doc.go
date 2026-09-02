@@ -1,9 +1,17 @@
 //go:build windows && amd64
 
-// Package gov8 is a Go binding for the pinned prebuilt V8 engine used by the
-// gov8 project: the rusty_v8 release static library for
-// x86_64-pc-windows-msvc (v8 crate =152.2.0, engine 15.2.124.1-rusty),
-// wrapped by a C ABI shim DLL shipped in gzip-compressed form with the module.
+// Package gov8 provides Go bindings for Google's V8 JavaScript and WebAssembly
+// engine.
+//
+// Applications can embed JavaScript in Go using typed APIs for isolates,
+// contexts, handle scopes, scripts, callbacks, promises, modules, WebAssembly,
+// snapshots, and the V8 Inspector. The packaged Windows amd64 runtime works
+// without requiring application developers to install Rust, Visual Studio, or
+// a C/C++ compiler.
+//
+// The binding uses the pinned rusty_v8 release static library for
+// x86_64-pc-windows-msvc (v8 crate =152.2.0, engine 15.2.124.1-rusty), wrapped
+// by a C ABI shim DLL shipped in gzip-compressed form with the module.
 //
 // # Supported platform
 //
