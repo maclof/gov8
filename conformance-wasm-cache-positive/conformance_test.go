@@ -242,15 +242,6 @@ func pumpPromise(t *testing.T, r *testRuntime, promise gov8.Promise) {
 	t.Fatal("wasm cache promise did not settle")
 }
 
-func fnv1a64(data []byte) string {
-	hash := uint64(0xcbf29ce484222325)
-	for _, value := range data {
-		hash ^= uint64(value)
-		hash *= 0x100000001b3
-	}
-	return fmt.Sprintf("%016x", hash)
-}
-
 func produceCache(t *testing.T) (*gov8.SerializedWasmModuleCache, bool) {
 	t.Helper()
 	r := newRuntime(t, nil)
@@ -440,9 +431,11 @@ func TestRustOracleFixture(t *testing.T) {
 	cache, repeated := produceCache(t)
 	independent, independentRepeated := produceCache(t)
 	cacheBytes := cache.SerializedBytes()
+	// Serialized Wasm code contains CPU-feature-dependent bytes. Compare the
+	// API guarantees (non-empty output and same-machine determinism), not a
+	// hash captured on the fixture author's processor.
 	compare(t, values, "wasm-cache-positive/producer/determinism", map[string]any{
-		"serialized_size":                   cache.Len(),
-		"fnv1a64":                           fnv1a64(cacheBytes),
+		"serialized_nonempty":               cache.Len() > 0,
 		"repeat_same_compiled_equal":        repeated,
 		"independent_producer_repeat_equal": independentRepeated,
 		"independent_isolate_bytes_equal":   bytes.Equal(cacheBytes, independent.SerializedBytes()),

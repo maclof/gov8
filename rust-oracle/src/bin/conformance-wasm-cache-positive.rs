@@ -132,15 +132,6 @@ fn set_cache(bytes: &[u8]) {
     CACHE_OBSERVATION.with(|slot| *slot.borrow_mut() = None);
 }
 
-fn fnv1a(bytes: &[u8]) -> String {
-    let mut hash = 0xcbf2_9ce4_8422_2325_u64;
-    for byte in bytes {
-        hash ^= u64::from(*byte);
-        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
-    }
-    format!("{hash:016x}")
-}
-
 fn produce_cache() -> (Vec<u8>, bool) {
     let isolate = &mut v8::Isolate::new(Default::default());
     v8::scope!(let scope, isolate);
@@ -155,11 +146,12 @@ fn produce_cache() -> (Vec<u8>, bool) {
 
 fn producer_determinism(cache: &[u8], repeated_equal: bool) -> CheckOutcome {
     let (independent, independent_repeated_equal) = produce_cache();
+    // Serialized Wasm code contains CPU-feature-dependent bytes. Record the
+    // portable API guarantees rather than a hash tied to this processor.
     pass(
         "wasm-cache-positive/producer/determinism",
         Json::obj(vec![
-            ("serialized_size", Json::i(cache.len() as i64)),
-            ("fnv1a64", Json::s(&fnv1a(cache))),
+            ("serialized_nonempty", Json::b(!cache.is_empty())),
             ("repeat_same_compiled_equal", Json::b(repeated_equal)),
             (
                 "independent_producer_repeat_equal",
