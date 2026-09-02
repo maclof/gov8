@@ -4,9 +4,11 @@ package gov8_test
 
 import (
 	"bytes"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	gov8 "github.com/maclof/gov8"
 )
@@ -47,7 +49,9 @@ func compileStreaming(t *testing.T, iso *gov8.Isolate, ctx *gov8.Context, scope 
 
 func pumpWasmUntil(t *testing.T, iso *gov8.Isolate, done func() bool) {
 	t.Helper()
-	for range 1000 {
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		ranAny := false
 		for {
 			ran, err := iso.PumpMessageLoop(false)
 			if err != nil {
@@ -56,6 +60,7 @@ func pumpWasmUntil(t *testing.T, iso *gov8.Isolate, done func() bool) {
 			if !ran {
 				break
 			}
+			ranAny = true
 		}
 		if err := iso.PerformMicrotaskCheckpoint(); err != nil {
 			t.Fatal(err)
@@ -63,8 +68,12 @@ func pumpWasmUntil(t *testing.T, iso *gov8.Isolate, done func() bool) {
 		if done() {
 			return
 		}
+		if !ranAny {
+			runtime.Gosched()
+			time.Sleep(time.Millisecond)
+		}
 	}
-	t.Fatal("wasm operation did not resolve")
+	t.Fatal("wasm operation did not resolve within 10 seconds")
 }
 
 func newStreamingRuntime(t *testing.T, callback gov8.WasmStreamingCallback) (*gov8.Isolate, *gov8.Context, *gov8.Scope) {
