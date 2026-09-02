@@ -8,7 +8,7 @@ import (
 	gov8 "github.com/maclof/gov8"
 )
 
-// The three checks below are mechanical ports of
+// The checks below are mechanical ports of
 // rust-oracle/src/checks/host/promises.rs, including JSON key order and the
 // oracle's Option->null / unwrap_or_default mappings. Characterized
 // contract (from the oracle's header comment):
@@ -279,6 +279,104 @@ func checkNativeThenCheckpoint(t tester) obs {
 	return wantGot("promise/native_then_checkpoint", want, got)
 }
 
+func checkValueTryCast(t tester) obs {
+	r := newRuntime(t)
+	defer r.close(t)
+
+	resolvedValue, ok := r.eval(t, "Promise.resolve(42)")
+	if !ok {
+		t.Fatal("resolved promise eval failed")
+	}
+	resolved, err := gov8.AsPromise(resolvedValue)
+	resolvedCastOK := err == nil
+	if err != nil {
+		t.Fatalf("AsPromise(resolved): %v", err)
+	}
+	resolvedState := promiseState(t, *resolved)
+	resolvedResult := r.valueText(t, mustResult(t, r, *resolved))
+
+	rejectedValue, ok := r.eval(t, "Promise.reject('boom')")
+	if !ok {
+		t.Fatal("rejected promise eval failed")
+	}
+	rejected, err := gov8.AsPromise(rejectedValue)
+	rejectedCastOK := err == nil
+	if err != nil {
+		t.Fatalf("AsPromise(rejected): %v", err)
+	}
+	rejectedState := promiseState(t, *rejected)
+	rejectedResult := r.valueText(t, mustResult(t, r, *rejected))
+
+	nonPromise, ok := r.eval(t, "42")
+	if !ok {
+		t.Fatal("non-promise eval failed")
+	}
+	nonPromiseValue, nonPromiseErr := gov8.AsPromise(nonPromise)
+	nonPromiseCastOK := nonPromiseErr == nil && nonPromiseValue != nil
+
+	thenHandler, ok := r.eval(t, "x => x + 1")
+	if !ok {
+		t.Fatal("then handler eval failed")
+	}
+	thenPromise, err := resolved.Then(r.ctx, thenHandler)
+	if err != nil {
+		t.Fatalf("Then: %v", err)
+	}
+	thenInitialState := promiseState(t, thenPromise)
+
+	catchHandler, ok := r.eval(t, "x => 'caught:' + x")
+	if !ok {
+		t.Fatal("catch handler eval failed")
+	}
+	catchPromise, catchAttached, err := rejected.Catch(r.ctx, catchHandler)
+	if err != nil {
+		t.Fatalf("Catch: %v", err)
+	}
+	catchInitialState := promiseState(t, catchPromise)
+
+	if err := r.iso.PerformMicrotaskCheckpoint(); err != nil {
+		t.Fatalf("PerformMicrotaskCheckpoint: %v", err)
+	}
+	thenFinalState := promiseState(t, thenPromise)
+	thenResult := r.valueText(t, mustResult(t, r, thenPromise))
+	catchFinalState := promiseState(t, catchPromise)
+	catchResult := r.valueText(t, mustResult(t, r, catchPromise))
+
+	want := obj(
+		kv("resolved_cast_ok", b(true)),
+		kv("resolved_state", s("Fulfilled")),
+		kv("resolved_result", s("42")),
+		kv("rejected_cast_ok", b(true)),
+		kv("rejected_state", s("Rejected")),
+		kv("rejected_result", s("boom")),
+		kv("non_promise_cast_ok", b(false)),
+		kv("then_initial_state", s("Pending")),
+		kv("then_final_state", s("Fulfilled")),
+		kv("then_result", s("43")),
+		kv("catch_attached", b(true)),
+		kv("catch_initial_state", s("Pending")),
+		kv("catch_final_state", s("Fulfilled")),
+		kv("catch_result", s("caught:boom")),
+	)
+	got := obj(
+		kv("resolved_cast_ok", b(resolvedCastOK)),
+		kv("resolved_state", s(resolvedState)),
+		kv("resolved_result", s(resolvedResult)),
+		kv("rejected_cast_ok", b(rejectedCastOK)),
+		kv("rejected_state", s(rejectedState)),
+		kv("rejected_result", s(rejectedResult)),
+		kv("non_promise_cast_ok", b(nonPromiseCastOK)),
+		kv("then_initial_state", s(thenInitialState)),
+		kv("then_final_state", s(thenFinalState)),
+		kv("then_result", s(thenResult)),
+		kv("catch_attached", b(catchAttached)),
+		kv("catch_initial_state", s(catchInitialState)),
+		kv("catch_final_state", s(catchFinalState)),
+		kv("catch_result", s(catchResult)),
+	)
+	return wantGot("promise/value_try_cast", want, got)
+}
+
 func checkRejectCallbackEvents(t tester) obs {
 	r := newRuntime(t)
 	defer r.close(t)
@@ -437,6 +535,7 @@ func promiseChecks() []func(tester) obs {
 	return []func(tester) obs{
 		checkResolverSettlementSemantics,
 		checkNativeThenCheckpoint,
+		checkValueTryCast,
 		checkRejectCallbackEvents,
 	}
 }
@@ -445,5 +544,6 @@ func promiseChecks() []func(tester) obs {
 var promiseCheckIDs = []string{
 	"promise/resolver_settlement_semantics",
 	"promise/native_then_checkpoint",
+	"promise/value_try_cast",
 	"promise/reject_callback_events",
 }

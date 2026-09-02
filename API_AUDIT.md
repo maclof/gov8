@@ -16,15 +16,15 @@ publicly reexports remain in the ledger.
 
 | Classification | Declarations | Percent |
 |---|---:|---:|
-| Matched Go equivalent or documented semantic shape | 1,687 | 90.8% |
+| Matched Go equivalent or documented semantic shape | 1,689 | 91.0% |
 | Partial language-shape difference with safe behavioral equivalent | 10 | 0.5% |
-| Incomplete safe executable surface | 11 | 0.6% |
+| Incomplete safe executable surface | 9 | 0.5% |
 | Intentional raw/borrowed/generic Rust shape (ledger status `unsafe`) | 149 | 8.0% |
 | Ambiguous pending exact executable evidence | 0 | 0.0% |
 | Total | 1,857 | 100% |
 
-The ledger has 21 `partial` rows: ten declarations have safe behavioral Go
-equivalents but not literal Rust borrowed/generic API shapes, while eleven have
+The ledger has 19 `partial` rows: ten declarations have safe behavioral Go
+equivalents but not literal Rust borrowed/generic API shapes, while nine have
 confirmed safe executable remainder. There is no ambiguous bucket. The ledger's
 `unsafe` status is a project taxonomy for 149 intentionally unexposed carrier
 shapes; it does not mean every corresponding Rust declaration is an `unsafe
@@ -41,7 +41,7 @@ project chooses a comparably safe Go abstraction.
 | `isolate_create_params.rs` | 22 | Safe fields and snapshot/allocator/cppgc composition matched; raw stack-pointer input intentionally hidden |
 | `locker.rs` | 5 | Matched |
 | `scope.rs` | 86 | Safe scopes/TryCatch/guards broadly matched; current and entered-or-microtask getters return identity-only `ContextRef` values rather than usable Context handles; Rust pinning and unsafe lifetime machinery hidden |
-| `handle.rs` | 38 | Managed handles broadly matched; checked generic cast coverage lacks Promise conversion, while raw `Local`/`SealedLocal` and unchecked casts remain hidden |
+| `handle.rs` | 38 | Managed handles and safe checked casts are matched, including JavaScript-created Promise conversion; raw `Local`/`SealedLocal` and unchecked casts remain hidden |
 | `support.rs` | 22 | Rust `UniqueRef`/`SharedRef`, mapping and vtable machinery intentionally absent |
 | `context.rs` and `microtask.rs` | 11 | Matched |
 | `data.rs` | 528 | Value hierarchy, predicates, conversions and specialized values matched |
@@ -50,7 +50,7 @@ project chooses a comparably safe Go abstraction.
 | `array_buffer.rs` | 14 | Buffer behavior and safe allocator ownership matched; raw generic vtable fields remain intentionally hidden |
 | `function.rs` and `template.rs` | 140 | Normal callbacks/templates matched; Fast API tracked separately |
 | Script/compiler/module families | 80 | Safe surface matched, including dynamic-import `kDefer` delivery |
-| Promise and snapshot families | 19 | Resolver-created Promise behavior and snapshot composition are matched; conversion of a JavaScript-produced Value into the typed Promise API is tracked under `handle.rs` |
+| Promise and snapshot families | 19 | Promise behavior, including conversion of JavaScript-produced values into the typed Promise API, and snapshot composition are matched |
 | Serializer/deserializer | 40 | Matched |
 | `wasm.rs` | 28 | Safe executable surface matched, including positive serialized-cache behavior |
 | `inspector.rs` and `crdtp.rs` | 146 | Safe owned/closed surface matched; raw boxed/vtable representations hidden |
@@ -89,17 +89,16 @@ in each ledger row. Conversely, the three explicitly unsafe `UnsafePtr` rows
 remain in the partial bucket because Go supplies an owner-mediated behavioral
 equivalent. The status names classify Go API-shape treatment, not Rust syntax.
 
-The row-level reconciliation found eleven incomplete safe executable
+The row-level reconciliation found nine incomplete safe executable
 declarations: the `PlatformImpl` trait and its five default methods, two active
-Context getters, `Object::get_creation_context`, and the two safe `Local` cast
-methods whose Go coverage lacks checked Promise conversion. It also preserves
+Context getters, and `Object::get_creation_context`. It also preserves
 the earlier correction of three stale unsafe classifications for APIs already
 implemented and covered in Go: `Global::into_raw`, `Global::from_raw`, and
 `ArrayBuffer::new_backing_store_from_ptr`.
 
 ## Confirmed residual language-shape differences
 
-Ten of the 21 partial declarations are intentional language-shape differences:
+Ten of the 19 partial declarations are intentional language-shape differences:
 
 1. `cppgc::Visitor` and `Visitor::trace`: Rust exposes a callback-borrowed GC
    visitor; Go keeps visitation native and exposes declarative indexed traced
@@ -129,7 +128,7 @@ callback-local native/borrowed-pointer Fast API items carry the intentional
 
 ## Confirmed safe executable gaps
 
-The other eleven `partial` rows are implementation or behavior remainder:
+The other nine `partial` rows are implementation or behavior remainder:
 
 1. `platform::PlatformImpl` and its five task-posting methods: custom dispatch
    is implemented, but Go's interface requires explicit methods and its nil
@@ -141,14 +140,10 @@ The other eleven `partial` rows are implementation or behavior remainder:
    `ContextRef` getters, but they do not provide usable returned Context handles.
 3. `Object::get_creation_context`: Go can compare an object's creation Context
    with a supplied Context, but cannot return the Context itself.
-4. Safe `Local::try_cast` and `Local::cast`: checked conversions cover many Go
-   value wrappers, but there is no checked Value-to-Promise conversion, so the
-   generic safe cast surface is incomplete.
-
-These eleven rows are safe executable backlog, not raw-carrier API-shape
+These nine rows are safe executable backlog, not raw-carrier API-shape
 differences. Together the classification arithmetic is
-`1,687 matched + 21 partial + 149 unsafe-status = 1,857`, with the partial
-bucket split into ten intentional shape differences and eleven executable gaps.
+`1,689 matched + 19 partial + 149 unsafe-status = 1,857`, with the partial
+bucket split into ten intentional shape differences and nine executable gaps.
 
 ## Reproduction
 
@@ -160,7 +155,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\verify_api_audit_led
 The script generates pinned rustdoc JSON with `cargo rustdoc`, reconstructs
 associated-item owners, and validates every stable source ID and cited
 repository file. The reviewed ledger arithmetic is
-`1,687 + 21 + 149 = 1,857`. `-Regenerate`
+`1,689 + 19 + 149 = 1,857`. `-Regenerate`
 canonicalizes row order and source-derived columns while retaining the reviewed
 classification fields. `FastApiOneByteString::as_bytes` is restored explicitly
 because rustdoc hides inherent methods behind that generated alias.

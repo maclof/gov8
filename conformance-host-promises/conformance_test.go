@@ -104,7 +104,7 @@ func extractFixturePromiseLines(t *testing.T) (promiseLines []string, summary st
 	return promiseLines, summary
 }
 
-// TestHostPromiseFixture runs the three promise checks in oracle order and
+// TestHostPromiseFixture runs the promise checks in oracle order and
 // compares each normalized line byte-for-byte against the pinned host
 // fixture, including the summary line for this slice's subset.
 func TestHostPromiseFixture(t *testing.T) {
@@ -132,11 +132,11 @@ func TestHostPromiseFixture(t *testing.T) {
 	}
 
 	// The subset summary must be derivable from the pinned fixture: the
-	// fixture's own summary pins 18/18 host checks, of which this slice
-	// reproduces the 3 promise checks.
-	if !strings.Contains(fixtureSummary, "\"total\":18") ||
-		!strings.Contains(fixtureSummary, "\"passed\":18") {
-		t.Errorf("unexpected fixture summary %s; the pinned host fixture must record 18/18 checks",
+	// fixture's own summary pins 19/19 host checks, of which this slice
+	// reproduces the 4 promise checks.
+	if !strings.Contains(fixtureSummary, "\"total\":19") ||
+		!strings.Contains(fixtureSummary, "\"passed\":19") {
+		t.Errorf("unexpected fixture summary %s; the pinned host fixture must record 19/19 checks",
 			fixtureSummary)
 	}
 }

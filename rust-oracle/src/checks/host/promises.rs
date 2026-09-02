@@ -17,6 +17,11 @@
 //!   `perform_microtask_checkpoint`, the native handler receives the
 //!   resolved value, and the derived promise settles to the handler's
 //!   (implicit undefined) result. The derived promise is a distinct object.
+//! - JavaScript-created resolved and rejected promises checked-cast from
+//!   `Local<Value>` to `Local<Promise>` successfully; a non-Promise value
+//!   does not. Their native state/result are immediately observable, while
+//!   derived `then`/`catch` promises remain pending until the explicit
+//!   microtask checkpoint.
 //! - The promise-reject callback is invoked synchronously at reject time
 //!   with `PromiseRejectWithNoHandler` when no handler exists, and with
 //!   `PromiseHandlerAddedAfterReject` when a handler is later attached to a
@@ -215,6 +220,86 @@ pub(crate) fn native_then_checkpoint() -> Vec<CheckOutcome> {
         expected,
         actual,
     )]
+}
+
+pub(crate) fn value_try_cast() -> Vec<CheckOutcome> {
+    let isolate = &mut v8::Isolate::new(Default::default());
+    isolate.set_microtasks_policy(v8::MicrotasksPolicy::Explicit);
+    v8::scope!(let scope, isolate);
+    let context = v8::Context::new(scope, Default::default());
+    let scope = &mut v8::ContextScope::new(scope, context);
+
+    // All three inputs originate as script completion `Local<Value>`s. This
+    // directly characterizes the checked `Local::try_cast` path used by a
+    // safe Value-to-Promise conversion in the Go port.
+    let resolved_value = harness::eval(scope, "Promise.resolve(42)").unwrap();
+    let resolved_cast = resolved_value.try_cast::<v8::Promise>();
+    let resolved_cast_ok = resolved_cast.is_ok();
+    let resolved = resolved_cast.unwrap();
+    let resolved_state = state_name(resolved.state());
+    let resolved_result = harness::value_text(scope, resolved.result(scope));
+
+    let then_handler_value = harness::eval(scope, "x => x + 1").unwrap();
+    let then_handler = then_handler_value.try_cast::<v8::Function>().unwrap();
+    let then_derived = resolved.then(scope, then_handler).unwrap();
+    let then_initial_state = state_name(then_derived.state());
+
+    let rejected_value = harness::eval(scope, "Promise.reject('boom')").unwrap();
+    let rejected_cast = rejected_value.try_cast::<v8::Promise>();
+    let rejected_cast_ok = rejected_cast.is_ok();
+    let rejected = rejected_cast.unwrap();
+    let rejected_state = state_name(rejected.state());
+    let rejected_result = harness::value_text(scope, rejected.result(scope));
+
+    let catch_handler_value = harness::eval(scope, "x => 'caught:' + x").unwrap();
+    let catch_handler = catch_handler_value.try_cast::<v8::Function>().unwrap();
+    let catch_derived = rejected.catch(scope, catch_handler);
+    let catch_attached = catch_derived.is_some();
+    let catch_derived = catch_derived.unwrap();
+    let catch_initial_state = state_name(catch_derived.state());
+
+    let non_promise_value = harness::eval(scope, "42").unwrap();
+    let non_promise_cast_ok = non_promise_value.try_cast::<v8::Promise>().is_ok();
+
+    scope.perform_microtask_checkpoint();
+    let then_final_state = state_name(then_derived.state());
+    let then_result = harness::value_text(scope, then_derived.result(scope));
+    let catch_final_state = state_name(catch_derived.state());
+    let catch_result = harness::value_text(scope, catch_derived.result(scope));
+
+    let actual = Json::obj(vec![
+        ("resolved_cast_ok", Json::b(resolved_cast_ok)),
+        ("resolved_state", Json::s(resolved_state)),
+        ("resolved_result", Json::s(&resolved_result)),
+        ("rejected_cast_ok", Json::b(rejected_cast_ok)),
+        ("rejected_state", Json::s(rejected_state)),
+        ("rejected_result", Json::s(&rejected_result)),
+        ("non_promise_cast_ok", Json::b(non_promise_cast_ok)),
+        ("then_initial_state", Json::s(then_initial_state)),
+        ("then_final_state", Json::s(then_final_state)),
+        ("then_result", Json::s(&then_result)),
+        ("catch_attached", Json::b(catch_attached)),
+        ("catch_initial_state", Json::s(catch_initial_state)),
+        ("catch_final_state", Json::s(catch_final_state)),
+        ("catch_result", Json::s(&catch_result)),
+    ]);
+    let expected = Json::obj(vec![
+        ("resolved_cast_ok", Json::b(true)),
+        ("resolved_state", Json::s("Fulfilled")),
+        ("resolved_result", Json::s("42")),
+        ("rejected_cast_ok", Json::b(true)),
+        ("rejected_state", Json::s("Rejected")),
+        ("rejected_result", Json::s("boom")),
+        ("non_promise_cast_ok", Json::b(false)),
+        ("then_initial_state", Json::s("Pending")),
+        ("then_final_state", Json::s("Fulfilled")),
+        ("then_result", Json::s("43")),
+        ("catch_attached", Json::b(true)),
+        ("catch_initial_state", Json::s("Pending")),
+        ("catch_final_state", Json::s("Fulfilled")),
+        ("catch_result", Json::s("caught:boom")),
+    ]);
+    vec![expect_eq("promise/value_try_cast", expected, actual)]
 }
 
 pub(crate) fn reject_callback_events() -> Vec<CheckOutcome> {

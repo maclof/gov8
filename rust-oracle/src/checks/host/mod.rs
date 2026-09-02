@@ -50,6 +50,7 @@ const HOST_CHECKS: &[CheckFn] = &[
     // promise native APIs
     promises::resolver_settlement_semantics,
     promises::native_then_checkpoint,
+    promises::value_try_cast,
     promises::reject_callback_events,
     // adjacent lifetime behavior
     lifetime::global_clone_equality,

@@ -311,16 +311,17 @@ Matched benchmark reports and their environment metadata are kept in
 
 ## Project status
 
-The safe executable surface audited for the pinned Rust crate is covered by
-524 normalized cross-language fixture checks: 522 are exact and 2 use
-documented safety normalizations. The declaration ledger records 1,696 direct
-matches, 10 safe Go-shape differences, and 151 intentionally unexposed
+The current suite contains 525 normalized cross-language fixture checks: 523
+are exact and 2 use documented safety normalizations. The declaration ledger
+records 1,689 direct matches, 19 partial declarations (10 intentional Go-shape
+differences and 9 executable gaps), and 149 intentionally unexposed
 raw/borrowed/generic Rust shapes.
 
 This does not mean every Rust ownership or generic type has a literal Go
-spelling, and it is not a blanket performance parity claim: remaining unsafe
-shapes, intentional Go normalizations, and measured performance gaps are
-tracked openly.
+spelling, and it is not a full feature or performance parity claim. Usable
+current/creation Context returns, custom-platform default dispatch, the safe
+stack-limit shape, intentional Go normalizations, and measured performance
+gaps are tracked openly.
 
 - [`PARITY.md`](PARITY.md) - feature coverage, behavior notes, and performance
   evidence

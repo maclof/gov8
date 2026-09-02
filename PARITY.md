@@ -8,10 +8,10 @@ This matrix tracks observable parity against the sole supported reference:
 - Artifact SHA-256: `0b17ca072bae37dd4ff00e6014d2b413becb031c9342ee11cb8226a5881f62b2`
 
 The declaration-level denominator and intentional language-shape clusters are tracked in
-`API_AUDIT.md`: 1,696 of 1,857 public declarations currently have a matched Go
+`API_AUDIT.md`: 1,689 of 1,857 public declarations currently have a matched Go
 equivalent or documented semantic shape. Ten more declarations retain safe Go
 behavioral equivalents but intentionally differ from Rust's borrowed or generic
-API shape; none is missing as an executable surface.
+API shape; nine declarations remain partial executable surface.
 
 Status meanings: **complete** means the listed slice has executable Rust and Go
 behavior evidence; **partial** means a production implementation exists but the
@@ -20,8 +20,8 @@ characterized but the Go implementation is not integrated; **missing** means no
 production Go implementation exists. A family is not promoted merely because a
 type or stub exists.
 
-The fixtures under `rust-oracle/tests/fixtures` currently contain 524 normalized
-checks. Go matches 522 byte-for-byte and two more after documented safety
+The fixtures under `rust-oracle/tests/fixtures` currently contain 525 normalized
+checks. Go matches 523 byte-for-byte and two more after documented safety
 normalizations; no check is oracle-only. Fatal and panic-boundary
 subprocess tests are additional evidence and are not counted in that total.
 
@@ -42,7 +42,7 @@ subprocess tests are additional evidence and are not counted in that total.
 | Microtask policy and queues | `microtask.go`, context-local hooks, queue-at-creation, running/depth observation and controls hooks | base, controls-hooks and context-scopes fixtures | **complete** for the pinned crate: queue handle ownership, enqueue/checkpoint, policy, attachment, running state, and scope depth are covered; the crate exposes no `MicrotasksScope` constructor |
 | Native functions, callbacks and accessors | `callback.go`, `template.go`, `function_advanced.go`, `fast_api.go`, Inspector-backed side-effect evaluation | host, all 6 Function checks, 4-check Fast API substrate and 8-check Fast API residual fixtures exact; cache/fatal subprocess, nested-coercion, retained-argument, wrong-thread and race tests; Rust/Go callback, Function and optimized fast-path benchmarks | **complete** for the safe executable pinned callback surface; fast entry points remain process-lifetime native addresses and never dispatch through Go's callback ABI. Direct scalar conversions preserve nested JS/Go re-entry without movable-stack pointers, while lock-free isolate closure and callback-entry checks plus direct validated Function construction reduce lifecycle overhead and remove two Function allocations. Exact-scope alias validation removes duplicate owner-thread checks, a two-slot native argument buffer removes one native allocation with heap fallback, and function-only terminal `SetInt32` now completes in the trampoline without a reverse DLL transition. `FunctionCallbackArguments` owns packed length/construct snapshots, and every frame-backed accessor validates callback lifetime and owner thread before reading trampoline-owned memory. Function frames also snapshot positive `IsInt32` results for the first two exact argument wires; an isolated old/new-DLL comparison improved JS, host and Function-call medians by 9.3%, 1.3% and 6.9% with unchanged allocations, while the coercive non-Int32 control measured a 0.9% median native-type-check tax. The mandatory lifetime checks make the combined safe path 0.7-4.5% slower than the prior unsafe-to-retain baseline in the longer confirmation. Replacing the mutex-protected live-context tree with an unordered membership set then improved the long paired NewCall, JS and host medians by 3.88% (5/6 wins), 3.20% (6/6) and 0.46% (5/6); the precompiled-script control changed 0.11% (3/6), and allocations were unchanged. Finally, the verified Windows TEB thread-ID read reduced its own median from 28.905 to 2.5 ns and changed paired JS, host and Function medians from 1559.5 to 1025.5 ns, 1623.5 to 1110.5 ns and 3397 to 2863.5 ns, respectively; the current ratios are about 6.64x, 8.01x and 2.88x the pinned Rust midpoints, with unchanged allocations and neutral FFI/script controls |
 | Object/function templates and interceptors | `template.go`, `template_advanced.go`, `object_callback_retention.go`, `template_name_keys.go` | host, 14-check template-advanced, template-data portion of the 6-check callback-retention fixture, 5-check arbitrary Name-key fixture and 5-check template-accessor Name-key fixture exact in Go; negative/fatal/lifecycle/GC/thread/race tests; Go benchmarks | **complete** for the safe executable pinned template declarations: shared values, accessor properties and native-data conveniences accept String and Symbol keys with exact retention, replacement, attributes and publication behavior; `build_fast` is tracked under Fast API |
-| Promises, resolvers and rejection hooks | `promise.go` | host fixture; lifecycle tests; Rust/Go benchmarks; handler/reject panic subprocess parity | **partial**: resolver-created Promises and rejection hooks are covered, but Go lacks a safe `Value`-to-`Promise` conversion for promises produced by JavaScript. Go retains callbacks through explicit isolate-owned registries and rejects cross-isolate handlers before their local wires can reach V8. A TLS-backed direct `NumberValue` result plus fixed-arity dispatch reduce resolver creation/resolve to one allocation, while then/checkpoint remains at five. Reusing the reaction shims' checked handler casts removes one native predicate for `Then`/`Catch` and two for `Then2`; with the same untimed outer ContextScope as Rust, current medians are about 7.51x Rust for resolver creation/resolve and 4.45x for then/checkpoint |
+| Promises, resolvers and rejection hooks | `promise.go` | 4-check host Promise fixture; conversion/lifecycle/thread tests; Rust/Go benchmarks; handler/reject panic subprocess parity | **complete** for the safe executable pinned Promise surface, including checked conversion of JavaScript-created fulfilled and rejected values into typed Promises, state/result access, and derived `Then`/`Catch` settlement. Go retains callbacks through explicit isolate-owned registries and rejects cross-isolate handlers before their local wires can reach V8. A TLS-backed direct `NumberValue` result plus fixed-arity dispatch reduce resolver creation/resolve to one allocation, while then/checkpoint remains at five; current medians are about 7.51x and 4.45x Rust |
 | ArrayBuffer, SharedArrayBuffer and backing stores | `buffer.go`, `array_buffer_allocator.go`; initialized/uninitialized allocation, free/drop observation and shared allocator ownership | 21-check buffer and 6-check allocator fixtures exact; fatal-boundary/lifecycle/deleter, post-isolate/post-shutdown and concurrent-thread tests; matched allocator lifecycle benchmark | **complete** for the safe executable pinned surface, including pre-initialize factories, zero-size bypass, transfer allocation, backing-store lifetime and shared multi-isolate use; Rust's raw pointer-returning allocator vtable is represented by a native-memory callback façade. Fixed-arity lifecycle calls cut Go allocations from 5 to 1, and the atomic registry fast path cuts dispatcher CPU about 73%. The current end-to-end ratio is about 7.95x; native-handle floors isolate it to the two required native-to-Go callbacks plus safe post-isolate ownership rather than registry contention |
 | Typed arrays and DataView | `typed_arrays.go` | 14-check typed-array fixture; per-kind boundary/fatal tests; Go benchmarks | **complete** for all 12 pinned typed-array kinds and characterized geometry/data behavior |
 | Value serializer/deserializer and delegates | `serializer.go`, `serializer_delegates.go`, `serializer_wasm_legacy.go` | buffer, 25-check delegate and 4-check Wasm/legacy residual fixtures; reader/writer panic boundaries; Go benchmarks | **complete** for the safe executable pinned declarations: typed Wasm-module restoration, repeated-reference identity, full `u32` transfer IDs, wire-version reporting and pre-read legacy control are exact |
@@ -163,7 +163,7 @@ subprocess tests are additional evidence and are not counted in that total.
 
 ## Verification state
 
-On 2026-09-02, the Rust fixtures contain 524 normalized checks. Go compares 522 checks
+On 2026-09-02, the Rust fixtures contain 525 normalized checks. Go compares 523 checks
 byte-for-byte; the advanced stack line and custom-platform inline-deadlock probe
 pass after the two narrow safety normalizations documented above. No fixture is
 oracle-only.
@@ -172,10 +172,10 @@ strict Clippy and full tests; the Go suite passes
 `go test ./... -count=1`, `go vet ./...`, full race checks and benchmark smoke runs.
 `scripts/verify_windows.ps1` explicitly reruns every current conformance package.
 
-The latest audit identified four safe executable gaps that the declaration
-ledger had overclassified: JavaScript-created Promise conversion, usable
-current/entered Context handles, optional Object creation-context retrieval,
-and Rust's synchronous defaults for omitted custom-platform callbacks. Effective
+The latest audit identifies three safe executable gaps that the declaration
+ledger had overclassified: usable current/entered Context handles, optional
+Object creation-context retrieval, and Rust's synchronous defaults for omitted
+custom-platform callbacks. Effective
 CreateParams stack-limit construction is also outstanding, but begins from an
 unsafe Rust pointer setter and needs a safe Go-specific shape. Ten borrowed or
 generic cppgc declarations retain intentional Go shapes, and the raw/borrowed/

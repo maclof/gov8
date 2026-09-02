@@ -65,6 +65,18 @@ type PromiseResolver struct {
 	Value
 }
 
+// AsPromise casts a live scope-local value to a Promise after checking its
+// engine kind. The returned Promise retains the value's original Scope and
+// therefore becomes invalid with that Scope, matching Local::try_cast in the
+// pinned Rust crate.
+func AsPromise(v Value) (*Promise, error) {
+	vv, err := typedCast(v, v.IsPromise, "Promise")
+	if err != nil {
+		return nil, err
+	}
+	return &Promise{Value: vv}, nil
+}
+
 var (
 	promiseHotOnce         sync.Once
 	promiseResolverNewAddr uintptr

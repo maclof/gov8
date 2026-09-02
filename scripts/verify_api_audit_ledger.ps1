@@ -252,7 +252,7 @@ foreach ($row in $rows) {
 
 $counts = @{}
 foreach ($group in ($rows | Group-Object classification)) { $counts[$group.Name] = $group.Count }
-$expected = @{ matched = 1687; partial = 21; unsafe = 149 }
+$expected = @{ matched = 1689; partial = 19; unsafe = 149 }
 foreach ($classification in $expected.Keys) {
     if ($counts[$classification] -ne $expected[$classification]) {
         throw "$classification count is $($counts[$classification]), expected $($expected[$classification])"
@@ -271,8 +271,6 @@ $expectedPartialPaths = @(
     "v8::cppgc::UnsafePtr::as_ref",
     "v8::cppgc::Member",
     "v8::cppgc::WeakMember",
-    "v8::Local::try_cast",
-    "v8::Local::cast",
     "v8::Object::get_creation_context",
     "v8::platform::PlatformImpl",
     "v8::PlatformImpl::post_task",
@@ -285,7 +283,7 @@ $expectedPartialPaths = @(
 ) | Sort-Object
 $actualPartialPaths = @($rows | Where-Object { $_.classification -eq "partial" } | ForEach-Object { $_.rust_path } | Sort-Object)
 if (($expectedPartialPaths -join "`n") -ne ($actualPartialPaths -join "`n")) {
-    throw "the 21 reviewed partial declarations changed"
+    throw "the 19 reviewed partial declarations changed"
 }
 
 $expectedUnsafeRationales = @{
@@ -334,4 +332,4 @@ if ($Regenerate) {
     $ordered | Export-Csv -LiteralPath $ledger -NoTypeInformation -Encoding UTF8
 }
 
-Write-Host "API audit ledger verified: 1857 declarations (1687 matched, 21 partial, 149 intentional-shape/unsafe-status)."
+Write-Host "API audit ledger verified: 1857 declarations (1689 matched, 19 partial, 149 intentional-shape/unsafe-status)."
