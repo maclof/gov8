@@ -1,5 +1,8 @@
 # gov8
 
+[![Go Reference](https://pkg.go.dev/badge/github.com/maclof/gov8.svg)](https://pkg.go.dev/github.com/maclof/gov8)
+[![windows-amd64](https://github.com/maclof/gov8/actions/workflows/windows-amd64.yml/badge.svg?branch=master)](https://github.com/maclof/gov8/actions/workflows/windows-amd64.yml)
+
 `gov8` embeds the V8 JavaScript engine in Go. It offers an explicit, typed Go
 API for isolates, contexts, handle scopes, scripts, callbacks, promises,
 modules, WebAssembly, snapshots, Inspector, and the other safe surfaces covered
@@ -15,41 +18,57 @@ checked rather than assumed.
 V8 artifact as the Rust reference; Windows arm64, MinGW, macOS, and Linux are
 not supported.
 
-You need:
+Applications using `gov8` need only:
 
 - Go 1.24 or newer
-- Rust 1.98 (used to build one pinned native dependency and the oracle)
-- Visual Studio with the MSVC C++ x64 build tools
-- PowerShell
 
 The current engine is V8 `15.2.124.1-rusty`, from Rust `v8 = 152.2.0`.
 
-## Install and build
+## Install
 
-Clone the repository and build the verified native shim:
+Add the module, then run your program normally:
+
+```powershell
+go get github.com/maclof/gov8@latest
+go run .
+```
+
+No Rust, Visual Studio, C compiler, PowerShell setup script, or runtime download
+is needed by applications. The module contains a gzip-compressed, pinned
+Windows amd64 shim. On first use it verifies and extracts that DLL to a
+content-addressed directory below the user's OS cache; later runs verify and
+reuse the same file. The module adds about 18 MB to a program binary and uses
+about 46 MB in the per-user cache.
+
+`GOV8_SHIM_DLL` remains available as a trusted developer override. The file
+must be a matching Windows amd64 shim with the module's exact ABI:
+
+```powershell
+$env:GOV8_SHIM_DLL = 'C:\path\to\gov8\build\shim\gov8_shim.dll'
+go run .
+```
+
+Maintainers who need to rebuild the native shim or run the Rust oracle also
+need Rust 1.98, Visual Studio with the MSVC C++ x64 build tools, and PowerShell:
 
 ```powershell
 git clone https://github.com/maclof/gov8.git
 Set-Location gov8
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\setup_windows.ps1
-go run ./examples/basic
+$env:GOV8_SHIM_DLL = (Resolve-Path build\shim\gov8_shim.dll)
+go test ./...
 ```
 
 The setup script downloads or reuses the pinned inputs, verifies their SHA-256
-digests, and writes `build\shim\gov8_shim.dll`. Generated native binaries are
-not committed.
+digests, and atomically writes `build\shim\gov8_shim.dll`.
 
-To use `gov8` from another Go module:
+When intentionally updating the packaged shim after a source change, rebuild
+it and regenerate the deterministic gzip asset:
 
 ```powershell
-go get github.com/maclof/gov8@latest
-$env:GOV8_SHIM_DLL = 'C:\path\to\gov8\build\shim\gov8_shim.dll'
-go run .
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\setup_windows.ps1
+go run ./internal/cmd/package-shim
 ```
-
-If `GOV8_SHIM_DLL` is unset, `gov8` searches parent directories for
-`build\shim\gov8_shim.dll`. The DLL ABI must exactly match the Go module; rerun
-the setup script after upgrading.
 
 ## Run JavaScript
 
@@ -333,3 +352,9 @@ JavaScript execution.
 Contributions should include tests for success, failure, exception, lifetime,
 and concurrency behavior where applicable, plus matched benchmarks for hot
 paths.
+
+## License
+
+gov8 is available under the [MIT License](LICENSE). The packaged native shim
+also contains third-party software covered by the notices in
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

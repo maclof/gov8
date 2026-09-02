@@ -1,6 +1,5 @@
 /build/
 /.idea/
-/.opencode/opencode-loop/
 /rust-oracle/target/
 /rust-oracle/tmp-*.txt
 

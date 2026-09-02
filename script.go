@@ -30,6 +30,11 @@ func scriptEscapingSyscall6(trap, nargs, a1, a2, a3, a4, a5, a6 uintptr) (uintpt
 	return syscall.Syscall6(trap, nargs, a1, a2, a3, a4, a5, a6)
 }
 
+//go:uintptrescapes
+func scriptEscapingSyscall9(trap, nargs, a1, a2, a3, a4, a5, a6, a7, a8, a9 uintptr) (uintptr, uintptr, syscall.Errno) {
+	return syscall.Syscall9(trap, nargs, a1, a2, a3, a4, a5, a6, a7, a8, a9)
+}
+
 // Script is a compiled script, rooted as a persistent v8::Global<Script> so
 // it can be run repeatedly (e.g. benchmark workloads) and survives handle
 // scope lifetimes. It is bound to the isolate and context it was compiled
@@ -77,20 +82,21 @@ func (c *Context) Compile(s *Scope, source string, tc *TryCatch) (*Script, error
 	if len(b) > 0 {
 		p = uintptr(unsafe.Pointer(&b[0]))
 	}
-	var out uintptr
+	compiled := &Script{iso: c.iso, ctx: c}
 	var tcv uintptr
 	if tc != nil {
 		tcv = tc.handle
 	}
 	ensureScriptHotProcs()
-	r1, _, _ := syscall.Syscall9(scriptCompileAddr, 7,
+	r1, _, _ := scriptEscapingSyscall9(scriptCompileAddr, 7,
 		c.iso.handleAssumingCheck(), c.handle, sh, tcv, p, uintptr(len(b)),
-		uintptr(unsafe.Pointer(&out)), 0, 0)
+		uintptr(unsafe.Pointer(&compiled.handle)), 0, 0)
 	runtime.KeepAlive(b)
+	runtime.KeepAlive(compiled)
 	if int64(r1) < 0 {
 		return nil, shimError("Compile", r1)
 	}
-	return &Script{iso: c.iso, ctx: c, handle: out}, nil
+	return compiled, nil
 }
 
 // check validates the script's own state and its isolate's thread affinity

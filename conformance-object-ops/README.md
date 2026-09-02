@@ -71,4 +71,4 @@ in the buffers/typed-arrays slices (`IsTypedArray`, `IsUint8Array`, ...).
     go test ./conformance-object-ops
 
 requires the shim DLL (see the repository README;
-`GOV8_SHIM_DLL` or `build/shim/gov8_shim.dll`).
+the packaged DLL is used unless `GOV8_SHIM_DLL` selects a developer build).

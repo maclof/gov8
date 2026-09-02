@@ -10,14 +10,18 @@ import (
 	"sync/atomic"
 	"syscall"
 	"unsafe"
+
+	"github.com/maclof/gov8/internal/prebuilt"
 )
 
 // shimABIVersion must match gov8_abi_version in internal/shim/shim.cc.
 const shimABIVersion = 44
 
 var (
-	shimOnce sync.Once
-	shimDLL  *syscall.DLL
+	shimOnce       sync.Once
+	shimDLL        *syscall.DLL
+	kernel32       = syscall.NewLazyDLL("kernel32.dll")
+	loadLibraryExW = kernel32.NewProc("LoadLibraryExW")
 	// procTable is an immutable name→proc map published through an atomic
 	// pointer; resolution is copy-on-write under procMu. The hot read path
 	// is one atomic load plus a plain map lookup, and every export resolves
@@ -30,33 +34,29 @@ var (
 	shimLoadErr error
 )
 
-// shimDLLPath returns the path to gov8_shim.dll: the GOV8_SHIM_DLL
-// environment variable if set, otherwise the first build\shim\gov8_shim.dll
-// found walking up from the working directory.
+// shimDLLPath returns the path to gov8_shim.dll. An explicit GOV8_SHIM_DLL
+// override takes precedence; ordinary module consumers use the verified
+// embedded DLL extracted to their cache.
 func shimDLLPath() (string, error) {
 	if p := os.Getenv("GOV8_SHIM_DLL"); p != "" {
-		if _, err := os.Stat(p); err != nil {
+		absolute, err := filepath.Abs(p)
+		if err != nil {
+			return "", fmt.Errorf("gov8: resolve GOV8_SHIM_DLL=%s: %w", p, err)
+		}
+		info, err := os.Stat(absolute)
+		if err != nil {
 			return "", fmt.Errorf("gov8: GOV8_SHIM_DLL=%s: %w", p, err)
 		}
-		return p, nil
+		if !info.Mode().IsRegular() {
+			return "", fmt.Errorf("gov8: GOV8_SHIM_DLL=%s is not a regular file", p)
+		}
+		return absolute, nil
 	}
-	dir, err := os.Getwd()
+	path, err := prebuilt.Path()
 	if err != nil {
-		return "", fmt.Errorf("gov8: cannot determine working directory: %w", err)
+		return "", fmt.Errorf("gov8: prepare embedded gov8_shim.dll: %w (or set GOV8_SHIM_DLL to a trusted DLL path)", err)
 	}
-	for i := 0; i < 8; i++ {
-		cand := filepath.Join(dir, "build", "shim", "gov8_shim.dll")
-		if _, err := os.Stat(cand); err == nil {
-			return cand, nil
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			break
-		}
-		dir = parent
-	}
-	return "", fmt.Errorf("gov8: gov8_shim.dll not found: run scripts/setup_windows.ps1 " +
-		"(or set GOV8_SHIM_DLL to the DLL path)")
+	return path, nil
 }
 
 func loadShim() error {
@@ -66,7 +66,7 @@ func loadShim() error {
 			shimLoadErr = err
 			return
 		}
-		dll, err := syscall.LoadDLL(path)
+		dll, err := loadShimDLL(path)
 		if err != nil {
 			shimLoadErr = fmt.Errorf("gov8: loading %s: %w", path, err)
 			return
@@ -79,7 +79,7 @@ func loadShim() error {
 		abi, _, _ := abiProc.Call()
 		if abi != shimABIVersion {
 			shimLoadErr = fmt.Errorf("gov8: shim ABI mismatch: DLL reports %d, module expects %d; "+
-				"re-run scripts/setup_windows.ps1", abi, shimABIVersion)
+				"remove GOV8_SHIM_DLL or rebuild that override for this module version", abi, shimABIVersion)
 			return
 		}
 		shimDLL = dll
@@ -87,6 +87,26 @@ func loadShim() error {
 		procTable.Store(&m)
 	})
 	return shimLoadErr
+}
+
+func loadShimDLL(path string) (*syscall.DLL, error) {
+	name, err := syscall.UTF16PtrFromString(path)
+	if err != nil {
+		return nil, err
+	}
+	const (
+		loadLibrarySearchDLLLoadDir = 0x00000100
+		loadLibrarySearchSystem32   = 0x00000800
+	)
+	handle, _, callErr := loadLibraryExW.Call(
+		uintptr(unsafe.Pointer(name)),
+		0,
+		loadLibrarySearchDLLLoadDir|loadLibrarySearchSystem32,
+	)
+	if handle == 0 {
+		return nil, fmt.Errorf("LoadLibraryExW: %w", callErr)
+	}
+	return &syscall.DLL{Name: path, Handle: syscall.Handle(handle)}, nil
 }
 
 func proc(name string) *syscall.Proc {
@@ -114,7 +134,7 @@ func resolveProc(name string) *syscall.Proc {
 	}
 	p, err := shimDLL.FindProc(name)
 	if err != nil {
-		panic(fmt.Sprintf("gov8: shim export %s missing: %v; re-run scripts/setup_windows.ps1", name, err))
+		panic(fmt.Sprintf("gov8: shim export %s missing: %v; remove GOV8_SHIM_DLL or rebuild that override for this module version", name, err))
 	}
 	old := *procTable.Load()
 	m := make(map[string]*syscall.Proc, len(old)+1)

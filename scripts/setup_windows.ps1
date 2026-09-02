@@ -419,19 +419,36 @@ function Build-TemporalStaticLib {
         '--manifest-path', $manifest,
         '--target-dir', $targetDir
     )
-    & cargo @cargoArgs --offline
-    if ($LASTEXITCODE -ne 0) {
-        Write-Host '[setup] offline locked build failed; retrying with network (still --locked)'
-        & cargo @cargoArgs
-        if ($LASTEXITCODE -ne 0) { throw 'cargo build --locked of the temporal closure failed' }
+    # Rust debug/panic location strings otherwise contain the builder's user
+    # profile and checkout path. Encoded flags preserve paths with spaces and
+    # make the packaged DLL reproducible without leaking builder identity.
+    $savedRustFlags = $env:RUSTFLAGS
+    $savedEncodedRustFlags = $env:CARGO_ENCODED_RUSTFLAGS
+    $cargoHome = Join-Path $env:USERPROFILE '.cargo'
+    $env:RUSTFLAGS = $null
+    $env:CARGO_ENCODED_RUSTFLAGS = (@(
+        ('--remap-path-prefix={0}=/gov8' -f $Root),
+        ('--remap-path-prefix={0}=/cargo' -f $cargoHome)
+    ) -join [char]0x1f)
+    try {
+        & cargo @cargoArgs --offline
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host '[setup] offline locked build failed; retrying with network (still --locked)'
+            & cargo @cargoArgs
+            if ($LASTEXITCODE -ne 0) { throw 'cargo build --locked of the temporal closure failed' }
+        }
+    } finally {
+        $env:RUSTFLAGS = $savedRustFlags
+        $env:CARGO_ENCODED_RUSTFLAGS = $savedEncodedRustFlags
     }
     $staticlib = Join-Path $targetDir 'release\temporal_link.lib'
     if (-not (Test-Path -LiteralPath $staticlib)) { throw "temporal_link.lib missing at $staticlib" }
-    $rlibs = Get-ChildItem -LiteralPath (Join-Path $targetDir 'release\deps') -Filter '*.rlib' |
-        Select-Object -ExpandProperty FullName
-    if (-not $rlibs) { throw 'no dependency rlibs found under the cargo target directory' }
-    Write-Host ("[setup] temporal closure: {0} (+{1} rlibs)" -f $staticlib, $rlibs.Count)
-    return @($staticlib) + @($rlibs)
+    # crate-type=staticlib already bundles the Rust dependency closure. Do not
+    # also glob target/release/deps: Cargo retains stale fingerprint variants
+    # there, which makes the link nondeterministic and can exceed cmd.exe's
+    # command-line limit after a flag or toolchain change.
+    Write-Host "[setup] temporal closure: $staticlib"
+    return $staticlib
 }
 
 function Find-VCVars {
@@ -453,7 +470,7 @@ function Build-Shim([string]$V8Include, [string]$LibPath, [string[]]$TemporalLib
     $dll = Join-Path $Staging 'gov8_shim.dll'
     $obj = Join-Path $Staging 'shim.obj'
     $clArgs = @(
-        '/nologo', '/std:c++20', '/Zc:__cplusplus', '/EHsc', '/O2', '/MT', '/DNDEBUG', '/DV8_GN_HEADER',
+        '/nologo', '/std:c++20', '/Zc:__cplusplus', '/EHsc', '/O2', '/MT', '/Brepro', '/DNDEBUG', '/DV8_GN_HEADER',
         # The pinned crate builds V8 with the "-rusty" embedder string (it is
         # part of the observable version identity; V8::GetVersion() in the
         # artifact already reports it at runtime).
@@ -466,7 +483,7 @@ function Build-Shim([string]$V8Include, [string]$LibPath, [string[]]$TemporalLib
         (Join-Path $ShimSrc 'shim.cc')
     )
     $clLine = 'cl ' + ($clArgs -join ' ')
-    $linkLine = ('link /nologo /DLL /OUT:{0} {1} {2} {3} winmm.lib dbghelp.lib ws2_32.lib ntdll.lib userenv.lib bcrypt.lib synchronization.lib advapi32.lib' -f
+    $linkLine = ('link /nologo /Brepro /DLL /OUT:{0} {1} {2} {3} winmm.lib dbghelp.lib ws2_32.lib ntdll.lib userenv.lib bcrypt.lib synchronization.lib advapi32.lib' -f
         $dll, $obj, $LibPath, ($TemporalLibs -join ' '))
     $cmdLine = '"{0}" >NUL && {1} && {2}' -f $VCVars, $clLine, $linkLine
     Write-Host '[setup] compiling shim with MSVC...'

@@ -4,6 +4,7 @@ package gov8_test
 
 import (
 	"fmt"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -11,6 +12,16 @@ import (
 
 	gov8 "github.com/maclof/gov8"
 )
+
+//go:noinline
+func growUseCounterStack(depth int) {
+	var pad [4096]byte
+	pad[0] = byte(depth)
+	if depth > 0 {
+		growUseCounterStack(depth - 1)
+	}
+	runtime.KeepAlive(&pad)
+}
 
 // In-process behavior tests for the controls/hooks slice, mirroring the
 // in-process checks of rust-oracle/src/bin/conformance-controls-hooks.rs and
@@ -614,6 +625,35 @@ func TestUseCounterFeatures(t *testing.T) {
 	}
 }
 
+// TestCompileOutputSurvivesCallbackStackGrowth guards the FFI output slot:
+// compilation may re-enter Go through a use-counter callback, and that
+// callback may grow and relocate the goroutine stack before V8 writes the
+// compiled script handle.
+func TestCompileOutputSurvivesCallbackStackGrowth(t *testing.T) {
+	r := newCHRuntime(t)
+	if err := r.iso.SetUseCounterCallback(func(feature uint32) {
+		if feature == 9 {
+			growUseCounterStack(32)
+		}
+	}); err != nil {
+		t.Fatalf("SetUseCounterCallback: %v", err)
+	}
+
+	script, err := r.ctx.Compile(r.scope, `"use strict"; 40 + 2`, nil)
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	defer func() { _ = script.Close() }()
+	v, err := script.Run(r.scope, nil)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	got, ok, err := v.IntegerValue(r.ctx)
+	if err != nil || !ok || got != 42 {
+		t.Fatalf("IntegerValue = %d, %v, %v; want 42, true, nil", got, ok, err)
+	}
+}
+
 // --- code generation from strings ---------------------------------------------------------------
 
 // TestModifyCodeGenerationFromStrings mirrors modify_code_generation_from_strings:
@@ -898,8 +938,13 @@ func TestControlsConcurrentIsolates(t *testing.T) {
 				return
 			}
 			v, rerr := script.Run(scope, nil)
+			closeErr := script.Close()
 			if rerr != nil {
 				errs <- rerr
+				return
+			}
+			if closeErr != nil {
+				errs <- closeErr
 				return
 			}
 			got, ok, terr := v.IntegerValue(ctx)

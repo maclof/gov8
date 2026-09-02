@@ -3,18 +3,17 @@
 // Package gov8 is a Go binding for the pinned prebuilt V8 engine used by the
 // gov8 project: the rusty_v8 release static library for
 // x86_64-pc-windows-msvc (v8 crate =152.2.0, engine 15.2.124.1-rusty),
-// wrapped by a C ABI shim DLL that is built by scripts/setup_windows.ps1.
+// wrapped by a C ABI shim DLL shipped in gzip-compressed form with the module.
 //
 // # Supported platform
 //
 // Windows amd64 only. Every file in this module carries a
 // `//go:build windows && amd64` constraint, so building for any other target
 // fails with "build constraints exclude all Go files" — the same deliberate
-// single-platform stance as the Rust oracle. Run scripts/setup_windows.ps1
-// once per checkout to acquire the pinned engine artifact and build
-// build/shim/gov8_shim.dll; afterwards `go test ./...` works from a clean
-// shell. The DLL is located from the GOV8_SHIM_DLL environment variable or by
-// walking up from the working directory to a build/shim/gov8_shim.dll.
+// single-platform stance as the Rust oracle. Applications need only Go: on
+// first use the packaged DLL is verified and extracted to a content-addressed
+// per-user cache. GOV8_SHIM_DLL can select a trusted ABI-compatible developer
+// build.
 //
 // # Ownership and lifetime rules
 //

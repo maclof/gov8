@@ -8,8 +8,10 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	goruntime "runtime"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	gov8 "github.com/maclof/gov8"
 )
@@ -190,28 +192,36 @@ func pending(t *testing.T, r *runtime) bool {
 	return resultOf(r.iso.HasPendingBackgroundTasks()).must(t, "pending background tasks")
 }
 
-func pump(t *testing.T, r *runtime) {
+func pump(t *testing.T, r *runtime) bool {
 	t.Helper()
+	ranAny := false
 	for {
 		ran := resultOf(r.iso.PumpMessageLoop(false)).must(t, "pump message loop")
 		if !ran {
 			break
 		}
+		ranAny = true
 	}
 	if err := r.iso.PerformMicrotaskCheckpoint(); err != nil {
 		t.Fatal(err)
 	}
+	return ranAny
 }
 
 func pumpUntil(t *testing.T, r *runtime, done func() bool) {
 	t.Helper()
-	for range 1000 {
-		pump(t, r)
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		ran := pump(t, r)
 		if done() {
 			return
 		}
+		if !ran {
+			goruntime.Gosched()
+			time.Sleep(time.Millisecond)
+		}
 	}
-	t.Fatal("async wasm callback did not run")
+	t.Fatal("async wasm callback did not run within 10 seconds")
 }
 
 type streamCapture struct {

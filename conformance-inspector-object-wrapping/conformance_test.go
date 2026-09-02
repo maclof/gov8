@@ -17,6 +17,7 @@ import (
 	"unsafe"
 
 	gov8 "github.com/maclof/gov8"
+	"github.com/maclof/gov8/internal/prebuilt"
 )
 
 type fixtureLine struct {
@@ -145,27 +146,10 @@ func testProc(t *testing.T, name string) *syscall.Proc {
 	testOnce.Do(func() {
 		path := os.Getenv("GOV8_SHIM_DLL")
 		if path == "" {
-			dir, err := os.Getwd()
-			if err != nil {
-				testErr = err
+			path, testErr = prebuilt.Path()
+			if testErr != nil {
 				return
 			}
-			for range 8 {
-				candidate := filepath.Join(dir, "build", "shim", "gov8_shim.dll")
-				if _, err := os.Stat(candidate); err == nil {
-					path = candidate
-					break
-				}
-				parent := filepath.Dir(dir)
-				if parent == dir {
-					break
-				}
-				dir = parent
-			}
-		}
-		if path == "" {
-			testErr = os.ErrNotExist
-			return
 		}
 		testDLL, testErr = syscall.LoadDLL(path)
 	})

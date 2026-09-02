@@ -278,6 +278,9 @@ $NeedsShim = ($requested -contains 'go') -or ($requested -contains 'bench')
 
 try {
     Invoke-Preflight $NeedsShim
+    # Maintainer gates deliberately exercise the freshly source-built shim.
+    # Embedded-DLL extraction and ABI loading have dedicated Go tests.
+    if ($NeedsShim) { $env:GOV8_SHIM_DLL = $ShimDll }
     if ($requested -contains 'go') { Invoke-GoGate }
     if ($requested -contains 'rust') { Invoke-RustGate }
     if ($requested -contains 'bench') { Invoke-BenchGate }

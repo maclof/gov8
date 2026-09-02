@@ -5,7 +5,6 @@ package platformcustomconformance
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -13,6 +12,7 @@ import (
 	"unsafe"
 
 	gov8 "github.com/maclof/gov8"
+	"github.com/maclof/gov8/internal/prebuilt"
 )
 
 type immediateBenchmarkPlatform struct {
@@ -48,25 +48,11 @@ func (p *immediateBenchmarkPlatform) callbackError() error {
 func loadBenchmarkShimDLL() (*syscall.DLL, error) {
 	path := os.Getenv("GOV8_SHIM_DLL")
 	if path == "" {
-		dir, err := os.Getwd()
+		var err error
+		path, err = prebuilt.Path()
 		if err != nil {
 			return nil, err
 		}
-		for range 8 {
-			candidate := filepath.Join(dir, "build", "shim", "gov8_shim.dll")
-			if _, err := os.Stat(candidate); err == nil {
-				path = candidate
-				break
-			}
-			parent := filepath.Dir(dir)
-			if parent == dir {
-				break
-			}
-			dir = parent
-		}
-	}
-	if path == "" {
-		return nil, fmt.Errorf("gov8_shim.dll not found")
 	}
 	dll, err := syscall.LoadDLL(path)
 	if err != nil {

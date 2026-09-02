@@ -1,8 +1,9 @@
 # Windows amd64 CI for gov8.
 #
-# Builds the pinned V8 shim with scripts/setup_windows.ps1, then runs the
-# exact same gate set as scripts/verify_windows.ps1 (the single source of
-# truth for local/CI parity):
+# First runs the packaged DLL as an ordinary Go consumer with no source build.
+# The verification job then builds the pinned V8 shim with
+# scripts/setup_windows.ps1 and runs the exact same gate set as
+# scripts/verify_windows.ps1 (the single source of truth for local/CI parity):
 #
 #   go gate     gofmt check, go vet ./..., all Go tests, all conformance
 #               suites, and go test -race ./... where the runner supports it
@@ -47,6 +48,27 @@ defaults:
     shell: pwsh
 
 jobs:
+  consumer:
+    name: prebuilt consumer smoke
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install Go (1.24 or newer)
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GOV8_GO_VERSION }}
+          check-latest: true
+
+      - name: Run with packaged V8 (no source build)
+        run: |
+          Remove-Item Env:GOV8_SHIM_DLL -ErrorAction SilentlyContinue
+          $output = & go run ./examples/basic
+          if ($LASTEXITCODE -ne 0) { throw "go run failed with exit code $LASTEXITCODE" }
+          if (($output | Out-String).Trim() -ne '42') { throw "unexpected example output: $output" }
+
   verify:
     name: windows-amd64 verify
     runs-on: windows-latest
@@ -99,7 +121,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: build/temporal-target
-          key: gov8-temporal-target-v1-${{ hashFiles('internal/shim/temporal/Cargo.lock', 'internal/shim/temporal/Cargo.toml', 'internal/shim/temporal/src/**') }}
+          key: gov8-temporal-target-v1-${{ hashFiles('internal/shim/temporal/Cargo.lock', 'internal/shim/temporal/Cargo.toml', 'internal/shim/temporal/src/**', 'scripts/setup_windows.ps1') }}
 
       - name: Cache rust-oracle build products
         uses: actions/cache@v4

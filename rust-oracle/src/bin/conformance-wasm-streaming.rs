@@ -250,12 +250,15 @@ struct CompilationResult {
 }
 
 fn pump_until(scope: &mut v8::PinScope<'_, '_>, result: &Rc<RefCell<CompilationResult>>) {
-    for _ in 0..1000 {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while std::time::Instant::now() < deadline {
         pump(scope);
         if result.borrow().calls != 0 {
             return;
         }
+        std::thread::yield_now();
     }
+    panic!("asynchronous Wasm compilation did not finish within 10 seconds");
 }
 
 fn finish_compilation(
